@@ -1,0 +1,3591 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aindexer V1.6</title>
+    <style>
+      /* ===== 设计变量 ===== */
+      :root {
+        /* 品牌色 - 饱和度略降更柔和 */
+        --brand: #0ea5e9;
+        --brand-dark: #0284c7;
+        /* 功能色 */
+        --success: #10b981;
+        --warning: #f59e0b;
+        --error: #ef4444;
+        --info: #3b82f6;
+        /* 中性色阶梯 */
+        --gray-0: #f9fafb;
+        --gray-1: #f3f4f6;
+        --gray-2: #e5e7eb;
+        --gray-3: #d1d5db;
+        --gray-4: #9ca3af;
+        --gray-5: #6b7280;
+        --gray-6: #4b5563;
+        --gray-7: #374151;
+        --gray-8: #1f2937;
+        --gray-9: #111827;
+        /* 圆角 */
+        --radius-sm: 4px;
+        --radius: 6px;
+        --radius-lg: 12px;
+        --radius-full: 999px;
+        /* 按钮尺寸 */
+        --btn-sm: 6px 12px;
+        --btn-md: 8px 16px;
+        --btn-lg: 12px 24px;
+        /* 阴影 - 仅两层简约 */
+        --shadow-sm: 0 1px 2px 0 rgba(0,0,0,.05);
+        --shadow: 0 2px 6px rgba(0,0,0,.05);
+        --shadow-md: 0 4px 12px rgba(0,0,0,.08);
+        /* 动效 */
+        --ease: cubic-bezier(0.4, 0, 0.2, 1);
+        --duration: 150ms;
+        /* 旧兼容变量（过渡期内保留） */
+        --bg: #f9fafb;
+        --bg-grad-start: #f9fafb;
+        --bg-grad-end: #f3f4f6;
+        --card: #ffffff;
+        --ink: var(--gray-9);
+        --sub: var(--gray-5);
+        --line: var(--gray-2);
+        --accent: var(--brand);
+        --accent-strong: var(--brand-dark);
+        --accent-soft: #e0f2fe;
+        --ok: var(--success);
+        --err: var(--error);
+      }
+      body[data-theme="dark"] {
+        /* 暗色模式覆盖 */
+        --bg: var(--gray-9);
+        --bg-grad-start: var(--gray-9);
+        --bg-grad-end: var(--gray-8);
+        --card: var(--gray-8);
+        --ink: var(--gray-0);
+        --sub: var(--gray-3);
+        --line: var(--gray-7);
+        --accent: var(--brand);
+        --accent-strong: var(--brand-dark);
+        --accent-soft: rgba(14, 165, 233, .12);
+        --ok: var(--success);
+        --err: var(--error);
+        /* 暗色阴影降低透明度 */
+        --shadow-sm: 0 1px 2px rgba(0,0,0,.15);
+        --shadow: 0 2px 6px rgba(0,0,0,.2);
+        --shadow-md: 0 4px 12px rgba(0,0,0,.25);
+      }
+        body {
+          margin: 0;
+          background: var(--bg);
+          color: var(--ink);
+          font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+          font-size: 14px;
+          line-height: 1.5;
+          position: relative;
+          overflow-x: hidden;
+          transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
+        }
+        #bgFxLayer {
+          position: fixed;
+          inset: 0;
+          pointer-events: none;
+          z-index: 0;
+          overflow: hidden;
+          opacity: 1;
+          transition: opacity 220ms var(--ease);
+        }
+        .bg-fx-blob {
+          position: absolute;
+          border-radius: 999px;
+          filter: blur(14px);
+          opacity: 0.24;
+          transform: translate3d(0, 0, 0) scale(0.92);
+          transition: transform 7400ms var(--ease), background 10000ms var(--ease), left 7400ms var(--ease), top 7400ms var(--ease), width 7400ms var(--ease), height 7400ms var(--ease);
+          animation: blobBreath 20s ease-in-out infinite;
+          will-change: transform, opacity, left, top, width, height;
+        }
+        @keyframes blobBreath {
+          0% { transform: translate3d(0, 0, 0) scale(0.9); }
+          50% { transform: translate3d(0, 0, 0) scale(1.06); }
+          100% { transform: translate3d(0, 0, 0) scale(0.92); }
+        }
+        body[data-bgfx="off"] #bgFxLayer {
+          opacity: 0;
+        }
+        .wrap {
+          max-width: 1160px;
+          margin: 24px auto;
+          padding: 0 16px 32px;
+          position: relative;
+          z-index: 1;
+        }
+       .card {
+         background: var(--card);
+         border: 1px solid var(--line);
+         border-radius: var(--radius-lg);
+         padding: 24px;
+         margin-bottom: 16px;
+         box-shadow: var(--shadow);
+         transition: box-shadow var(--duration) var(--ease);
+       }
+       .card:hover {
+         box-shadow: var(--shadow-md);
+       }
+       h1 {
+         margin: 0 0 8px;
+         font-size: 24px;
+         font-weight: 600;
+       }
+       h2 {
+         margin: 0 0 8px;
+         font-size: 16px;
+         font-weight: 600;
+       }
+       .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+       /* ===== 表单控件 ===== */
+        .input, .select, .textarea {
+          border: 1px solid var(--line);
+          border-radius: var(--radius);
+          padding: 8px 12px;
+          font-size: 14px;
+          line-height: 1.5;
+          background: var(--card);
+          color: var(--ink);
+          transition: border-color var(--duration) var(--ease),
+            box-shadow var(--duration) var(--ease);
+        }
+        .input:focus, .select:focus, .textarea:focus, .textarea-code:focus {
+          outline: none;
+          border-color: var(--accent);
+          box-shadow: 0 0 0 2px var(--accent-soft);
+        }
+        input[type="checkbox"] {
+          accent-color: var(--accent);
+        }
+        body[data-theme="dark"] input[type="checkbox"] {
+          color-scheme: dark;
+          accent-color: var(--accent);
+        }
+       /* ===== 按钮体系 ===== */
+       .btn {
+         display: inline-flex;
+         align-items: center;
+         justify-content: center;
+         gap: 4px;
+          padding: var(--btn-md);
+          font-size: 14px;
+         font-weight: 500;
+         line-height: 1;
+         border-radius: var(--radius);
+         border: 1px solid transparent;
+         cursor: pointer;
+         transition: all var(--duration) var(--ease);
+         user-select: none;
+       }
+        .btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        .btn-lg {
+          padding: var(--btn-lg);
+          font-size: 15px;
+        }
+        .btn.loading {
+          pointer-events: none;
+          opacity: 0.7;
+        }
+        .btn.loading::after {
+          content: "";
+          display: inline-block;
+          width: 14px;
+          height: 14px;
+          margin-left: 6px;
+          border: 2px solid currentColor;
+          border-top-color: transparent;
+          border-radius: 50%;
+          animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin {
+          to {
+            transform: rotate(360deg);
+          }
+        }
+       /* 主按钮 */
+       .btn-primary {
+         background: linear-gradient(135deg, var(--brand), var(--brand-dark));
+         color: #fff;
+         border-color: var(--brand-dark);
+       }
+       .btn-primary:hover:not(:disabled) {
+         filter: brightness(1.05);
+       }
+       /* 次按钮 */
+       .btn-secondary {
+         background: var(--card);
+         color: var(--ink);
+         border-color: var(--line);
+       }
+       .btn-secondary:hover:not(:disabled) {
+         border-color: var(--accent);
+         color: var(--accent);
+       }
+       /* 文字按钮 */
+       .btn-text {
+         background: transparent;
+         color: var(--accent);
+         border-color: transparent;
+       }
+       .btn-text:hover:not(:disabled) {
+         text-decoration: underline;
+       }
+       /* 危险按钮 */
+       .btn-danger {
+         background: var(--error);
+         color: #fff;
+         border-color: var(--error);
+       }
+       .btn-danger:hover:not(:disabled) {
+         filter: brightness(1.05);
+       }
+       /* ===== 表格 ===== */
+         .table {
+           width: 100%;
+           border-collapse: separate;
+           border-spacing: 0;
+           font-size: 14px;
+           table-layout: fixed;
+         }
+        .table th {
+          background: var(--gray-1);
+          color: var(--gray-6);
+          font-weight: 500;
+          text-align: left;
+         padding: 12px 8px;
+          border-bottom: 2px solid var(--line);
+        }
+        .table-container {
+          position: relative;
+        }
+        .table-container .table thead th {
+          position: sticky;
+          top: 0;
+          z-index: 4;
+          background: var(--gray-1);
+          box-shadow: 0 1px 0 var(--line);
+        }
+        .table td {
+          padding: 12px 8px;
+          border-bottom: 1px solid var(--line);
+          vertical-align: middle;
+        }
+        .table th:last-child,
+        .table td:last-child {
+          min-width: 120px;
+          width: 132px;
+          white-space: nowrap;
+        }
+       .table tbody tr:hover {
+         background: color-mix(in srgb, var(--accent-soft) 50%, transparent);
+       }
+      .search-row-active td {
+        background: color-mix(in srgb, var(--accent-soft) 78%, var(--card));
+      }
+      .doc-item.doc-active {
+        background: color-mix(in srgb, var(--accent-soft) 82%, var(--card));
+      }
+      .muted { color: var(--sub); font-size: 13px; }
+      .ok { color: var(--ok); }
+      .err { color: var(--err); }
+       /* ===== 标签 ===== */
+       .pill {
+         display: inline-block;
+         padding: 4px 10px;
+         border-radius: var(--radius-full);
+         font-size: 12px;
+         font-weight: 500;
+       }
+       .pill-success { background: color-mix(in srgb, var(--success) 12%, transparent); color: var(--success); }
+       .pill-warning { background: color-mix(in srgb, var(--warning) 12%, transparent); color: var(--warning); }
+       .pill-error   { background: color-mix(in srgb, var(--error) 12%, transparent); color: var(--error); }
+       .pill-info    { background: color-mix(in srgb, var(--info) 12%, transparent); color: var(--info); }
+      .progressline { font-size:12px; color:var(--sub); }
+       /* ===== 进度条 ===== */
+       .pwrap { width: 260px; }
+       .pbar {
+         height: 4px;
+         border-radius: var(--radius-full);
+         overflow: hidden;
+         background: var(--gray-2);
+         margin-bottom: 6px;
+       }
+       .pfill {
+         height: 100%;
+         background: var(--brand);
+         transition: width var(--duration) var(--ease);
+       }
+       .pfill.done { background: var(--success); }
+       .pfill.fail { background: var(--error); }
+       /* ===== 预览文本域 ===== */
+         .textarea-code {
+           width: 100%;
+           min-height: 420px;
+           font-family: Consolas, Monaco, monospace;
+           font-size: 14px;
+           line-height: 1.5;
+           background: var(--card);
+           color: var(--ink);
+           caret-color: var(--ink);
+           border: 1px solid var(--line);
+           border-radius: var(--radius);
+           padding: 8px 12px;
+           resize: vertical;
+          }
+        .textarea-code::placeholder {
+          color: var(--sub);
+        }
+        body[data-theme="dark"] .textarea-code {
+          background: var(--gray-8);
+        }
+        /* ===== 弱提示 ===== */
+        .weak-hint {
+          color: var(--sub);
+          font-size: 12px;
+          opacity: 0;
+          transition: opacity var(--duration) var(--ease);
+        }
+        .weak-hint.show {
+          opacity: 1;
+        }
+        /* ===== 图标按钮 ===== */
+        .btn-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
+          padding: 0;
+          border-radius: var(--radius);
+          border: 1px solid transparent;
+          background: transparent;
+          color: var(--gray-5);
+          cursor: pointer;
+          transition: all var(--duration) var(--ease);
+        }
+        .btn-icon:hover {
+          background: var(--gray-1);
+          color: var(--accent);
+        }
+        .btn-icon svg {
+          width: 18px;
+          height: 18px;
+        }
+        .btn-icon-danger {
+          color: var(--error);
+        }
+        .btn-icon-danger:hover {
+          background: color-mix(in srgb, var(--error) 10%, transparent);
+        }
+        /* ===== 条目信息展示 ===== */
+        .doc-item {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 8px;
+          width: 100%;
+          min-width: 0;
+          border-radius: var(--radius);
+          transition: background var(--duration) var(--ease);
+        }
+        .doc-item:hover {
+          background: var(--gray-1);
+        }
+        .doc-filename {
+          font-weight: 500;
+          color: var(--ink);
+          flex: 1;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .doc-meta {
+          display: flex;
+          gap: 8px;
+          max-width: 0;
+          overflow: hidden;
+          opacity: 0;
+          transition: opacity var(--duration) var(--ease), max-width var(--duration) var(--ease);
+          font-size: 12px;
+          color: var(--sub);
+        }
+        .doc-item:hover .doc-meta {
+          max-width: 360px;
+          opacity: 1;
+        }
+        .doc-meta-item {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          cursor: pointer;
+          padding: 2px 6px;
+          border-radius: var(--radius-sm);
+          background: var(--gray-0);
+          max-width: 180px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .doc-meta-item:hover {
+          background: var(--accent-soft);
+          color: var(--accent);
+        }
+        .doc-actions {
+          display: flex;
+          gap: 4px;
+          justify-content: flex-end;
+          align-items: center;
+        }
+        /* ===== 模态窗 ===== */
+       .modal {
+         position: fixed;
+         inset: 0;
+         background: rgba(15, 23, 42, 0.4);
+         backdrop-filter: blur(9px) saturate(125%);
+         -webkit-backdrop-filter: blur(9px) saturate(125%);
+         display: none;
+         align-items: center;
+         justify-content: center;
+         z-index: 999;
+       }
+       .modal.open { display: flex; }
+       .modal-card {
+          width: min(640px, 92vw);
+          background: color-mix(in srgb, #ffffff 62%, transparent);
+          backdrop-filter: blur(18px) saturate(150%);
+          -webkit-backdrop-filter: blur(18px) saturate(150%);
+          border: 1px solid color-mix(in srgb, var(--line) 68%, #ffffff 32%);
+          border-radius: var(--radius-lg);
+          padding: 24px;
+          box-shadow: 0 10px 28px rgba(2, 8, 23, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.36);
+        }
+      .modal-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+      .modal-result { min-height: 20px; font-size: 13px; }
+      .guide-markdown {
+        max-height: 68vh;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: color-mix(in srgb, var(--card) 90%, var(--accent-soft));
+        padding: 12px 14px;
+        line-height: 1.6;
+      }
+      .guide-markdown h1,
+      .guide-markdown h2,
+      .guide-markdown h3 {
+        margin: 8px 0;
+        color: var(--ink);
+      }
+      .guide-markdown h1 { font-size: 20px; }
+      .guide-markdown h2 { font-size: 16px; }
+      .guide-markdown h3 { font-size: 14px; }
+      .guide-markdown p,
+      .guide-markdown li {
+        color: var(--ink);
+        font-size: 14px;
+      }
+      .guide-markdown ul,
+      .guide-markdown ol {
+        padding-left: 20px;
+        margin: 8px 0;
+      }
+      .guide-markdown code {
+        background: var(--gray-1);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 12px;
+      }
+      body[data-theme="dark"] .guide-markdown {
+        background: #1a2735;
+        border-color: #324357;
+      }
+      body[data-theme="dark"] .guide-markdown code {
+        background: #223143;
+        border-color: #324357;
+      }
+      .fields-table-wrap {
+        max-height: 52vh;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+      }
+      .fields-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+      .fields-table th,
+      .fields-table td {
+        padding: 8px;
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+      }
+      .fields-table th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: var(--gray-1);
+        color: var(--gray-6);
+      }
+      .fields-table input[type="text"],
+      .fields-table input[type="password"],
+      .fields-table input[type="number"],
+      .fields-table select {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .provider-actions {
+        display: flex;
+        gap: 6px;
+        justify-content: flex-end;
+        flex-wrap: nowrap;
+      }
+      .provider-actions .btn {
+        padding: var(--btn-sm);
+        font-size: 12px;
+        border-radius: var(--radius-sm);
+        white-space: nowrap;
+      }
+      .provider-check {
+        display: flex;
+        justify-content: center;
+      }
+      .provider-detail {
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: color-mix(in srgb, var(--card) 88%, var(--accent-soft));
+      }
+      .provider-detail-grid {
+        display: grid;
+        grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1.2fr) 72px 72px 72px 72px;
+        gap: 8px;
+      }
+      .provider-detail-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+      }
+      .provider-detail-item label {
+        font-size: 12px;
+        color: var(--sub);
+      }
+      .provider-mini-input {
+        width: 5ch !important;
+        min-width: 5ch;
+        text-align: center;
+        padding-left: 6px;
+        padding-right: 6px;
+      }
+      .provider-timeout-input::-webkit-outer-spin-button,
+      .provider-timeout-input::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      .provider-timeout-input {
+        -moz-appearance: textfield;
+        appearance: textfield;
+      }
+      .provider-temp-input {
+        -moz-appearance: textfield;
+        appearance: textfield;
+      }
+      .provider-temp-input::-webkit-outer-spin-button,
+      .provider-temp-input::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      .provider-row-main td {
+        vertical-align: middle;
+      }
+      .provider-expand {
+        padding: 6px 8px;
+      }
+      .provider-model-editor {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .provider-model-editor .select,
+      .provider-model-editor .input {
+        min-width: 0;
+      }
+      .provider-model-editor .btn {
+        padding: var(--btn-sm);
+        min-width: 28px;
+      }
+      .provider-key-row {
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+      .provider-key-row .input {
+        flex: 1;
+        padding-right: 34px;
+      }
+      .provider-key-toggle {
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 24px;
+        height: 24px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        background: transparent;
+        color: var(--sub);
+        cursor: pointer;
+        border-radius: 6px;
+      }
+      .provider-key-toggle:hover {
+        color: var(--ink);
+        background: color-mix(in srgb, var(--accent) 16%, transparent);
+      }
+      .provider-key-toggle svg {
+        width: 16px;
+        height: 16px;
+      }
+      body[data-theme="dark"] .provider-detail {
+        background: #1a2735;
+        border-color: #324357;
+      }
+      @media (max-width: 1000px) {
+        .provider-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      body[data-theme="dark"] .fields-table th {
+        background: #223143;
+        color: #c8d3e0;
+        border-bottom-color: #324357;
+      }
+      body[data-theme="dark"] .fields-table .input,
+      body[data-theme="dark"] .fields-table .select,
+      body[data-theme="dark"] .fields-table input[type="text"],
+      body[data-theme="dark"] .fields-table select {
+        background: #1a2735;
+        color: #e6edf5;
+        border-color: #324357;
+      }
+      /* 复选框暗色模式 */
+      body[data-theme="dark"] input[type="checkbox"] {
+        accent-color: var(--accent);
+        background: #1a2735;
+        border-color: #324357;
+      }
+      body[data-theme="dark"] .table input[type="checkbox"],
+      body[data-theme="dark"] .fields-table input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+      }
+      .field-tag {
+        font-size: 11px;
+        padding: 2px 6px;
+        border-radius: var(--radius-full);
+        border: 1px solid var(--line);
+        color: var(--sub);
+      }
+      .hero {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+      .hero-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-left: auto;
+      }
+      .theme-mode-btn {
+        background: color-mix(in srgb, var(--card) 86%, var(--accent-soft));
+        border-color: color-mix(in srgb, var(--line) 78%, var(--accent-soft));
+        color: var(--ink);
+      }
+      body[data-theme="dark"] .theme-mode-btn {
+        background: color-mix(in srgb, #162233 68%, #26384a 32%);
+        border-color: #3d5670;
+        color: #dbeafe;
+      }
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin: 12px 0 18px;
+      }
+      /* ===== 主布局 - 栅格系统 ===== */
+      .main-layout {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .upload-section {
+        grid-column: 1 / -1;
+      }
+      .upload-section.drag-over {
+        border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+        background: color-mix(in srgb, var(--card) 84%, var(--accent-soft));
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+      }
+      .bottom-grid {
+        display: grid;
+        grid-template-columns: 0.6fr 0.4fr;
+        gap: 16px;
+        align-items: stretch;
+      }
+      .section-card {
+        background: color-mix(in srgb, #ffffff 64%, transparent);
+        backdrop-filter: blur(16px) saturate(300%);
+        -webkit-backdrop-filter: blur(16px) saturate(150%);
+        border: 1px solid color-mix(in srgb, var(--line) 72%, #ffffff 28%);
+        border-radius: var(--radius-lg);
+        padding: 16px;
+        box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.42);
+        display: flex;
+        flex-direction: column;
+        margin: 0;
+      }
+      .bottom-grid .section-card {
+        min-height: 520px;
+      }
+      .upload-section .section-header,
+      .bottom-grid .section-card .section-header {
+        min-height: 46px;
+        box-sizing: border-box;
+      }
+      .section-body {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .bottom-grid .section-body {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+      }
+      .table-container {
+        overflow: auto;
+        min-height: 0;
+      }
+      .upload-section .table-container {
+        max-height: 230px;
+      }
+      .upload-click-zone {
+        cursor: pointer;
+      }
+      .search-table-wrap {
+        height: 420px;
+        max-height: 420px;
+      }
+      .bottom-grid .table-container {
+        flex: 1;
+        min-height: 220px;
+      }
+      .bulk-actions {
+        margin-top: 8px;
+        padding-top: 10px;
+        border-top: 1px solid var(--line);
+      }
+      /* ===== 滚动条 ===== */
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: var(--gray-4) var(--gray-1);
+      }
+      *::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+      }
+      *::-webkit-scrollbar-track {
+        background: var(--gray-1);
+      }
+      *::-webkit-scrollbar-thumb {
+        background: var(--gray-4);
+        border-radius: 999px;
+        border: 2px solid var(--gray-1);
+      }
+      body[data-theme="dark"] * {
+        scrollbar-color: #374151 #111827;
+      }
+      body[data-theme="dark"] *::-webkit-scrollbar-track {
+        background: #111827;
+      }
+      body[data-theme="dark"] *::-webkit-scrollbar-thumb {
+        background: #374151;
+        border-color: #111827;
+      }
+      .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+        padding: 8px 10px 12px;
+        border-bottom: 1px solid var(--line);
+        background: color-mix(in srgb, #ffffff 58%, transparent);
+        backdrop-filter: blur(12px) saturate(145%);
+        -webkit-backdrop-filter: blur(12px) saturate(145%);
+        border-radius: var(--radius);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.38);
+      }
+      .section-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--ink);
+        margin: 0;
+      }
+      .section-head-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      .section-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .upload-section .section-actions {
+        margin-left: auto;
+        justify-content: flex-end;
+      }
+      .top-status-msg {
+        min-width: 220px;
+        text-align: right;
+      }
+      .top-right-actions {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .search-input-wrap {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        min-width: 280px;
+      }
+      .search-input-wrap .input {
+        min-width: 280px;
+        padding-right: 52px;
+      }
+      .search-clear-btn {
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        transform: translateY(-50%);
+        border: 0;
+        background: transparent;
+        color: var(--sub);
+        cursor: pointer;
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 1;
+        padding: 4px 6px;
+        display: none;
+      }
+      .search-clear-btn:hover {
+        background: color-mix(in srgb, var(--accent) 16%, transparent);
+        color: var(--ink);
+      }
+      .th-sort-btn {
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 4px;
+        cursor: pointer;
+        padding: 0;
+        width: 100%;
+      }
+      .th-sort-btn:hover {
+        color: var(--accent-strong);
+      }
+      .th-sort-btn .arrow {
+        font-size: 11px;
+        opacity: 0.85;
+      }
+      .search-time-select {
+        min-width: 110px;
+      }
+      .doc-clickable {
+        cursor: pointer;
+      }
+      
+      .upload-tip {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--sub);
+      }
+      .empty-state {
+        margin-top: 10px;
+        padding: 12px;
+        border: 1px dashed var(--line);
+        border-radius: 12px;
+        background: color-mix(in srgb, var(--card) 85%, var(--accent-soft));
+        box-shadow: var(--shadow-sm);
+        text-align: center;
+      }
+      .search-empty-state {
+        min-height: 420px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+      #uploadEmpty .upload-empty-icon {
+        width: 56px;
+        height: 56px;
+        display: block;
+        margin: 0 auto 2px;
+        opacity: 0.46;
+      }
+      .preview-actions {
+        margin-left: auto;
+      }
+       /* ===== 响应式 ===== */
+        @media (max-width: 900px) {
+          .bottom-grid { grid-template-columns: 1fr; }
+          .bottom-grid .section-card { min-height: 420px; }
+        }
+        @media (max-width: 768px) {
+          .section-actions { width: 100%; }
+        }
+        @media (max-width: 480px) {
+          .row { flex-direction: column; align-items: stretch; }
+          .btn { width: 100%; }
+          .modal-card { padding: 16px; }
+          .table { min-width: 480px; }
+         }
+      /* ===== 步骤条 ===== */
+      .step-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 11px 14px;
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--line);
+        background: color-mix(in srgb, var(--card) 86%, var(--accent-soft));
+        box-shadow: var(--shadow-sm);
+      }
+      .step-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--accent-soft);
+        color: var(--accent-strong);
+        flex-shrink: 0;
+      }
+      .step-icon svg {
+        width: 18px;
+        height: 18px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.8;
+      }
+      .step-title {
+        font-size: 15px;
+        line-height: 1.2;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      body[data-theme="dark"] .step-item {
+        background: #1d2a38;
+        border-color: #324357;
+      }
+      body[data-theme="dark"] .step-icon {
+        background: #22394d;
+        color: #8fd7f8;
+      }
+      body[data-theme="dark"] .table th {
+        background: #223143;
+        color: #c8d3e0;
+        border-bottom-color: #324357;
+      }
+      body[data-theme="dark"] .table-container .table thead th {
+        background: #223143;
+        box-shadow: 0 1px 0 #324357;
+      }
+      body[data-theme="dark"] .search-row-active td {
+        background: #2b455c;
+      }
+      body[data-theme="dark"] .doc-item.doc-active {
+        background: #33526d;
+      }
+      .preview-render {
+        flex: 1;
+        min-height: 420px;
+        max-height: 420px;
+        height: 420px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--gray-0);
+        padding: 10px;
+        font-size: 13px;
+        color: var(--ink);
+        white-space: pre-wrap;
+        line-height: 1.5;
+      }
+      .preview-render mark {
+        background: #ffe39a;
+        color: inherit;
+        border-radius: 3px;
+        padding: 0 1px;
+      }
+      body[data-theme="dark"] .preview-render {
+        background: #182331;
+        border-color: #324357;
+        color: #c8d3e0;
+      }
+      body[data-theme="dark"] .section-card {
+        background: color-mix(in srgb, #0f1621 40%, transparent);
+        border-color: #3d5670;
+        box-shadow: var(--shadow), inset 0 1px 0 rgba(150, 196, 235, 0.14);
+      }
+      body[data-theme="dark"] .section-header {
+        background: color-mix(in srgb, #162233 62%, transparent);
+        box-shadow: inset 0 1px 0 rgba(150, 196, 235, 0.14);
+      }
+      body[data-theme="dark"] .modal {
+        background: rgba(2, 8, 23, 0.56);
+      }
+      body[data-theme="dark"] .modal-card {
+        background: color-mix(in srgb, #162233 62%, transparent);
+        border-color: #3d5670;
+        box-shadow: 0 12px 32px rgba(2, 8, 23, 0.36), inset 0 1px 0 rgba(150, 196, 235, 0.14);
+      }
+      body[data-theme="dark"] .preview-render mark {
+        background: #735c18;
+      }
+      @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+        .section-card,
+        .section-header,
+        .modal-card {
+          background: var(--card);
+        }
+        .modal {
+          background: rgba(0,0,0,.45);
+        }
+        body[data-theme="dark"] .section-card,
+        body[data-theme="dark"] .section-header,
+        body[data-theme="dark"] .modal-card {
+          background: #162233;
+        }
+      }
+      .preview-edit-box {
+        min-height: 420px;
+        max-height: 420px;
+        height: 420px;
+      }
+      body[data-theme="dark"] .doc-meta-item {
+        background: #1a2735;
+        color: #b7c4d4;
+      }
+      body[data-theme="dark"] .doc-item:hover {
+        background: #1f2d3b;
+      }
+      body[data-theme="dark"] .empty-state {
+        background: #1a2735;
+        border-color: #324357;
+      }
+      @media (max-width: 980px) {
+        .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 640px) {
+        .steps { grid-template-columns: 1fr; gap: 8px; }
+        .step-item { padding: 10px 12px; }
+      }
+     </style>
+  </head>
+  <body>
+    <div id="bgFxLayer" aria-hidden="true"></div>
+    <div class="wrap">
+      <div class="hero">
+        <div>
+          <h1>Aindexer V1.6</h1>
+          <div class="muted">简洁、轻量的本地文献索引工作台</div>
+        </div>
+        <div class="hero-actions">
+          <button id="bgFxToggleBtn" class="btn btn-secondary" onclick="toggleBackgroundFx()">✨ 动效开</button>
+          <button id="themeToggleBtn" class="btn theme-mode-btn" onclick="toggleTheme()">🌙 暗色</button>
+        </div>
+      </div>
+      <div class="row" style="margin:10px 0 14px">
+        <button class="btn btn-secondary" onclick="openGuideWindow()">指引</button>
+        <button class="btn btn-secondary" onclick="openConfigWindow()">配置接口</button>
+        <button class="btn btn-secondary" onclick="openFieldsWindow()">配置索引字段</button>
+        <button class="btn btn-secondary" onclick="backupExportAll(this)">导出全部</button>
+        <button class="btn btn-secondary" onclick="triggerBackupImport()">导入</button>
+        <input id="backupImportInput" type="file" accept=".zip" style="display:none" onchange="backupImportAll(this)" />
+        <div class="top-right-actions">
+          <span id="providerResult" class="muted top-status-msg"></span>
+          <button class="btn btn-danger" onclick="exitApp()">退出</button>
+        </div>
+      </div>
+
+      <div class="main-layout">
+        <!-- 上传区 - 全宽 -->
+        <section id="uploadSection" class="section-card upload-section">
+          <div class="section-header">
+            <div class="section-head-left">
+              <h2 class="section-title">文献上传与处理</h2>
+              <div class="upload-tip weak-hint" id="uploadHint" style="margin:0">支持一次选择多个文件，选择后自动上传；也支持将文件直接拖拽到上传区；索引完成后会自动进入下方搜索区。</div>
+            </div>
+            <div class="section-actions">
+              <input type="file" id="fileInput" multiple onchange="uploadSelectedFiles()" style="display:none" />
+              <select id="indexProvider" class="select" title="模型"></select>
+              <button class="btn btn-secondary btn-lg" onclick="triggerFilePicker()">选择文件</button>
+              <button class="btn btn-primary btn-lg" onclick="runAllIndexing(this)">一键生成</button>
+              <button class="btn btn-secondary btn-lg" onclick="refreshUploadPanel(this)">刷新</button>
+            </div>
+          </div>
+          <div class="section-body">
+            <div id="indexResult" class="weak-hint"></div>
+            <div id="uploadTableWrap" class="table-container upload-click-zone" onclick="openFilePickerFromZone(event)">
+              <table class="table">
+                <thead><tr><th style="width:40px"><input type="checkbox" id="uploadSelectAll" onclick="toggleUploadSelectAll()"></th><th style="width:38%">文件名</th><th style="width:14%">状态</th><th style="width:30%">信息</th><th style="width:14%;white-space:nowrap">操作</th></tr></thead>
+                <tbody id="docRows"></tbody>
+              </table>
+            </div>
+            <div class="section-actions bulk-actions" id="uploadBulkActions">
+              <button class="btn btn-secondary" onclick="pauseSelectedUploads()">暂停选中</button>
+              <button class="btn btn-danger" onclick="deleteSelectedUploads()">删除选中</button>
+            </div>
+            <div id="uploadEmpty" class="empty-state upload-click-zone" style="display:none" onclick="triggerFilePicker()">
+              <svg class="upload-empty-icon" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7" fill="none" aria-hidden="true">
+                <rect x="4" y="4" width="16" height="16" rx="4" />
+                <path d="M8 12h8" />
+                <path d="M12 8v8" />
+              </svg>
+              <div>点击此区域或拖拽文件上传</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 下方双栏 -->
+        <div class="bottom-grid">
+          <!-- 左：搜索与导出 -->
+          <section class="section-card">
+            <div class="section-header">
+              <h2 class="section-title">搜索与导出</h2>
+              <div class="section-actions">
+                <div class="search-input-wrap">
+                  <input id="searchQ" class="input" placeholder="搜索（支持模糊匹配与索引全文精确命中）" />
+                  <button id="searchClearBtn" class="search-clear-btn" type="button" onclick="clearSearchInput()" title="清空搜索">×</button>
+                </div>
+                <button class="btn btn-primary" onclick="searchDocs(this)">搜索</button>
+                <button class="btn btn-secondary" onclick="showAllIndexed(this)">全部</button>
+                <select id="searchTimeFieldPicker" class="select search-time-select" title="时间栏显示" onchange="onSearchTimeFieldChange(this.value)">
+                  <option value="year">年份</option>
+                  <option value="created_at">生成时间</option>
+                </select>
+              </div>
+            </div>
+            <div class="section-body">
+              <div class="table-container search-table-wrap">
+                <table class="table">
+                  <thead><tr><th style="width:40px"><input type="checkbox" id="selectAll" onclick="toggleSelectAll()"></th><th style="width:66%"><button id="sortHeaderFilename" class="th-sort-btn" onclick="setSearchSort('filename')">文件名 <span class="arrow">↕</span></button></th><th style="width:18%;white-space:nowrap"><button id="sortHeaderTime" class="th-sort-btn" onclick="setSearchSort('time')">年份 <span class="arrow">↕</span></button></th><th style="white-space:nowrap">操作</th></tr></thead>
+                  <tbody id="searchRows"></tbody>
+                </table>
+              </div>
+              <div id="searchEmpty" class="empty-state search-empty-state" style="display:none">
+                <svg viewBox="0 0 24 24" width="48" height="48" stroke="currentColor" stroke-width="1.5" fill="none"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <div>暂无已索引文献</div>
+              </div>
+              <div class="section-actions" style="margin-top:12px; padding-top:12px; border-top:1px solid var(--line);">
+                <button class="btn btn-secondary" onclick="exportBatch()">导出选中</button>
+                <button class="btn btn-secondary" onclick="exportAll()">导出全部</button>
+                <button class="btn btn-danger" onclick="deleteSelectedDocs()">删除选中</button>
+                <span id="searchCountHint" class="muted" style="margin-left:auto">当前索引总数：0</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- 右：索引预览 -->
+          <section class="section-card">
+            <div class="section-header">
+              <h2 class="section-title">索引预览</h2>
+              <div class="section-actions">
+                <input id="previewDocId" class="input" placeholder="输入DocID" style="min-width:140px" />
+                <button class="btn btn-secondary" onclick="previewIndex()">加载</button>
+              </div>
+            </div>
+            <div class="section-body">
+              <div id="previewStatus" class="weak-hint">支持快速复制全文索引或 APA 引用。</div>
+              <div id="previewRender" class="preview-render" style="display:block"></div>
+              <textarea id="previewBox" class="textarea-code preview-edit-box" placeholder="这里显示 Markdown 索引内容" style="display:none;flex:1"></textarea>
+              <div class="section-actions" style="margin-top:8px;">
+                <button class="btn btn-secondary" id="previewEditBtn" onclick="togglePreviewEdit()">编辑</button>
+                <button class="btn btn-secondary" onclick="copyPreviewMarkdown()">复制索引</button>
+                  <button class="btn btn-secondary" onclick="copyApaCitation()">复制APA</button>
+                </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+    <div id="configModal" class="modal" onclick="onModalBackdrop(event)">
+      <div class="modal-card" style="width:min(700px,92vw)">
+        <div class="modal-head">
+          <h2 style="margin:0">Provider 配置</h2>
+          <button class="btn-icon" onclick="closeConfigWindow()" title="关闭">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="row" style="margin-bottom:10px">
+          <button class="btn btn-secondary" onclick="addProviderRow()">新增接口</button>
+          <button class="btn btn-primary" onclick="saveProviderConfigs()">保存</button>
+          <button class="btn btn-text" onclick="resetProviderDefaults()">恢复默认</button>
+          <span id="providerModalResult" class="modal-result muted"></span>
+        </div>
+        <div class="fields-table-wrap">
+          <table class="fields-table">
+            <thead>
+              <tr>
+                <th style="width:24%">接口名</th>
+                <th style="width:40%">模型</th>
+                <th style="width:36%">操作</th>
+              </tr>
+            </thead>
+            <tbody id="providerRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="fieldsModal" class="modal" onclick="onFieldsModalBackdrop(event)">
+      <div class="modal-card" style="width:min(980px,94vw)">
+        <div class="modal-head">
+          <h2 style="margin:0">索引字段配置</h2>
+          <button class="btn btn-text" onclick="closeFieldsWindow()">关闭</button>
+        </div>
+        <div class="row" style="margin-bottom:10px">
+          <button class="btn btn-secondary" onclick="addCustomFieldRow()">新增字段</button>
+          <button class="btn btn-primary" onclick="saveFieldsConfig()">保存</button>
+          <span id="fieldsModalResult" class="modal-result muted"></span>
+        </div>
+        <div class="fields-table-wrap">
+          <table class="fields-table">
+            <thead>
+              <tr>
+                <th style="width:18%">字段Key</th>
+                <th style="width:20%">显示名</th>
+                <th style="width:14%">类型</th>
+                <th style="width:10%">必填</th>
+                <th style="width:10%">启用</th>
+                <th style="width:16%">标记</th>
+                <th style="width:12%">操作</th>
+              </tr>
+            </thead>
+            <tbody id="fieldsRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="guideModal" class="modal" onclick="onGuideModalBackdrop(event)">
+      <div class="modal-card" style="width:min(760px,94vw)">
+        <div class="modal-head">
+          <h2 style="margin:0">新手使用指引</h2>
+          <button class="btn-icon" onclick="closeGuideWindow()" title="关闭">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div id="guideContent" class="guide-markdown muted">正在加载教程内容...</div>
+      </div>
+    </div>
+
+    <script>
+      // 弱提示自动 show/hide
+      function setupWeakHint(selector) {
+        const el = document.querySelector(selector);
+        if (!el) return;
+        const parent = el.closest('section') || el.closest('.row') || el.parentElement;
+        parent.addEventListener('mouseenter', () => el.classList.add('show'));
+        parent.addEventListener('mouseleave', () => el.classList.remove('show'));
+      }
+
+      const api = (p) => `/api${p}`;
+      let providerConfigs = [];
+      let providerDrafts = [];
+      const providerExpanded = new Set();
+      let providerDraftSeq = 0;
+      let providerDraftBaseline = '';
+      let refreshTimer = null;
+      let dotTick = 0;
+      const liveProgress = {};
+      const streamRefs = {};
+      const streamDone = {};
+      const pseudoProgress = {};
+      const selectedUploadDocs = new Set();
+      let uploadRowsCache = [];
+      let uploadDragDepth = 0;
+      const selectedSearchDocs = new Set();
+      let searchRowsCache = [];
+      let indexedTotalCount = 0;
+      let currentPreviewDocId = '';
+      let previewMarkdownRaw = '';
+      let previewEditMode = false;
+      let searchInputTimer = null;
+      let fieldConfigs = [];
+      let searchSortField = 'time';
+      let searchSortDirection = 'desc';
+      let searchTimeField = 'year';
+      const THEME_KEY = 'li_theme';
+      const BG_FX_KEY = 'li_bgfx';
+      const BG_FX_BLOB_COUNT = 8;
+      let bgFxLoopTimer = null;
+      const MODEL_PRESETS = {
+        openai: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'gpt-4o'],
+        deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+        glm: ['glm-4-flash'],
+        openrouter: [
+          'openai/gpt-4o-mini',
+          'openai/gpt-5.2',
+          'anthropic/claude-3.5-sonnet',
+          'google/gemini-2.0-flash-001',
+          'deepseek/deepseek-chat',
+          'meta-llama/llama-3.1-70b-instruct',
+          'moonshotai/kimi-k2-0905',
+        ],
+      };
+      const DEFAULT_PROVIDER_ORDER = ['openai', 'deepseek', 'glm', 'openrouter'];
+      const PROVIDER_CUSTOM_MODELS_KEY = 'li_provider_custom_models';
+      const PROVIDER_RETRIES_KEY = 'li_provider_retries';
+      const FIELD_TYPES = ['text', 'number', 'list'];
+
+      function getBgFxPalette() {
+        const dark = document.body.getAttribute('data-theme') === 'dark';
+        return dark
+          ? [
+              'radial-gradient(circle, rgba(56,189,248,0.34) 0%, rgba(56,189,248,0.12) 56%, transparent 82%)',
+              'radial-gradient(circle, rgba(45,212,191,0.32) 0%, rgba(45,212,191,0.11) 56%, transparent 82%)',
+              'radial-gradient(circle, rgba(251,191,36,0.28) 0%, rgba(251,191,36,0.09) 56%, transparent 82%)',
+              'radial-gradient(circle, rgba(249,115,22,0.26) 0%, rgba(249,115,22,0.08) 56%, transparent 82%)',
+              'radial-gradient(circle, rgba(132,204,22,0.26) 0%, rgba(132,204,22,0.08) 56%, transparent 82%)',
+              'radial-gradient(circle, rgba(96,165,250,0.32) 0%, rgba(96,165,250,0.11) 56%, transparent 82%)',
+            ]
+          : [
+              'radial-gradient(circle, rgba(14,165,233,0.40) 0%, rgba(14,165,233,0.14) 56%, transparent 82%)',
+              'radial-gradient(circle, rgba(16,185,129,0.37) 0%, rgba(16,185,129,0.13) 56%, transparent 82%)',
+              'radial-gradient(circle, rgba(59,130,246,0.36) 0%, rgba(59,130,246,0.12) 56%, transparent 82%)',
+              'radial-gradient(circle, rgba(6,182,212,0.36) 0%, rgba(6,182,212,0.12) 56%, transparent 82%)',
+              'radial-gradient(circle, rgba(245,158,11,0.32) 0%, rgba(245,158,11,0.11) 56%, transparent 82%)',
+              'radial-gradient(circle, rgba(249,115,22,0.32) 0%, rgba(249,115,22,0.11) 56%, transparent 82%)',
+            ];
+      }
+
+      function randomInt(min, max) {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+      }
+
+      function countInScreenBlobs() {
+        return [...document.querySelectorAll('.bg-fx-blob')].filter((b) => b.dataset.inScreen === '1').length;
+      }
+
+      function chooseBlobTarget(blob, vw, vh, size) {
+        const margin = Math.round(size * 0.7);
+        const inScreenNow = blob.dataset.inScreen === '1';
+        const currentInside = countInScreenBlobs();
+        const maxInside = 4;
+
+        let nextInside = false;
+        if (inScreenNow) {
+          nextInside = currentInside <= maxInside ? Math.random() < 0.45 : false;
+        } else {
+          nextInside = currentInside < maxInside && Math.random() < 0.55;
+        }
+
+        if (nextInside) {
+          return {
+            x: randomInt(-Math.round(size * 0.15), vw - Math.round(size * 0.7)),
+            y: randomInt(-Math.round(size * 0.15), vh - Math.round(size * 0.7)),
+            inScreen: true,
+          };
+        }
+
+        const edge = randomInt(0, 3);
+        if (edge === 0) return { x: -margin - randomInt(0, 120), y: randomInt(-margin, vh + margin), inScreen: false };
+        if (edge === 1) return { x: vw + randomInt(0, 120), y: randomInt(-margin, vh + margin), inScreen: false };
+        if (edge === 2) return { x: randomInt(-margin, vw + margin), y: -margin - randomInt(0, 120), inScreen: false };
+        return { x: randomInt(-margin, vw + margin), y: vh + randomInt(0, 120), inScreen: false };
+      }
+
+      function applyBlobColor(blob) {
+        const palette = getBgFxPalette();
+        let idx = Number(blob.dataset.colorIdx || NaN);
+        if (!Number.isFinite(idx)) {
+          idx = randomInt(0, palette.length - 1);
+          blob.dataset.colorIdx = String(idx);
+        }
+        blob.style.background = palette[idx % palette.length];
+      }
+
+      function moveBgBlob(blob, immediate = false) {
+        if (document.body.getAttribute('data-bgfx') === 'off') {
+          blob.style.opacity = '0';
+          return;
+        }
+        const vw = Math.max(window.innerWidth || 1200, 900);
+        const vh = Math.max(window.innerHeight || 800, 640);
+        const size = randomInt(200, 460);
+        const pos = chooseBlobTarget(blob, vw, vh, size);
+        const scale = (Math.random() * 0.32 + 0.86).toFixed(3);
+        const duration = randomInt(14000, 26000);
+
+        if (immediate) {
+          blob.style.transition = 'none';
+        } else {
+          blob.style.transition = `opacity ${Math.round(duration * 0.68)}ms var(--ease), transform ${duration}ms var(--ease), background ${Math.round(duration * 0.46)}ms var(--ease), left ${duration}ms var(--ease), top ${duration}ms var(--ease), width ${duration}ms var(--ease), height ${duration}ms var(--ease)`;
+        }
+
+        blob.style.width = `${size}px`;
+        blob.style.height = `${size}px`;
+        blob.style.left = `${pos.x}px`;
+        blob.style.top = `${pos.y}px`;
+        blob.style.opacity = pos.inScreen ? '0.28' : '0.24';
+        blob.style.transform = `translate3d(0,0,0) scale(${scale})`;
+        blob.dataset.inScreen = pos.inScreen ? '1' : '0';
+        applyBlobColor(blob);
+        blob.style.animationDelay = `${randomInt(0, 12000)}ms`;
+
+        if (immediate) {
+          requestAnimationFrame(() => {
+            blob.style.transition = `opacity ${Math.round(duration * 0.68)}ms var(--ease), transform ${duration}ms var(--ease), background ${Math.round(duration * 0.46)}ms var(--ease), left ${duration}ms var(--ease), top ${duration}ms var(--ease), width ${duration}ms var(--ease), height ${duration}ms var(--ease)`;
+          });
+        }
+
+      }
+
+      function startBackgroundFxLoop() {
+        if (bgFxLoopTimer) window.clearInterval(bgFxLoopTimer);
+        bgFxLoopTimer = window.setInterval(() => {
+          if (document.body.getAttribute('data-bgfx') === 'off') return;
+          const blobs = [...document.querySelectorAll('.bg-fx-blob')];
+          blobs.forEach((blob, idx) => {
+            window.setTimeout(() => moveBgBlob(blob), idx * 180);
+          });
+        }, 6800);
+      }
+
+      function stopBackgroundFxLoop() {
+        if (!bgFxLoopTimer) return;
+        window.clearInterval(bgFxLoopTimer);
+        bgFxLoopTimer = null;
+      }
+
+      function setBackgroundFxEnabled(enabled, persist = true) {
+        document.body.setAttribute('data-bgfx', enabled ? 'on' : 'off');
+        const btn = document.getElementById('bgFxToggleBtn');
+        if (btn) {
+          btn.textContent = enabled ? '✨' : '✨';
+          btn.classList.toggle('btn-primary', enabled);
+          btn.classList.toggle('btn-secondary', !enabled);
+        }
+        if (persist) localStorage.setItem(BG_FX_KEY, enabled ? 'on' : 'off');
+        const blobs = document.querySelectorAll('.bg-fx-blob');
+        blobs.forEach((blob) => {
+          if (enabled) moveBgBlob(blob, true);
+          else blob.style.opacity = '0';
+        });
+        if (enabled) startBackgroundFxLoop();
+        else stopBackgroundFxLoop();
+      }
+
+      function initBackgroundFx() {
+        const layer = document.getElementById('bgFxLayer');
+        if (!layer) return;
+        if (!layer.querySelector('.bg-fx-blob')) {
+          for (let i = 0; i < BG_FX_BLOB_COUNT; i += 1) {
+            const blob = document.createElement('span');
+            blob.className = 'bg-fx-blob';
+            layer.appendChild(blob);
+          }
+        }
+        const saved = localStorage.getItem(BG_FX_KEY);
+        const enabled = saved !== 'off';
+        setBackgroundFxEnabled(enabled, false);
+      }
+
+      function toggleBackgroundFx() {
+        const enabled = document.body.getAttribute('data-bgfx') !== 'off';
+        setBackgroundFxEnabled(!enabled, true);
+      }
+
+      function h(v) {
+        return String(v ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function escapeRegExp(s) {
+        return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      }
+
+      function renderMarkdownToHtml(md) {
+        const src = String(md || '').replace(/\r\n/g, '\n');
+        const lines = src.split('\n');
+        const html = [];
+        let inUl = false;
+        let inOl = false;
+        let inCode = false;
+
+        const closeLists = () => {
+          if (inUl) {
+            html.push('</ul>');
+            inUl = false;
+          }
+          if (inOl) {
+            html.push('</ol>');
+            inOl = false;
+          }
+        };
+
+        const inline = (text) => {
+          let esc = h(text || '');
+          esc = esc.replace(/`([^`]+)`/g, '<code>$1</code>');
+          esc = esc.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+          esc = esc.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+          esc = esc.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+          return esc;
+        };
+
+        for (const rawLine of lines) {
+          const line = rawLine || '';
+          if (line.trim().startsWith('```')) {
+            closeLists();
+            if (!inCode) {
+              html.push('<pre><code>');
+              inCode = true;
+            } else {
+              html.push('</code></pre>');
+              inCode = false;
+            }
+            continue;
+          }
+          if (inCode) {
+            html.push(`${h(line)}\n`);
+            continue;
+          }
+
+          const t = line.trim();
+          if (!t) {
+            closeLists();
+            continue;
+          }
+
+          if (t.startsWith('### ')) {
+            closeLists();
+            html.push(`<h3>${inline(t.slice(4))}</h3>`);
+            continue;
+          }
+          if (t.startsWith('## ')) {
+            closeLists();
+            html.push(`<h2>${inline(t.slice(3))}</h2>`);
+            continue;
+          }
+          if (t.startsWith('# ')) {
+            closeLists();
+            html.push(`<h1>${inline(t.slice(2))}</h1>`);
+            continue;
+          }
+
+          if (/^[-*]\s+/.test(t)) {
+            if (!inUl) {
+              if (inOl) {
+                html.push('</ol>');
+                inOl = false;
+              }
+              html.push('<ul>');
+              inUl = true;
+            }
+            html.push(`<li>${inline(t.replace(/^[-*]\s+/, ''))}</li>`);
+            continue;
+          }
+
+          if (/^\d+\.\s+/.test(t)) {
+            if (!inOl) {
+              if (inUl) {
+                html.push('</ul>');
+                inUl = false;
+              }
+              html.push('<ol>');
+              inOl = true;
+            }
+            html.push(`<li>${inline(t.replace(/^\d+\.\s+/, ''))}</li>`);
+            continue;
+          }
+
+          closeLists();
+          html.push(`<p>${inline(t)}</p>`);
+        }
+
+        if (inCode) html.push('</code></pre>');
+        closeLists();
+        return html.join('');
+      }
+
+      async function withButtonLoading(btnEl, worker) {
+        if (!btnEl) return worker();
+        const wasDisabled = !!btnEl.disabled;
+        btnEl.disabled = true;
+        btnEl.classList.add('loading');
+        try {
+          return await worker();
+        } finally {
+          btnEl.classList.remove('loading');
+          btnEl.disabled = wasDisabled;
+        }
+      }
+
+      function applyTheme(theme) {
+        const realTheme = theme === 'dark' ? 'dark' : 'light';
+        document.body.setAttribute('data-theme', realTheme);
+        const btn = document.getElementById('themeToggleBtn');
+        if (btn) {
+          btn.textContent = realTheme === 'dark' ? '🌙' : '☀️';
+        }
+        if (document.body.getAttribute('data-bgfx') !== 'off') {
+          const blobs = document.querySelectorAll('.bg-fx-blob');
+          blobs.forEach((blob) => moveBgBlob(blob, true));
+        }
+      }
+
+      function initTheme() {
+        const saved = localStorage.getItem(THEME_KEY);
+        if (saved === 'light' || saved === 'dark') {
+          applyTheme(saved);
+          return;
+        }
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        applyTheme(prefersDark ? 'dark' : 'light');
+      }
+
+      function toggleTheme() {
+        const current = document.body.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+        const next = current === 'dark' ? 'light' : 'dark';
+        localStorage.setItem(THEME_KEY, next);
+        applyTheme(next);
+      }
+
+      async function init() {
+        initTheme();
+        initBackgroundFx();
+        bindUploadDragDrop();
+        const searchInput = document.getElementById('searchQ');
+        searchInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            searchDocs();
+          }
+        });
+        searchInput.addEventListener('input', () => {
+          if (searchInputTimer) window.clearTimeout(searchInputTimer);
+          searchInputTimer = window.setTimeout(() => {
+            loadIndexedRows({ autoPreviewFirst: true });
+          }, 160);
+          updateSearchClearButton();
+          renderPreviewKeywordHighlight();
+        });
+        updateSearchClearButton();
+        const previewBox = document.getElementById('previewBox');
+        if (previewBox) {
+          previewBox.addEventListener('input', () => {
+            previewMarkdownRaw = previewBox.value || '';
+            if (!previewEditMode) renderPreviewKeywordHighlight();
+          });
+        }
+        await loadProviders();
+        await refreshDocs();
+        updateSortGuide();
+        setupWeakHint('#uploadHint');
+        setupWeakHint('#indexResult');
+        setupWeakHint('#previewStatus');
+        renderPreviewKeywordHighlight();
+        syncPreviewSearchHeights();
+        window.addEventListener('resize', syncPreviewSearchHeights);
+        window.addEventListener('resize', () => {
+          if (document.body.getAttribute('data-bgfx') === 'off') return;
+          const blobs = document.querySelectorAll('.bg-fx-blob');
+          blobs.forEach((blob) => moveBgBlob(blob, true));
+        });
+        if (document.body.getAttribute('data-bgfx') !== 'off') {
+          startBackgroundFxLoop();
+        }
+      }
+
+      async function loadProviders() {
+        const indexSelect = document.getElementById('indexProvider');
+        const prevSelection = indexSelect.value;
+        const res = await fetch(api('/providers'));
+        const items = await res.json();
+        providerConfigs = sortProviders(items);
+        const availableModels = [];
+        for (const p of providerConfigs) {
+          if (!p.has_api_key || !p.enabled) continue;
+          const provider = String(p.provider || '').trim();
+          const current = String(p.model || '').trim();
+          const presets = MODEL_PRESETS[provider.toLowerCase()] || [];
+          const custom = getProviderCustomModels(provider);
+          const models = [...new Set([current, ...presets, ...custom].filter(Boolean))];
+          for (const model of models) {
+            availableModels.push({ provider, model });
+          }
+        }
+        const optionsHtml = availableModels
+          .map(p => `<option value="${h(buildIndexSelectionValue(p.provider, p.model))}">${h(p.model)} (${h(p.provider)})</option>`)
+          .join('');
+        indexSelect.innerHTML = optionsHtml;
+
+        if (availableModels.some(p => buildIndexSelectionValue(p.provider, p.model) === prevSelection)) {
+          indexSelect.value = prevSelection;
+        } else if (availableModels.length && !indexSelect.value) {
+          indexSelect.value = buildIndexSelectionValue(availableModels[0].provider, availableModels[0].model);
+        }
+      }
+
+      function buildIndexSelectionValue(provider, model) {
+        return `${encodeURIComponent(String(provider || '').trim())}::${encodeURIComponent(String(model || '').trim())}`;
+      }
+
+      function parseIndexSelectionValue(val) {
+        const raw = String(val || '');
+        if (!raw) return { provider: '', model: '' };
+        const parts = raw.split('::');
+        if (parts.length < 2) return { provider: raw, model: '' };
+        return {
+          provider: decodeURIComponent(parts[0] || ''),
+          model: decodeURIComponent(parts.slice(1).join('::') || ''),
+        };
+      }
+
+      function sortProviders(items) {
+        const order = new Map(DEFAULT_PROVIDER_ORDER.map((p, i) => [p, i]));
+        return [...items].sort((a, b) => {
+          const ai = order.has(a.provider) ? order.get(a.provider) : 999;
+          const bi = order.has(b.provider) ? order.get(b.provider) : 999;
+          if (ai !== bi) return ai - bi;
+          return String(a.provider).localeCompare(String(b.provider));
+        });
+      }
+
+      function isDefaultProvider(name) {
+        return DEFAULT_PROVIDER_ORDER.includes(String(name || '').toLowerCase());
+      }
+
+      function getProviderOutput() {
+        return document.getElementById('providerModalResult') || document.getElementById('providerResult');
+      }
+
+      function setProviderMessage(text, type = 'muted') {
+        const output = getProviderOutput();
+        if (!output) return;
+        output.className = output.id === 'providerModalResult' ? `modal-result ${type}` : type;
+        output.textContent = text;
+      }
+
+      async function loadProviderDrafts() {
+        const res = await fetch(api('/providers'));
+        const items = await res.json();
+        const retryMap = getProviderRetriesMap();
+        providerDrafts = sortProviders(items).map((p) => ({
+          _uid: `p_${providerDraftSeq++}`,
+          provider: p.provider,
+          base_url: p.base_url || '',
+          model: p.model || '',
+          api_key_masked: p.api_key_masked || '',
+          api_key_input: '',
+          api_key_mask_enabled: !!p.api_key_masked,
+          api_key_dirty: false,
+          clear_api_key: false,
+          temperature: Number(p.temperature ?? 0.1),
+          timeout: Number(p.timeout || 120),
+          retries: Number(retryMap[p.provider] || 3),
+          enabled: !!p.enabled,
+          is_default: isDefaultProvider(p.provider),
+          _new: false,
+        }));
+        providerExpanded.clear();
+        renderProviderRows();
+      }
+
+      function renderProviderRows() {
+        const tbody = document.getElementById('providerRows');
+        if (!tbody) return;
+        tbody.innerHTML = providerDrafts.map((r, i) => `
+          <tr class="provider-row-main">
+            <td><input class="input" type="text" value="${h(r.provider || '')}" ${r._new ? '' : 'disabled'} onchange="updateProviderDraft(${i}, 'provider', this.value)" /></td>
+            <td>${renderModelEditor(r, i)}</td>
+            <td>
+              <div class="provider-actions">
+                <button class="btn btn-secondary" onclick="testProviderRow(${i})">测试</button>
+                <button class="btn btn-danger" ${r.is_default ? 'disabled title="内置接口不可删除"' : ''} onclick="deleteProviderRow(${i})">删除</button>
+                <button class="btn btn-text provider-expand" onclick="toggleProviderDetail('${r._uid}')">${providerExpanded.has(r._uid) ? '收起' : '详情'}</button>
+              </div>
+            </td>
+          </tr>
+          ${providerExpanded.has(r._uid) ? `
+          <tr>
+            <td colspan="3">
+              <div class="provider-detail">
+                <div class="provider-detail-grid">
+                  <div class="provider-detail-item">
+                    <label>Base URL</label>
+                    <input class="input" type="text" value="${h(r.base_url || '')}" onchange="updateProviderDraft(${i}, 'base_url', this.value)" />
+                  </div>
+                  <div class="provider-detail-item">
+                    <label>API Key</label>
+                    <div class="provider-key-row">
+                      <input class="input" type="${r.api_key_mask_enabled ? 'password' : 'text'}" value="${h(getProviderApiKeyInputValue(r))}" placeholder="${h(r.api_key_masked ? '可直接退格清空后保存' : '输入新 API Key')}" oninput="updateProviderApiKeyInput(${i}, this.value)" />
+                      <button class="provider-key-toggle" type="button" title="${r.api_key_mask_enabled ? '显示 API Key' : '隐藏 API Key'}" aria-label="${r.api_key_mask_enabled ? '显示 API Key' : '隐藏 API Key'}" onclick="toggleProviderApiKeyMask(${i})">
+                        ${r.api_key_mask_enabled
+                          ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.94 10.94 0 0112 20c-5 0-9.27-3-11-8a11.8 11.8 0 015-5.94M9.9 4.24A10.6 10.6 0 0112 4c5 0 9.27 3 11 8a11.8 11.8 0 01-1.67 3.13M14.12 14.12A3 3 0 019.88 9.88"/><path d="M1 1l22 22"/></svg>'
+                          : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'}
+                      </button>
+                    </div>
+                  </div>
+                  <div class="provider-detail-item">
+                    <label>温度</label>
+                    <input class="input provider-mini-input provider-temp-input" type="number" min="0" max="2" step="0.1" value="${h(r.temperature ?? 0.1)}" onchange="updateProviderDraft(${i}, 'temperature', this.value)" />
+                  </div>
+                  <div class="provider-detail-item">
+                    <label>超时(秒)</label>
+                    <input class="input provider-mini-input provider-timeout-input" type="number" min="10" max="300" value="${h(r.timeout || 120)}" onchange="updateProviderDraft(${i}, 'timeout', this.value)" />
+                  </div>
+                  <div class="provider-detail-item">
+                    <label>重试次数</label>
+                    <input class="input provider-mini-input" type="number" min="1" max="8" value="${h(r.retries || 3)}" onchange="updateProviderDraft(${i}, 'retries', this.value)" />
+                  </div>
+                  <div class="provider-detail-item">
+                    <label>启用</label>
+                    <div class="provider-check" style="justify-content:flex-start"><input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="updateProviderDraft(${i}, 'enabled', this.checked)" /></div>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+          ` : ''}
+        `).join('');
+      }
+
+      function toggleProviderDetail(uid) {
+        if (providerExpanded.has(uid)) providerExpanded.delete(uid);
+        else providerExpanded.add(uid);
+        renderProviderRows();
+      }
+
+      function renderModelEditor(row, index) {
+        const provider = String(row.provider || '').trim().toLowerCase();
+        const presets = MODEL_PRESETS[provider] || [];
+        const custom = getProviderCustomModels(provider);
+        const current = String(row.model || '');
+        const options = [...new Set([...presets, ...custom])];
+        if (current && !options.includes(current)) options.unshift(current);
+        const optionsHtml = options
+          .map(m => `<option value="${h(m)}" ${m === current ? 'selected' : ''}>${h(m)}</option>`)
+          .join('');
+        return `
+          <div class="provider-model-editor">
+            <select class="select" onchange="updateProviderDraft(${index}, 'model', this.value)">${optionsHtml}</select>
+            <button class="btn btn-secondary" title="新增自定义模型" onclick="addProviderModel(${index})">+</button>
+            <button class="btn btn-danger" title="删除当前自定义模型" onclick="removeProviderModel(${index})">-</button>
+          </div>
+        `;
+      }
+
+      function getProviderCustomModelsMap() {
+        try {
+          const raw = localStorage.getItem(PROVIDER_CUSTOM_MODELS_KEY);
+          const obj = raw ? JSON.parse(raw) : {};
+          const mapObj = obj && typeof obj === 'object' ? obj : {};
+          // 兼容旧版 openrouter 单键存储
+          if (!mapObj.openrouter) {
+            const legacyRaw = localStorage.getItem('li_openrouter_custom_models');
+            const legacyArr = legacyRaw ? JSON.parse(legacyRaw) : [];
+            if (Array.isArray(legacyArr) && legacyArr.length) {
+              mapObj.openrouter = legacyArr;
+            }
+          }
+          return mapObj;
+        } catch (_) {
+          return {};
+        }
+      }
+
+      function setProviderCustomModelsMap(mapObj) {
+        localStorage.setItem(PROVIDER_CUSTOM_MODELS_KEY, JSON.stringify(mapObj || {}));
+      }
+
+      function getProviderCustomModels(provider) {
+        const key = String(provider || '').toLowerCase();
+        if (!key) return [];
+        const mapObj = getProviderCustomModelsMap();
+        const arr = mapObj[key];
+        if (!Array.isArray(arr)) return [];
+        return arr.map(x => String(x || '').trim()).filter(Boolean);
+      }
+
+      function setProviderCustomModels(provider, models) {
+        const key = String(provider || '').toLowerCase();
+        if (!key) return;
+        const clean = [...new Set((models || []).map(x => String(x || '').trim()).filter(Boolean))];
+        const mapObj = getProviderCustomModelsMap();
+        mapObj[key] = clean;
+        setProviderCustomModelsMap(mapObj);
+      }
+
+      function getProviderRetriesMap() {
+        try {
+          const raw = localStorage.getItem(PROVIDER_RETRIES_KEY);
+          const obj = raw ? JSON.parse(raw) : {};
+          if (!obj || typeof obj !== 'object') return {};
+          return obj;
+        } catch (_) {
+          return {};
+        }
+      }
+
+      function setProviderRetriesMap(mapObj) {
+        localStorage.setItem(PROVIDER_RETRIES_KEY, JSON.stringify(mapObj || {}));
+      }
+
+      function addProviderModel(index) {
+        const row = providerDrafts[index];
+        if (!row) return;
+        const provider = String(row.provider || '').trim().toLowerCase();
+        if (!provider) {
+          setProviderMessage('请先填写接口名，再新增模型', 'err');
+          return;
+        }
+        const name = (prompt(`请输入要新增的模型名（${provider}）`) || '').trim();
+        if (!name) return;
+        const defaults = new Set(MODEL_PRESETS[provider] || []);
+        const custom = getProviderCustomModels(provider);
+        if (defaults.has(name) || custom.includes(name)) {
+          setProviderMessage('该模型已存在', 'muted');
+          return;
+        }
+        custom.push(name);
+        setProviderCustomModels(provider, custom);
+        if (providerDrafts[index]) providerDrafts[index].model = name;
+        renderProviderRows();
+      }
+
+      function removeProviderModel(index) {
+        const row = providerDrafts[index];
+        if (!row) return;
+        const provider = String(row.provider || '').trim().toLowerCase();
+        if (!provider) {
+          setProviderMessage('请先填写接口名', 'err');
+          return;
+        }
+        const current = String(row.model || '').trim();
+        if (!current) {
+          setProviderMessage('当前没有可删除的模型项', 'err');
+          return;
+        }
+        const custom = getProviderCustomModels(provider);
+        const presets = new Set(MODEL_PRESETS[provider] || []);
+        const isPreset = presets.has(current);
+        const isCustom = custom.includes(current);
+        if (!isCustom && isPreset) {
+          setProviderMessage('只能删除自定义模型项', 'err');
+          return;
+        }
+        if (!confirm(`确定删除自定义模型 ${current} ?`)) return;
+        setProviderCustomModels(provider, custom.filter(m => m !== current));
+        const remainCustom = getProviderCustomModels(provider);
+        const fallback = remainCustom[0] || (MODEL_PRESETS[provider] || [])[0] || '';
+        row.model = fallback;
+        renderProviderRows();
+      }
+
+      function updateProviderDraft(index, key, value) {
+        if (!providerDrafts[index]) return;
+        providerDrafts[index][key] = value;
+      }
+
+      function getProviderApiKeyInputValue(row) {
+        if (!row) return '';
+        if (row.api_key_mask_enabled && row.api_key_masked && !row.api_key_dirty && !row.api_key_input) {
+          return row.api_key_masked;
+        }
+        return row.api_key_input || '';
+      }
+
+      function updateProviderApiKeyInput(index, value) {
+        const row = providerDrafts[index];
+        if (!row) return;
+        const masked = row.api_key_masked || '';
+        row.api_key_dirty = true;
+        if (!String(value || '').trim()) {
+          row.api_key_input = '';
+          row.clear_api_key = !!masked;
+          return;
+        }
+        if (row.api_key_mask_enabled && masked && value.includes('*')) {
+          row.api_key_input = '';
+          row.clear_api_key = false;
+          return;
+        }
+        row.api_key_input = value;
+        row.clear_api_key = false;
+      }
+
+      async function toggleProviderApiKeyMask(index) {
+        const row = providerDrafts[index];
+        if (!row) return;
+        const provider = String(row.provider || '').trim();
+        const toMasked = !row.api_key_mask_enabled;
+        if (!toMasked && row.api_key_masked && !row.api_key_dirty && !row.api_key_input && provider) {
+          try {
+            const res = await fetch(api(`/providers/${encodeURIComponent(provider)}/api_key`));
+            if (!res.ok) {
+              setProviderMessage('读取 API Key 失败，请稍后重试', 'err');
+              return;
+            }
+            const data = await res.json().catch(() => ({}));
+            row.api_key_input = String(data.api_key || '');
+            row.api_key_dirty = false;
+            row.clear_api_key = false;
+          } catch (_) {
+            setProviderMessage('读取 API Key 失败，请稍后重试', 'err');
+            return;
+          }
+        }
+        row.api_key_mask_enabled = !row.api_key_mask_enabled;
+        if (row.api_key_mask_enabled && !row.api_key_dirty) {
+          row.api_key_input = '';
+        }
+        renderProviderRows();
+      }
+
+      function addProviderRow() {
+        const uid = `p_${providerDraftSeq++}`;
+        providerDrafts.push({
+          _uid: uid,
+          provider: '',
+          base_url: '',
+          model: '',
+          api_key_masked: '',
+          api_key_input: '',
+          api_key_mask_enabled: false,
+          api_key_dirty: false,
+          clear_api_key: false,
+          temperature: 0.1,
+          timeout: 120,
+          retries: 3,
+          enabled: true,
+          is_default: false,
+          _new: true,
+        });
+        providerExpanded.add(uid);
+        renderProviderRows();
+      }
+
+      async function deleteProviderRow(index) {
+        const row = providerDrafts[index];
+        if (!row) return;
+        if (row.is_default) {
+          setProviderMessage('内置接口不可删除', 'err');
+          return;
+        }
+        if (row._new) {
+          providerDrafts.splice(index, 1);
+          renderProviderRows();
+          return;
+        }
+        if (!confirm(`确认删除接口 ${row.provider}？`)) return;
+        const res = await fetch(api(`/providers/${row.provider}`), { method: 'DELETE' });
+        if (!res.ok) {
+          let msg = '删除失败';
+          try {
+            const data = await res.json();
+            msg = data.detail || msg;
+          } catch (_) {}
+          setProviderMessage(msg, 'err');
+          return;
+        }
+        setProviderMessage(`已删除接口 ${row.provider}`, 'ok');
+        providerDrafts.splice(index, 1);
+        renderProviderRows();
+        await loadProviders();
+      }
+
+      function validateProviderRow(row) {
+        if (!String(row.provider || '').trim()) return '接口名不能为空';
+        if (!String(row.base_url || '').trim()) return `接口 ${row.provider} 的 Base URL 不能为空`;
+        if (!String(row.model || '').trim()) return `接口 ${row.provider} 的模型不能为空`;
+        const temperature = Number(row.temperature ?? 0.1);
+        if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) return `接口 ${row.provider} 的温度必须在0-2之间`;
+        const timeout = Number(row.timeout || 120);
+        if (!Number.isFinite(timeout) || timeout < 10 || timeout > 300) return `接口 ${row.provider} 的超时必须在10-300之间`;
+        const retries = Number(row.retries || 3);
+        if (!Number.isFinite(retries) || retries < 1 || retries > 8) return `接口 ${row.provider} 的重试次数必须在1-8之间`;
+        return '';
+      }
+
+      function snapshotProviderDrafts() {
+        return providerDrafts.map((r) => ({
+          provider: String(r.provider || '').trim(),
+          base_url: String(r.base_url || '').trim(),
+          model: String(r.model || '').trim(),
+          api_key_input: !!r.api_key_dirty ? String(r.api_key_input || '') : '',
+          clear_api_key: !!r.clear_api_key,
+          temperature: Number(r.temperature ?? 0.1),
+          timeout: Number(r.timeout || 120),
+          retries: Number(r.retries || 3),
+          enabled: !!r.enabled,
+          is_default: !!r.is_default,
+          _new: !!r._new,
+        }));
+      }
+
+      function markProviderDraftBaseline() {
+        providerDraftBaseline = JSON.stringify(snapshotProviderDrafts());
+      }
+
+      function hasUnsavedProviderChanges() {
+        return JSON.stringify(snapshotProviderDrafts()) !== providerDraftBaseline;
+      }
+
+      async function saveProviderConfigs() {
+        const rows = providerDrafts.map((r) => ({
+          provider: String(r.provider || '').trim(),
+          base_url: String(r.base_url || '').trim(),
+          model: String(r.model || '').trim(),
+          api_key_masked: r.api_key_masked || '',
+          api_key_input: !!r.api_key_dirty ? String(r.api_key_input || '').trim() : '',
+          clear_api_key: !!r.clear_api_key || (!!r.api_key_dirty && !String(r.api_key_input || '').trim() && !!r.api_key_masked),
+          temperature: Number(r.temperature ?? 0.1),
+          timeout: Number(r.timeout || 120),
+          retries: Number(r.retries || 3),
+          enabled: !!r.enabled,
+        }));
+
+        const names = rows.map(r => r.provider);
+        const dup = names.find((n, i) => n && names.indexOf(n) !== i);
+        if (dup) {
+          setProviderMessage(`接口名重复: ${dup}`, 'err');
+          return false;
+        }
+        for (const row of rows) {
+          const err = validateProviderRow(row);
+          if (err) {
+            setProviderMessage(err, 'err');
+            return false;
+          }
+        }
+
+        const retryMap = getProviderRetriesMap();
+        for (const row of rows) {
+          const body = {
+            base_url: row.base_url,
+            model: row.model,
+            api_key: row.api_key_input || null,
+            clear_api_key: !!row.clear_api_key,
+            temperature: Number(row.temperature ?? 0.1),
+            timeout: Number(row.timeout || 120),
+            enabled: !!row.enabled,
+          };
+          const res = await fetch(api(`/providers/${row.provider}`), {
+            method: 'PUT',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            setProviderMessage(`保存失败：${row.provider}`, 'err');
+            return false;
+          }
+          retryMap[row.provider] = row.retries;
+        }
+        setProviderRetriesMap(retryMap);
+        setProviderMessage('Provider 配置已保存', 'ok');
+        await loadProviders();
+        await loadProviderDrafts();
+        markProviderDraftBaseline();
+        return true;
+      }
+
+      async function resetProviderDefaults() {
+        const yes = window.confirm('将恢复全部默认接口配置，并删除所有自定义接口，同时清空默认接口的API Key。是否继续？');
+        if (!yes) return;
+        const res = await fetch(api('/providers/reset_defaults'), { method: 'POST' });
+        if (!res.ok) {
+          let msg = '恢复默认失败';
+          try {
+            const data = await res.json();
+            msg = data.detail || msg;
+          } catch (_) {}
+          setProviderMessage(msg, 'err');
+          return;
+        }
+        setProviderCustomModelsMap({});
+        setProviderRetriesMap({});
+        setProviderMessage('已恢复默认接口配置，并删除自定义接口', 'ok');
+        await loadProviders();
+        await loadProviderDrafts();
+        markProviderDraftBaseline();
+      }
+
+      async function testProviderRow(index) {
+        const row = providerDrafts[index];
+        if (!row) return;
+        const provider = String(row.provider || '').trim();
+        if (!provider) {
+          setProviderMessage('请先填写接口名', 'err');
+          return;
+        }
+        const err = validateProviderRow({
+          provider,
+          base_url: row.base_url,
+          model: row.model,
+          temperature: row.temperature,
+          timeout: row.timeout,
+        });
+        if (err) {
+          setProviderMessage(err, 'err');
+          return;
+        }
+
+        // 先保存当前行，再测试，确保测试的是最新配置
+        const saveRes = await fetch(api(`/providers/${provider}`), {
+          method: 'PUT',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            base_url: String(row.base_url || '').trim(),
+            model: String(row.model || '').trim(),
+            api_key: String(row.api_key_input || '').trim() || null,
+            clear_api_key: !!row.clear_api_key,
+            temperature: Number(row.temperature ?? 0.1),
+            timeout: Number(row.timeout || 120),
+            enabled: !!row.enabled,
+          }),
+        });
+        if (!saveRes.ok) {
+          setProviderMessage(`测试前保存失败：${provider}`, 'err');
+          return;
+        }
+
+        setProviderMessage(`测试中：${provider}...`, 'muted');
+        const res = await fetch(api(`/providers/${provider}/test`), { method: 'POST' });
+        if (!res.ok) {
+          let msg = '测试失败';
+          try {
+            const data = await res.json();
+            msg = data.detail || msg;
+          } catch (_) {}
+          setProviderMessage(`${provider}: ${msg}`, 'err');
+          return;
+        }
+        const data = await res.json();
+        setProviderMessage(
+          `${provider}: ${data.success ? '成功' : '失败'} | ${data.message} | ${data.elapsed_seconds || 0}s`,
+          data.success ? 'ok' : 'err'
+        );
+        await loadProviders();
+        await loadProviderDrafts();
+        markProviderDraftBaseline();
+      }
+
+      async function openConfigWindow() {
+        document.getElementById('configModal').classList.add('open');
+        setProviderMessage('', 'muted');
+        await loadProviderDrafts();
+        markProviderDraftBaseline();
+      }
+
+      async function closeConfigWindow() {
+        if (hasUnsavedProviderChanges()) {
+          const shouldSave = window.confirm('配置窗口有未保存修改。点击“确定”先保存再关闭；点击“取消”将放弃修改并关闭。');
+          if (shouldSave) {
+            const ok = await saveProviderConfigs();
+            if (!ok) return;
+          }
+        }
+        document.getElementById('configModal').classList.remove('open');
+      }
+
+      function onModalBackdrop(e) {
+        if (e.target.id === 'configModal') closeConfigWindow();
+      }
+
+      async function openGuideWindow() {
+        document.getElementById('guideModal').classList.add('open');
+        const container = document.getElementById('guideContent');
+        if (!container) return;
+        container.className = 'guide-markdown muted';
+        container.textContent = '正在加载教程内容...';
+        try {
+          const res = await fetch(api('/system/tutorial'));
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            container.className = 'guide-markdown err';
+            container.textContent = data.detail || '读取教程失败';
+            return;
+          }
+          container.className = 'guide-markdown';
+          container.innerHTML = renderMarkdownToHtml(data.markdown || '');
+        } catch (e) {
+          container.className = 'guide-markdown err';
+          container.textContent = `读取教程失败: ${e}`;
+        }
+      }
+
+      function closeGuideWindow() {
+        document.getElementById('guideModal').classList.remove('open');
+      }
+
+      function onGuideModalBackdrop(e) {
+        if (e.target.id === 'guideModal') closeGuideWindow();
+      }
+
+      async function backupExportAll(btnEl) {
+        return withButtonLoading(btnEl, async () => {
+          const output = document.getElementById('providerResult');
+          output.className = 'muted';
+          output.textContent = '正在准备备份包...';
+          try {
+            const res = await fetch(api('/export/backup/all'));
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              output.className = 'err';
+              output.textContent = data.detail || '导出失败';
+              return;
+            }
+            const blob = await res.blob();
+            const cd = res.headers.get('Content-Disposition') || '';
+            const m = /filename="?([^";]+)"?/i.exec(cd);
+            const filename = m ? m[1] : `backup_all_${Date.now()}.zip`;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            output.className = 'ok';
+            output.textContent = '备份导出成功';
+          } catch (e) {
+            output.className = 'err';
+            output.textContent = `导出失败: ${e}`;
+          }
+        });
+      }
+
+      function triggerBackupImport() {
+        const input = document.getElementById('backupImportInput');
+        if (!input) return;
+        input.value = '';
+        input.click();
+      }
+
+      async function backupImportAll(inputEl) {
+        const output = document.getElementById('providerResult');
+        const file = inputEl?.files?.[0];
+        if (!file) return;
+        const yes = window.confirm('导入将覆盖当前文件、索引和配置，是否继续？');
+        if (!yes) return;
+        output.className = 'muted';
+        output.textContent = '正在导入并恢复数据...';
+        try {
+          const fd = new FormData();
+          fd.append('archive', file);
+          const res = await fetch(api('/export/backup/restore'), {
+            method: 'POST',
+            body: fd,
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            output.className = 'err';
+            output.textContent = data.detail || '导入失败';
+            return;
+          }
+          const data = await res.json().catch(() => ({}));
+          output.className = 'ok';
+          output.textContent = data.pre_restore_backup
+            ? `导入成功，已自动创建恢复前快照：${data.pre_restore_backup}，请刷新界面`
+            : '导入成功，请刷新界面';
+          await loadProviders();
+          await refreshDocs();
+        } catch (e) {
+          output.className = 'err';
+          output.textContent = `导入失败: ${e}`;
+        }
+      }
+
+      async function exitApp() {
+        const output = document.getElementById('providerResult');
+        const yes = window.confirm('确认退出应用？这会中断当前后台进程。');
+        if (!yes) return;
+        output.className = 'muted';
+        output.textContent = '正在退出应用...';
+        try {
+          await fetch(api('/system/exit'), { method: 'POST' });
+          output.className = 'ok';
+          output.textContent = '应用已退出，可关闭此页面';
+          setTimeout(() => {
+            try {
+              window.close();
+            } catch (_) {}
+          }, 400);
+        } catch (e) {
+          output.className = 'err';
+          output.textContent = `退出失败: ${e}`;
+        }
+      }
+
+      async function openFieldsWindow() {
+        document.getElementById('fieldsModal').classList.add('open');
+        setFieldsMessage('', 'muted');
+        await loadFieldsConfig();
+      }
+
+      function closeFieldsWindow() {
+        document.getElementById('fieldsModal').classList.remove('open');
+      }
+
+      function onFieldsModalBackdrop(e) {
+        if (e.target.id === 'fieldsModal') closeFieldsWindow();
+      }
+
+      function setFieldsMessage(text, type = 'muted') {
+        const output = document.getElementById('fieldsModalResult');
+        if (!output) return;
+        output.className = `modal-result ${type}`;
+        output.textContent = text;
+      }
+
+      async function loadFieldsConfig() {
+        const res = await fetch(api('/fields'));
+        const rows = await res.json();
+        fieldConfigs = [...rows].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+        renderFieldsRows();
+      }
+
+      function renderFieldsRows() {
+        const tbody = document.getElementById('fieldsRows');
+        tbody.innerHTML = fieldConfigs.map((f, i) => {
+          const typeOptions = FIELD_TYPES.map(t => `<option value="${t}" ${f.field_type === t ? 'selected' : ''}>${t}</option>`).join('');
+          return `
+            <tr>
+              <td><input class="input" type="text" value="${h(f.field_key || '')}" onchange="updateFieldDraft(${i}, 'field_key', this.value)" ${f.is_default ? 'disabled' : ''} /></td>
+              <td><input class="input" type="text" value="${h(f.label || '')}" onchange="updateFieldDraft(${i}, 'label', this.value)" /></td>
+              <td><select class="select" onchange="updateFieldDraft(${i}, 'field_type', this.value)">${typeOptions}</select></td>
+              <td><input type="checkbox" ${f.required ? 'checked' : ''} onchange="updateFieldDraft(${i}, 'required', this.checked)" /></td>
+              <td><input type="checkbox" ${f.enabled ? 'checked' : ''} onchange="updateFieldDraft(${i}, 'enabled', this.checked)" /></td>
+              <td>${f.is_default ? '<span class="field-tag">默认字段</span>' : '<span class="field-tag">自定义字段</span>'}</td>
+              <td><button class="btn btn-danger" onclick="deleteFieldRow(${i})">删除</button></td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      function updateFieldDraft(index, key, value) {
+        if (!fieldConfigs[index]) return;
+        fieldConfigs[index][key] = value;
+      }
+
+      function addCustomFieldRow() {
+        fieldConfigs.push({
+          field_key: '',
+          label: '',
+          field_type: 'text',
+          required: false,
+          enabled: true,
+          sort_order: fieldConfigs.length + 1,
+          is_default: false,
+          _new: true,
+        });
+        renderFieldsRows();
+      }
+
+      async function deleteFieldRow(index) {
+        const item = fieldConfigs[index];
+        if (!item) return;
+        if (item._new) {
+          fieldConfigs.splice(index, 1);
+          renderFieldsRows();
+          return;
+        }
+        if (!item.field_key) {
+          fieldConfigs.splice(index, 1);
+          renderFieldsRows();
+          return;
+        }
+        if (!confirm(`确定删除字段 ${item.field_key} ?`)) return;
+        const res = await fetch(api(`/fields/${encodeURIComponent(item.field_key)}`), { method: 'DELETE' });
+        if (!res.ok) {
+          let msg = '删除失败';
+          try {
+            const data = await res.json();
+            msg = data.detail || msg;
+          } catch (_) {}
+          setFieldsMessage(msg, 'err');
+          return;
+        }
+        fieldConfigs.splice(index, 1);
+        renderFieldsRows();
+        setFieldsMessage(`已删除字段 ${item.field_key}`, 'ok');
+      }
+
+      async function saveFieldsConfig() {
+        const cleaned = fieldConfigs.map((f, idx) => ({
+          field_key: String(f.field_key || '').trim(),
+          label: String(f.label || '').trim(),
+          field_type: FIELD_TYPES.includes(f.field_type) ? f.field_type : 'text',
+          required: !!f.required,
+          enabled: !!f.enabled,
+          sort_order: idx + 1,
+          is_default: !!f.is_default,
+        }));
+
+        const invalid = cleaned.find(x => !x.field_key || !x.label);
+        if (invalid) {
+          setFieldsMessage('字段 Key 和显示名不能为空', 'err');
+          return;
+        }
+        const keySet = new Set();
+        for (const item of cleaned) {
+          if (keySet.has(item.field_key)) {
+            setFieldsMessage(`字段 Key 重复: ${item.field_key}`, 'err');
+            return;
+          }
+          keySet.add(item.field_key);
+        }
+
+        const res = await fetch(api('/fields'), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cleaned),
+        });
+        if (!res.ok) {
+          setFieldsMessage('保存失败', 'err');
+          return;
+        }
+        setFieldsMessage('字段配置已保存', 'ok');
+        await loadFieldsConfig();
+      }
+
+      function hasDraggedFiles(evt) {
+        const types = evt?.dataTransfer?.types;
+        if (!types) return false;
+        return Array.from(types).includes('Files');
+      }
+
+      function bindUploadDragDrop() {
+        const section = document.getElementById('uploadSection');
+        if (!section) return;
+
+        section.addEventListener('dragenter', (evt) => {
+          if (!hasDraggedFiles(evt)) return;
+          evt.preventDefault();
+          uploadDragDepth += 1;
+          section.classList.add('drag-over');
+        });
+
+        section.addEventListener('dragover', (evt) => {
+          if (!hasDraggedFiles(evt)) return;
+          evt.preventDefault();
+          if (evt.dataTransfer) evt.dataTransfer.dropEffect = 'copy';
+        });
+
+        section.addEventListener('dragleave', (evt) => {
+          evt.preventDefault();
+          uploadDragDepth = Math.max(0, uploadDragDepth - 1);
+          if (uploadDragDepth === 0) {
+            section.classList.remove('drag-over');
+          }
+        });
+
+        section.addEventListener('drop', async (evt) => {
+          if (!hasDraggedFiles(evt)) return;
+          evt.preventDefault();
+          uploadDragDepth = 0;
+          section.classList.remove('drag-over');
+          const files = [...(evt.dataTransfer?.files || [])];
+          await uploadFiles(files, '拖拽');
+        });
+      }
+
+      async function uploadFiles(files, source = '选择') {
+        if (!files.length) return;
+        const output = document.getElementById('indexResult');
+        output.className = 'muted';
+        output.textContent = `正在${source}上传 ${files.length} 个文件...`;
+
+        let ok = 0;
+        let fail = 0;
+        for (const file of files) {
+          const fd = new FormData();
+          fd.append('file', file);
+          const res = await fetch(api('/files/upload'), { method: 'POST', body: fd });
+          if (res.ok) ok += 1;
+          else fail += 1;
+        }
+
+        output.className = fail === 0 ? 'ok' : 'err';
+        output.textContent = `上传完成：成功 ${ok}，失败 ${fail}`;
+        await refreshDocs();
+      }
+
+      async function uploadSelectedFiles() {
+        const input = document.getElementById('fileInput');
+        const files = [...(input.files || [])];
+        await uploadFiles(files, '选择');
+        input.value = '';
+      }
+
+      function triggerFilePicker() {
+        const input = document.getElementById('fileInput');
+        if (!input) return;
+        input.click();
+      }
+
+      function openFilePickerFromZone(evt) {
+        const t = evt?.target;
+        if (!t) {
+          triggerFilePicker();
+          return;
+        }
+        if (t.closest('button, input, select, label, a, .btn-icon, .doc-item')) return;
+        if (t.closest('tbody tr')) return;
+        triggerFilePicker();
+      }
+
+      async function refreshUploadPanel(btnEl) {
+        return withButtonLoading(btnEl, async () => {
+          const output = document.getElementById('indexResult');
+          output.className = 'muted';
+          output.textContent = '正在刷新模型与上传区列表...';
+          try {
+            await loadProviders();
+            await refreshDocs();
+            output.className = 'ok';
+            output.textContent = '已刷新模型下拉栏与上传区文件';
+          } catch (e) {
+            output.className = 'err';
+            output.textContent = `刷新失败: ${e}`;
+          }
+        });
+      }
+
+      async function refreshDocs() {
+        const res = await fetch(api('/files'));
+        const rows = await res.json();
+        const pendingRows = rows.filter(r => r.status !== 'indexed');
+        indexedTotalCount = rows.filter(r => r.status === 'indexed').length;
+        updateSearchCountHint();
+        uploadRowsCache = pendingRows;
+        const validIds = new Set(pendingRows.map(r => r.id));
+        [...selectedUploadDocs].forEach(id => {
+          if (!validIds.has(id)) selectedUploadDocs.delete(id);
+        });
+        dotTick = (dotTick + 1) % 4;
+        const dots = '.'.repeat(dotTick);
+        document.getElementById('docRows').innerHTML = pendingRows.map(r => `
+          <tr>
+            <td><input type="checkbox" class="selUpload" value="${r.id}" ${selectedUploadDocs.has(r.id) ? 'checked' : ''} onchange="toggleUploadSelect('${r.id}', this.checked)" /></td>
+            <td class="doc-clickable" onclick="previewIndex('${r.id}')">
+              <div class="doc-item">
+                <span class="doc-filename" title="${h(r.filename)}">${h(r.filename)}</span>
+                <div class="doc-meta">
+                  <span class="doc-meta-item" onclick="event.stopPropagation();copyToClipboard('${h(r.id)}')" title="点击复制ID">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                    ${h(r.id.substring(0, 8))}...
+                  </span>
+                </div>
+              </div>
+            </td>
+            <td><span class="pill pill-${r.status === 'parsing' ? 'warning' : 'info'}">${h(r.status)}</span></td>
+            <td class="progressline">${renderProgressBlock(r, dots)}</td>
+            <td><div class="doc-actions">${renderUploadActions(r)}</div></td>
+          </tr>
+        `).join('');
+
+        document.getElementById('uploadEmpty').style.display = pendingRows.length ? 'none' : 'block';
+        document.getElementById('uploadTableWrap').style.display = pendingRows.length ? 'block' : 'none';
+        document.getElementById('uploadBulkActions').style.display = pendingRows.length ? 'flex' : 'none';
+        syncUploadSelectAllState();
+        await loadIndexedRows();
+
+        const hasParsing = pendingRows.some(r => r.status === 'parsing');
+        if (hasParsing) {
+          startAutoRefresh();
+        } else if (refreshTimer) {
+          clearInterval(refreshTimer);
+          refreshTimer = null;
+        }
+      }
+
+      function toggleUploadSelect(docId, checked) {
+        if (checked) selectedUploadDocs.add(docId);
+        else selectedUploadDocs.delete(docId);
+        syncUploadSelectAllState();
+      }
+
+      function toggleUploadSelectAll() {
+        const master = document.getElementById('uploadSelectAll');
+        const allIds = uploadRowsCache.map(r => r.id);
+        if (master.checked) allIds.forEach(id => selectedUploadDocs.add(id));
+        else allIds.forEach(id => selectedUploadDocs.delete(id));
+        refreshDocs();
+      }
+
+      function syncUploadSelectAllState() {
+        const master = document.getElementById('uploadSelectAll');
+        if (!master) return;
+        const allIds = uploadRowsCache.map(r => r.id);
+        const selected = allIds.filter(id => selectedUploadDocs.has(id)).length;
+        master.checked = allIds.length > 0 && selected === allIds.length;
+        master.indeterminate = selected > 0 && selected < allIds.length;
+      }
+
+      async function pauseSelectedUploads() {
+        const ids = [...selectedUploadDocs];
+        if (!ids.length) {
+          const output = document.getElementById('indexResult');
+          output.className = 'err';
+          output.textContent = '请先选择要暂停的条目';
+          return;
+        }
+        let ok = 0;
+        for (const id of ids) {
+          const res = await fetch(api(`/index/${id}/cancel`), { method: 'POST' });
+          if (res.ok) ok += 1;
+        }
+        const output = document.getElementById('indexResult');
+        output.className = ok > 0 ? 'ok' : 'err';
+        output.textContent = `已请求暂停 ${ok}/${ids.length} 条`;
+        await refreshDocs();
+      }
+
+      async function deleteSelectedUploads() {
+        const ids = [...selectedUploadDocs];
+        if (!ids.length) {
+          const output = document.getElementById('indexResult');
+          output.className = 'err';
+          output.textContent = '请先选择要删除的条目';
+          return;
+        }
+        if (!confirm(`确定删除选中的 ${ids.length} 条文献？`)) return;
+        let ok = 0;
+        for (const id of ids) {
+          if (streamRefs[id]) {
+            streamRefs[id].close();
+            streamRefs[id] = null;
+          }
+          streamDone[id] = true;
+          delete liveProgress[id];
+          const res = await fetch(api(`/files/${id}`), { method: 'DELETE' });
+          if (res.ok) ok += 1;
+          selectedUploadDocs.delete(id);
+        }
+        const output = document.getElementById('indexResult');
+        output.className = ok > 0 ? 'ok' : 'err';
+        output.textContent = `已删除 ${ok}/${ids.length} 条文献`;
+        await refreshDocs();
+      }
+
+      function renderUploadActions(r) {
+        const viewOriginalBtn = `<button class="btn-icon" onclick="window.open('/api/files/${r.id}/original')" title="原文件">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          </button>`;
+        if (r.status === 'parsing') {
+          return `
+            ${viewOriginalBtn}
+            <button class="btn-icon btn-icon-danger" onclick="cancelIndex('${r.id}')" title="中断">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/></svg>
+            </button>
+            <button class="btn-icon btn-icon-danger" onclick="deleteDoc('${r.id}')" title="删除">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+            </button>`;
+        }
+        return `
+          ${viewOriginalBtn}
+          <button class="btn-icon" onclick="runIndex('${r.id}')" title="生成索引">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+          </button>
+          <button class="btn-icon" onclick="previewIndex('${r.id}')" title="预览">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+          </button>
+          <button class="btn-icon btn-icon-danger" onclick="deleteDoc('${r.id}')" title="删除">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+          </button>`;
+      }
+
+      function renderSearchRows(rows) {
+        searchRowsCache = rows || [];
+        updateSortGuide();
+        const validIds = new Set(searchRowsCache.map(r => (r.doc_id || r.id)));
+        [...selectedSearchDocs].forEach(id => {
+          if (!validIds.has(id)) selectedSearchDocs.delete(id);
+        });
+        const sortedRows = sortSearchRows(searchRowsCache);
+
+        document.getElementById('searchRows').innerHTML = sortedRows.map(r => {
+          const id = r.doc_id || r.id;
+          const checked = selectedSearchDocs.has(id) ? 'checked' : '';
+          const active = currentPreviewDocId === id ? 'search-row-active' : '';
+          const activeItem = currentPreviewDocId === id ? 'doc-active' : '';
+          return `
+          <tr class="${active}">
+            <td><input type="checkbox" value="${id}" class="selDoc" ${checked} onchange="toggleSearchSelect('${id}', this.checked)" /></td>
+            <td>
+              <div class="doc-item doc-clickable ${activeItem}" onclick="previewIndex('${id}')">
+                <span class="doc-filename" title="${h(r.filename || '')}">${h(r.filename || '')}</span>
+                <div class="doc-meta">
+                  <span class="doc-meta-item" onclick="copyToClipboard('${h(id)}')" title="点击复制ID">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                    ${h(id.substring(0, 8))}...
+                  </span>
+                  ${r.authors && r.authors.length ? `<span class="doc-meta-item" title="${h(r.authors.join(', '))}">${h(r.authors[0])}${r.authors.length > 1 ? '等' : ''}</span>` : ''}
+                  ${r.year ? `<span class="doc-meta-item">${h(r.year)}</span>` : ''}
+                  ${r.created_at ? `<span class="doc-meta-item" title="${h(r.created_at)}">${h(formatCreatedAt(r.created_at))}</span>` : ''}
+                </div>
+              </div>
+            </td>
+            <td>${h(renderSearchTimeValue(r))}</td>
+            <td>
+              <div class="doc-actions">
+                <button class="btn-icon" onclick="window.open('/api/files/${id}/original')" title="原文件">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                </button>
+                <button class="btn-icon" onclick="previewIndex('${id}')" title="预览">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                </button>
+                <button class="btn-icon" onclick="resetForRegenerate('${id}')" title="重新生成">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                </button>
+                <button class="btn-icon" onclick="window.open('/api/export/${id}')" title="导出">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                </button>
+                <button class="btn-icon btn-icon-danger" onclick="deleteDoc('${id}')" title="删除">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+        `;
+        }).join('');
+
+        const hasRows = sortedRows.length > 0;
+        const emptyEl = document.getElementById('searchEmpty');
+        const tableWrap = document.querySelector('.search-table-wrap');
+        if (emptyEl) emptyEl.style.display = hasRows ? 'none' : 'flex';
+        if (tableWrap) tableWrap.style.display = hasRows ? 'block' : 'none';
+        updateSearchCountHint();
+        syncSelectAllState();
+      }
+
+      function updateSearchCountHint() {
+        const hint = document.getElementById('searchCountHint');
+        if (!hint) return;
+        hint.textContent = `当前索引总数：${indexedTotalCount}`;
+      }
+
+      function formatCreatedAt(value) {
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return String(value || '');
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+
+      function formatCreatedAtShort(value) {
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return String(value || '');
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+
+      function renderSearchTimeValue(row) {
+        if (searchTimeField === 'created_at') {
+          return row?.created_at ? formatCreatedAtShort(row.created_at) : '-';
+        }
+        const y = Number(row?.year || 0);
+        return y > 0 ? String(y) : '-';
+      }
+
+      function sortSearchRows(rows) {
+        const list = [...rows];
+        const byName = (a, b) => String(a.filename || '').localeCompare(String(b.filename || ''), 'zh-CN', { sensitivity: 'base' });
+        const byYear = (a, b) => {
+          const ya = Number(a.year || 0);
+          const yb = Number(b.year || 0);
+          if (ya !== yb) return ya - yb;
+          const ta = Date.parse(a.created_at || '');
+          const tb = Date.parse(b.created_at || '');
+          return (Number.isNaN(ta) ? 0 : ta) - (Number.isNaN(tb) ? 0 : tb);
+        };
+        const byCreated = (a, b) => {
+          const ta = Date.parse(a.created_at || '');
+          const tb = Date.parse(b.created_at || '');
+          return (Number.isNaN(ta) ? 0 : ta) - (Number.isNaN(tb) ? 0 : tb);
+        };
+        if (searchSortField === 'filename') {
+          list.sort((a, b) => searchSortDirection === 'asc' ? byName(a, b) : byName(b, a));
+        } else {
+          const byTime = searchTimeField === 'created_at' ? byCreated : byYear;
+          list.sort((a, b) => searchSortDirection === 'asc' ? byTime(a, b) : byTime(b, a));
+        }
+        return list;
+      }
+
+      function setSearchSort(field) {
+        if (searchSortField === field) {
+          searchSortDirection = searchSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+          searchSortField = field;
+          searchSortDirection = field === 'filename' ? 'asc' : 'desc';
+        }
+        updateSortGuide();
+        renderSearchRows(searchRowsCache);
+      }
+
+      function onSearchTimeFieldChange(field) {
+        if (field !== 'year' && field !== 'created_at') return;
+        searchTimeField = field;
+        updateSortGuide();
+        renderSearchRows(searchRowsCache);
+      }
+
+      function updateSortGuide() {
+        const fileBtn = document.getElementById('sortHeaderFilename');
+        const timeBtn = document.getElementById('sortHeaderTime');
+        const fieldPicker = document.getElementById('searchTimeFieldPicker');
+        if (!fileBtn || !timeBtn || !fieldPicker) return;
+        const arrow = (dir) => (dir === 'desc' ? '↑' : '↓');
+        const fileDir = searchSortField === 'filename' ? searchSortDirection : '';
+        const timeDir = searchSortField === 'time' ? searchSortDirection : '';
+        if (fieldPicker.value !== searchTimeField) {
+          fieldPicker.value = searchTimeField;
+        }
+        const timeLabel = searchTimeField === 'created_at' ? '生成时间' : '年份';
+        fileBtn.innerHTML = `文件名 <span class="arrow">${fileDir ? arrow(fileDir) : '↕'}</span>`;
+        timeBtn.innerHTML = `${timeLabel} <span class="arrow">${timeDir ? arrow(timeDir) : '↕'}</span>`;
+      }
+
+      function copyToClipboard(text) {
+        navigator.clipboard.writeText(text).then(() => {
+          // 可选：显示复制成功提示
+        }).catch(() => {
+          // 降级方案
+          const input = document.createElement('input');
+          input.value = text;
+          document.body.appendChild(input);
+          input.select();
+          document.execCommand('copy');
+          document.body.removeChild(input);
+        });
+      }
+
+      function toggleSearchSelect(docId, checked) {
+        if (checked) selectedSearchDocs.add(docId);
+        else selectedSearchDocs.delete(docId);
+        syncSelectAllState();
+      }
+
+      function toggleSelectAll() {
+        const master = document.getElementById('selectAll');
+        const allIds = searchRowsCache.map(r => r.doc_id || r.id);
+        if (master.checked) {
+          allIds.forEach(id => selectedSearchDocs.add(id));
+        } else {
+          allIds.forEach(id => selectedSearchDocs.delete(id));
+        }
+        renderSearchRows(searchRowsCache);
+      }
+
+      function syncSelectAllState() {
+        const master = document.getElementById('selectAll');
+        if (!master) return;
+        const allIds = searchRowsCache.map(r => r.doc_id || r.id);
+        const selected = allIds.filter(id => selectedSearchDocs.has(id)).length;
+        master.checked = allIds.length > 0 && selected === allIds.length;
+        master.indeterminate = selected > 0 && selected < allIds.length;
+      }
+
+      function renderProgressBlock(r, dots) {
+        const p = liveProgress[r.id] || defaultProgress(r);
+        const cls = r.status === 'indexed' ? 'done' : (r.status === 'needs_review' || r.status === 'failed' || r.status === 'cancelled' ? 'fail' : '');
+        const info = h(renderDynamicInfo(r, dots, p));
+        return `<div class="pwrap"><div class="pbar"><div class="pfill ${cls}" style="width:${Math.max(0, Math.min(100, p.progress || 0))}%"></div></div><div>${info}</div></div>`;
+      }
+
+      function defaultProgress(r) {
+        const map = { uploaded: 5, queued: 15, parsing: 35, llm_request: 60, writing: 85, completed: 100, failed: 100, cancelled: 100 };
+        const key = r.id;
+        if (r.stage === 'cancel_requested') {
+          const prev = pseudoProgress[key] || 45;
+          const next = Math.min(98, prev + 2);
+          pseudoProgress[key] = next;
+        } else if (r.status === 'parsing' && r.stage === 'llm_request') {
+          const prev = pseudoProgress[key] || 60;
+          const next = Math.min(92, prev + 2);
+          pseudoProgress[key] = next;
+        } else if (r.status === 'parsing' && r.stage === 'parsing') {
+          const prev = pseudoProgress[key] || 35;
+          const next = Math.min(58, prev + 1);
+          pseudoProgress[key] = next;
+        } else if (r.status === 'indexed') {
+          pseudoProgress[key] = 100;
+        } else if (r.status === 'needs_review' || r.status === 'cancelled' || r.status === 'failed') {
+          pseudoProgress[key] = 100;
+        }
+        const progress = pseudoProgress[key] || map[r.stage || 'uploaded'] || 10;
+        return {
+          progress,
+          stage: r.stage,
+          stage_message: r.stage_message,
+          error_message: r.error_message,
+        };
+      }
+
+      function renderDynamicInfo(r, dots, progressData) {
+        const pd = progressData || {};
+        if (r.stage === 'cancel_requested') {
+          return `正在中断 ${pd.progress || 0}% | ${pd.stage_message || r.stage_message || '后台清理中'}`;
+        }
+        if (r.status === 'parsing') {
+          return `处理中${dots} ${pd.progress || 0}% | 当前阶段：${pd.stage || r.stage || '处理中'}${(pd.stage_message || r.stage_message) ? ' | ' + (pd.stage_message || r.stage_message) : ''}`;
+        }
+        if (r.status === 'indexed') {
+          return `已完成 100% | ${pd.stage_message || r.stage_message || '索引可预览和导出'}`;
+        }
+        if (r.status === 'needs_review') {
+          return `处理失败 | ${pd.error_message || r.error_message || '请手动修正或重试'}`;
+        }
+        if (r.status === 'cancelled') {
+          return `已中断 100%${(pd.stage_message || r.stage_message) ? ' | ' + (pd.stage_message || r.stage_message) : ''}`;
+        }
+        return pd.stage_message || r.stage_message || '等待处理';
+      }
+
+      function getRetryCount(provider) {
+        const name = String(provider || '').trim();
+        if (!name) return 3;
+        const retryMap = getProviderRetriesMap();
+        const raw = Number(retryMap[name] || 3);
+        if (!Number.isFinite(raw)) return 3;
+        return Math.max(1, Math.min(8, Math.trunc(raw)));
+      }
+
+      function getSelectedTargetForIndex() {
+        const val = document.getElementById('indexProvider')?.value || '';
+        if (val) {
+          const picked = parseIndexSelectionValue(val);
+          if (picked.provider && picked.model) return picked;
+        }
+        const first = (providerConfigs || []).find(p => p.has_api_key && p.enabled && p.model);
+        if (!first) return { provider: '', model: '' };
+        return { provider: String(first.provider || ''), model: String(first.model || '') };
+      }
+
+      async function runIndex(docId) {
+        const output = document.getElementById('indexResult');
+        const target = getSelectedTargetForIndex();
+        const provider = target.provider;
+        const model = target.model;
+        if (!provider || !model) {
+          output.className = 'err';
+          output.textContent = '没有可用模型，请先配置并保存有效的 API Key';
+          return;
+        }
+        const retries = getRetryCount(provider);
+        output.className = 'muted';
+        output.textContent = `正在提交任务：${docId}...`;
+
+        const startRes = await fetch(api(`/index/${docId}/run?provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(model)}&retries=${retries}`), { method: 'POST' });
+        const startData = await startRes.json().catch(() => ({}));
+        if (!startRes.ok) {
+          output.className = 'err';
+          output.textContent = startData.detail || '任务启动失败';
+          return;
+        }
+        if (startData.status === 'cleanup_pending') {
+          output.className = 'muted';
+          output.textContent = startData.message || '上次中断任务仍在清理，请稍后重试';
+          return;
+        }
+
+        if (streamRefs[docId]) {
+          streamRefs[docId].close();
+          streamRefs[docId] = null;
+        }
+        streamDone[docId] = false;
+
+        const url = api(`/index/${docId}/run_stream?provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(model)}&retries=${retries}`);
+        const es = new EventSource(url);
+        streamRefs[docId] = es;
+        output.className = 'ok';
+        output.textContent = `任务已提交：${docId}，正在接收流式进度...`;
+
+        es.onmessage = async (evt) => {
+          try {
+            const data = JSON.parse(evt.data || '{}');
+            liveProgress[docId] = data;
+            if (data.stage_message) {
+              output.className = data.status === 'needs_review' || data.status === 'failed' ? 'err' : 'ok';
+              output.textContent = `${docId} | ${data.progress || 0}% | ${data.stage_message}`;
+            }
+            await refreshDocs();
+            if (data.done) {
+              streamDone[docId] = true;
+              es.close();
+              streamRefs[docId] = null;
+              delete liveProgress[docId];
+            }
+          } catch (e) {
+            output.className = 'err';
+            output.textContent = `流式进度解析失败: ${e}`;
+          }
+        };
+
+        es.onerror = () => {
+          if (streamDone[docId]) {
+            return;
+          }
+          const lp = liveProgress[docId] || {};
+          if (['indexed', 'needs_review', 'cancelled', 'failed'].includes(lp.status)) {
+            streamDone[docId] = true;
+            es.close();
+            streamRefs[docId] = null;
+            return;
+          }
+          output.className = 'err';
+          output.textContent = `流式连接中断：${docId}，请刷新后查看最终状态`;
+          es.close();
+          streamRefs[docId] = null;
+        };
+
+        await refreshDocs();
+        startAutoRefresh();
+      }
+
+      function startAutoRefresh() {
+        if (refreshTimer) return;
+        refreshTimer = setInterval(refreshDocs, 2500);
+      }
+
+      async function runAllIndexing(btnEl) {
+        return withButtonLoading(btnEl, async () => {
+          const target = getSelectedTargetForIndex();
+          const provider = target.provider;
+          const model = target.model;
+          const retries = getRetryCount(provider);
+          const output = document.getElementById('indexResult');
+          if (!provider || !model) {
+            output.className = 'err';
+            output.textContent = '没有可用模型，请先在配置接口中填写并保存 API Key';
+            return;
+          }
+          output.className = 'muted';
+          output.textContent = '正在提交批量任务...';
+          const res = await fetch(api(`/index/run_all?provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(model)}&retries=${retries}`), { method: 'POST' });
+          const data = await res.json();
+          if (!res.ok) {
+            output.className = 'err';
+            output.textContent = data.detail || '批量提交失败';
+            return;
+          }
+          output.className = 'ok';
+          output.textContent = `已入队 ${data.queued} 条，跳过 ${data.skipped} 条（并发上限 ${data.max_concurrency}）`;
+          await refreshDocs();
+          startAutoRefresh();
+        });
+      }
+
+      async function cancelIndex(docId) {
+        await fetch(api(`/index/${docId}/cancel`), { method: 'POST' });
+        if (streamRefs[docId]) {
+          streamRefs[docId].close();
+          streamRefs[docId] = null;
+        }
+        streamDone[docId] = true;
+        delete liveProgress[docId];
+        await refreshDocs();
+      }
+
+      async function deleteDoc(docId) {
+        if (!confirm(`确定删除 ${docId} ?`)) return;
+        if (streamRefs[docId]) {
+          streamRefs[docId].close();
+          streamRefs[docId] = null;
+        }
+        streamDone[docId] = true;
+        delete liveProgress[docId];
+        selectedSearchDocs.delete(docId);
+        await fetch(api(`/files/${docId}`), { method: 'DELETE' });
+        await refreshDocs();
+      }
+
+      async function resetForRegenerate(docId) {
+        if (!confirm(`确定清空索引并回退到待处理区？\n${docId}`)) return;
+        const res = await fetch(api(`/index/${docId}/reset`), { method: 'POST' });
+        const data = await res.json();
+        const output = document.getElementById('indexResult');
+        if (!res.ok) {
+          output.className = 'err';
+          output.textContent = data.detail || '重置失败';
+          return;
+        }
+        output.className = 'ok';
+        output.textContent = `已重置 ${docId}，文献已回到待处理区`;
+        selectedSearchDocs.delete(docId);
+        await refreshDocs();
+      }
+
+      async function searchDocs(btnEl) {
+        return withButtonLoading(btnEl, async () => {
+          await loadIndexedRows({ autoPreviewFirst: true });
+        });
+      }
+
+      async function clearSearchInput() {
+        const input = document.getElementById('searchQ');
+        if (!input) return;
+        input.value = '';
+        updateSearchClearButton();
+        renderPreviewKeywordHighlight();
+        await loadIndexedRows({ autoPreviewFirst: true });
+        input.focus();
+      }
+
+      function updateSearchClearButton() {
+        const input = document.getElementById('searchQ');
+        const btn = document.getElementById('searchClearBtn');
+        if (!input || !btn) return;
+        btn.style.display = String(input.value || '').trim() ? 'inline-flex' : 'none';
+      }
+
+      async function showAllIndexed(btnEl) {
+        return withButtonLoading(btnEl, async () => {
+          await clearSearchInput();
+        });
+      }
+
+      async function loadIndexedRows(options = {}) {
+        const autoPreviewFirst = !!options.autoPreviewFirst;
+        const q = document.getElementById('searchQ').value;
+        const url = new URL(window.location.origin + api('/search'));
+        url.searchParams.set('status', 'indexed');
+        if (q) url.searchParams.set('q', q);
+        const res = await fetch(url.toString());
+        const rows = await res.json();
+        renderSearchRows(rows);
+        syncPreviewSearchHeights();
+        if (!autoPreviewFirst) return;
+        if (previewEditMode) return;
+        const first = (rows || [])[0];
+        const firstId = first ? (first.doc_id || first.id) : '';
+        if (!firstId) {
+          currentPreviewDocId = '';
+          return;
+        }
+        if (firstId === currentPreviewDocId) return;
+        await previewIndex(firstId);
+      }
+
+      function syncPreviewSearchHeights() {
+        const previewRender = document.getElementById('previewRender');
+        const previewBox = document.getElementById('previewBox');
+        const searchWrap = document.querySelector('.search-table-wrap');
+        if (!previewRender || !previewBox || !searchWrap) return;
+
+        const header = searchWrap.querySelector('thead');
+        const firstRow = searchWrap.querySelector('tbody tr');
+        const headerH = header ? Math.ceil(header.getBoundingClientRect().height) : 44;
+        const rowH = firstRow ? Math.ceil(firstRow.getBoundingClientRect().height) : 46;
+        const target = headerH + rowH * 8 + 2;
+
+        const hPx = `${target}px`;
+        searchWrap.style.height = hPx;
+        searchWrap.style.maxHeight = hPx;
+        previewRender.style.height = hPx;
+        previewRender.style.minHeight = hPx;
+        previewRender.style.maxHeight = hPx;
+        previewBox.style.height = hPx;
+        previewBox.style.minHeight = hPx;
+        previewBox.style.maxHeight = hPx;
+      }
+
+      async function previewIndex(docId) {
+        const id = docId || document.getElementById('previewDocId').value;
+        if (!id) return;
+        const canSwitch = await confirmPreviewSwitchIfEditing(id);
+        if (!canSwitch) return;
+        currentPreviewDocId = id;
+        renderSearchRows(searchRowsCache);
+        document.getElementById('previewDocId').value = id;
+        const box = document.getElementById('previewBox');
+        const status = document.getElementById('previewStatus');
+        box.value = '加载中...';
+        status.className = 'muted';
+        status.textContent = `正在加载 ${id} 的索引内容...`;
+        const res = await fetch(api(`/index/${id}/markdown`));
+        const data = await res.json();
+        if (!res.ok) {
+          previewMarkdownRaw = String(data.detail || '预览失败');
+          box.value = previewMarkdownRaw;
+          status.className = 'err';
+          status.textContent = data.detail || '预览失败';
+          renderPreviewKeywordHighlight();
+          return;
+        }
+        previewMarkdownRaw = String(data.markdown || '');
+        box.value = previewMarkdownRaw;
+        status.className = 'ok';
+        status.textContent = `已加载 ${id}，可复制索引或 APA 引用`;
+        renderPreviewKeywordHighlight();
+      }
+
+      function isPreviewDirty() {
+        if (!previewEditMode) return false;
+        const box = document.getElementById('previewBox');
+        if (!box) return false;
+        return String(box.value || '') !== String(previewMarkdownRaw || '');
+      }
+
+      function setPreviewEditMode(enabled) {
+        const box = document.getElementById('previewBox');
+        const btn = document.getElementById('previewEditBtn');
+        const render = document.getElementById('previewRender');
+        if (!box || !btn || !render) return;
+        previewEditMode = !!enabled;
+        if (previewEditMode) {
+          box.value = previewMarkdownRaw || '';
+          box.style.display = 'block';
+          render.style.display = 'none';
+          btn.textContent = '完成';
+          btn.classList.remove('btn-secondary');
+          btn.classList.add('btn-primary');
+          box.focus();
+          return;
+        }
+        box.style.display = 'none';
+        render.style.display = 'block';
+        btn.textContent = '编辑';
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-secondary');
+      }
+
+      async function confirmPreviewSwitchIfEditing(nextDocId) {
+        if (!previewEditMode) return true;
+        if (!nextDocId || nextDocId === currentPreviewDocId) return true;
+        if (!isPreviewDirty()) {
+          setPreviewEditMode(false);
+          return true;
+        }
+        const shouldSave = window.confirm('当前预览有未保存修改。点击“确定”先保存后再切换；点击“取消”将放弃修改并切换。');
+        if (shouldSave) {
+          const ok = await savePreviewMarkdown(document.getElementById('previewEditBtn'));
+          if (!ok) return false;
+        }
+        setPreviewEditMode(false);
+        return true;
+      }
+
+      async function togglePreviewEdit() {
+        const box = document.getElementById('previewBox');
+        const btn = document.getElementById('previewEditBtn');
+        if (!box || !btn) return;
+        if (!previewEditMode) {
+          setPreviewEditMode(true);
+          return;
+        }
+        previewMarkdownRaw = box.value || '';
+        const ok = await savePreviewMarkdown(btn);
+        if (!ok) return;
+        setPreviewEditMode(false);
+        renderPreviewKeywordHighlight();
+      }
+
+      function getSearchTerms() {
+        const q = String(document.getElementById('searchQ')?.value || '').trim();
+        if (!q) return [];
+        const terms = q.split(/[\s,，;；]+/g).map(x => x.trim()).filter(Boolean);
+        if (!terms.length) return [];
+        return [...new Set([q, ...terms])].sort((a, b) => b.length - a.length);
+      }
+
+      function renderPreviewKeywordHighlight() {
+        const panel = document.getElementById('previewRender');
+        if (!panel) return;
+        const text = String(previewMarkdownRaw || '');
+        const terms = getSearchTerms();
+        if (!text.trim()) {
+          panel.innerHTML = '<span class="muted">这里显示 Markdown 索引内容</span>';
+          return;
+        }
+        panel.style.display = 'block';
+        if (!terms.length) {
+          panel.innerHTML = h(text).replace(/\n/g, '<br>');
+          return;
+        }
+        const pattern = terms.map(escapeRegExp).join('|');
+        const rx = new RegExp(pattern, 'gi');
+        const highlighted = h(text).replace(rx, (m) => `<mark>${m}</mark>`).replace(/\n/g, '<br>');
+        panel.innerHTML = highlighted;
+      }
+
+      function getPreviewCurrentText() {
+        if (previewEditMode) {
+          return String(document.getElementById('previewBox')?.value || '');
+        }
+        return String(previewMarkdownRaw || '');
+      }
+
+      async function copyPreviewMarkdown() {
+        const text = getPreviewCurrentText();
+        const status = document.getElementById('previewStatus');
+        if (!text.trim()) {
+          status.className = 'err';
+          status.textContent = '当前没有可复制的索引内容';
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(text);
+          status.className = 'ok';
+          status.textContent = '索引内容已复制到剪贴板';
+        } catch (_) {
+          status.className = 'err';
+          status.textContent = '复制失败，请使用 Ctrl+C 手动复制';
+        }
+      }
+
+      async function savePreviewMarkdown(btnEl) {
+        return withButtonLoading(btnEl, async () => {
+          const id = document.getElementById('previewDocId').value;
+          const text = getPreviewCurrentText();
+          const status = document.getElementById('previewStatus');
+          if (!id) {
+            status.className = 'err';
+            status.textContent = '请先加载有效的 DocID';
+            return false;
+          }
+          status.className = 'muted';
+          status.textContent = `正在保存 ${id} 的索引内容...`;
+          let res = await fetch(api(`/index/${id}/markdown`), {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ markdown: text }),
+          });
+          if (res.status === 405) {
+            res = await fetch(api(`/index/${id}/markdown`), {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ markdown: text }),
+            });
+          }
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            status.className = 'err';
+            status.textContent = data.detail || '保存失败';
+            return false;
+          }
+          status.className = 'muted';
+          status.textContent = `已保存 ${id}，正在刷新预览与搜索结果...`;
+          await previewIndex(id);
+          await loadIndexedRows();
+          await refreshDocs();
+          return true;
+        });
+      }
+
+      async function copyApaCitation() {
+        const text = getPreviewCurrentText();
+        const status = document.getElementById('previewStatus');
+        const apa = extractApaCitation(text);
+        if (!apa) {
+          status.className = 'err';
+          status.textContent = '未找到 APA 引用，请先加载有效索引';
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(apa);
+          status.className = 'ok';
+          status.textContent = 'APA 引用已复制到剪贴板';
+        } catch (_) {
+          status.className = 'err';
+          status.textContent = '复制失败，请手动复制 APA 引用';
+        }
+      }
+
+      function extractApaCitation(markdown) {
+        const marker = '# APA 引用';
+        const start = markdown.indexOf(marker);
+        if (start < 0) return '';
+        const rest = markdown.slice(start + marker.length).trimStart();
+        const end = rest.indexOf('\n# ');
+        const block = end >= 0 ? rest.slice(0, end) : rest;
+        return block.split('\n').map(s => s.trim()).filter(Boolean).join(' ');
+      }
+
+      async function exportBatch() {
+        const ids = [...selectedSearchDocs];
+        if (!ids.length) return;
+        const res = await fetch(api('/export/batch'), {
+          method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(ids)
+        });
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'indexes_merged.md';
+        a.click();
+      }
+
+      function exportAll() {
+        window.open('/api/export/all');
+      }
+
+      async function deleteSelectedDocs() {
+        const ids = [...selectedSearchDocs];
+        if (!ids.length) return;
+        if (!confirm(`确定删除选中的 ${ids.length} 条文献吗？`)) return;
+        for (const docId of ids) {
+          if (streamRefs[docId]) {
+            streamRefs[docId].close();
+            streamRefs[docId] = null;
+          }
+          streamDone[docId] = true;
+          delete liveProgress[docId];
+          await fetch(api(`/files/${docId}`), { method: 'DELETE' });
+          selectedSearchDocs.delete(docId);
+        }
+        await refreshDocs();
+      }
+
+      init();
+    </script>
+  </body>
+</html>

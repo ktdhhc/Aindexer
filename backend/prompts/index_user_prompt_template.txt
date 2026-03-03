@@ -1,0 +1,6 @@
+任务：根据文献内容提取索引字段，返回严格 JSON。
+要求：除title/authors/keywords外，描述性内容必须使用中文；不要返回 markdown 代码块。
+{page_rule}{page_hint}自定义字段定义: {fields_json}
+claims 每项仅需包含 claim_text/evidence_quote/page。
+文献内容（完整）如下：
+{doc_full}
