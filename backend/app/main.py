@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -25,12 +25,14 @@ def _configure_logging() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    file_handler = RotatingFileHandler(
+    file_handler = TimedRotatingFileHandler(
         APP_LOG_PATH,
-        maxBytes=5 * 1024 * 1024,
-        backupCount=3,
+        when="midnight",
+        interval=1,
+        backupCount=0,
         encoding="utf-8",
     )
+    file_handler.suffix = "%Y-%m-%d"
     file_handler.name = "app_file"
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
@@ -41,7 +43,7 @@ def _configure_logging() -> None:
 def create_app() -> FastAPI:
     _configure_logging()
     init_db()
-    app = FastAPI(title="Literature Indexer", version="0.1.0")
+    app = FastAPI(title="Aindexer", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

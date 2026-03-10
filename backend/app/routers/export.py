@@ -10,10 +10,10 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from ..config import (
-    APP_LOG_PATH,
     DB_PATH,
     EXPORT_DIR,
     INDEX_DIR,
+    LOG_DIR,
     UPLOAD_DIR,
     ensure_dirs,
 )
@@ -38,8 +38,10 @@ def _build_backup_archive(backup_path: Path) -> None:
             for p in INDEX_DIR.rglob("*"):
                 if p.is_file():
                     zf.write(p, arcname=str(Path("indexes") / p.relative_to(INDEX_DIR)))
-        if APP_LOG_PATH.exists():
-            zf.write(APP_LOG_PATH, arcname=str(Path("logs") / APP_LOG_PATH.name))
+        if LOG_DIR.exists():
+            for p in LOG_DIR.rglob("*"):
+                if p.is_file():
+                    zf.write(p, arcname=str(Path("logs") / p.relative_to(LOG_DIR)))
 
 
 def _create_pre_restore_snapshot() -> Path:

@@ -1,5 +1,5 @@
 
-# Literature Indexer（文献索引维护系统）
+# Aindexer（文献索引维护系统）
 
 本项目是一个本地部署的文献索引工具（FastAPI + 单页前端），支持上传 `pdf/txt/docx`，调用大模型抽取结构化索引，落盘 SQLite（含 FTS5 搜索）与 Markdown，并提供可视化状态、可中断、可导入导出与手工修订能力。
 
@@ -182,9 +182,9 @@ Backup / System
 * `package_windows_onedir.bat`（入口）
 * `scripts/build_windows_onedir.py`（实现）
 * `backend/desktop_main.py`（打包入口）
-* 输出目录：`dist/`（包含 `LiteratureIndexer/` 与 `literature-indexer-windows-onedir-*.zip`）
+* 输出目录：`dist/`（包含 `Aindexer/` 与 `Aindexer-windows-onedir-*.zip`）
 
-分发压缩包内包含：`LiteratureIndexer.exe`、`start.bat`、`README_首次使用.txt`，以及运行所需的 `frontend`、`backend/prompts`、`TUTORIAL.md`（位于 `_internal/`）。
+分发压缩包内包含：`Aindexer.exe`、`start.bat`（默认快速启动，隐藏后端窗口）、`start_debug.bat`（可见调试启动）、`README_首次使用.txt`，以及运行所需的 `frontend`、`backend/prompts`、`TUTORIAL.md`（位于 `_internal/`）。
 
 ---
 

@@ -1,4 +1,4 @@
-# Literature Indexer - Agent Quickstart
+# Aindexer - Agent Quickstart
 
 本文用于让新 Agent 在 3-5 分钟内快速理解当前项目状态并安全改动。
 
@@ -133,6 +133,5 @@ pytest
 - 一键打包脚本: `package_windows_onedir.bat`
 - 实际逻辑: `scripts/build_windows_onedir.py`
 - 打包入口: `backend/desktop_main.py`
-- 产物目录: `dist/LiteratureIndexer/`
-- 分发压缩包命名: `dist/literature-indexer-windows-onedir-YYYYMMDD_HHMMSS.zip`
-- 当前最新构建（2026-03-03）: `dist/literature-indexer-windows-onedir-20260303_180520.zip`
+- 产物目录: `dist/Aindexer/`
+- 分发压缩包命名: `dist/Aindexer-windows-onedir-YYYYMMDD_HHMMSS.zip`

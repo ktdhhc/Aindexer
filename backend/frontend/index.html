@@ -472,8 +472,8 @@
       .modal-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
       .modal-result { min-height: 20px; font-size: 13px; }
       .guide-markdown {
-        max-height: 68vh;
-        overflow: auto;
+        max-height: none;
+        overflow: visible;
         border: 1px solid var(--line);
         border-radius: var(--radius);
         background: color-mix(in srgb, var(--card) 90%, var(--accent-soft));
@@ -514,6 +514,61 @@
       body[data-theme="dark"] .guide-markdown code {
         background: #223143;
         border-color: #324357;
+      }
+      /* 教程目录导航 */
+      .guide-layout {
+        display: flex;
+        gap: 16px;
+        max-height: 70vh;
+      }
+      .guide-toc {
+        width: 180px;
+        flex-shrink: 0;
+        max-height: 70vh;
+        overflow-y: auto;
+        border-right: 1px solid var(--line);
+        padding-right: 12px;
+      }
+      .guide-toc-title {
+        font-weight: 600;
+        font-size: 15px;
+        margin-bottom: 10px;
+        color: var(--ink);
+      }
+      .guide-toc ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      .guide-toc li {
+        margin: 4px 0;
+      }
+      .guide-toc a {
+        display: block;
+        padding: 4px 8px;
+        font-size: 14px;
+        color: var(--sub);
+        text-decoration: none;
+        border-radius: var(--radius);
+        transition: all var(--duration) var(--ease);
+      }
+      .guide-toc a:hover {
+        color: var(--accent);
+        background: var(--accent-soft);
+      }
+      .guide-toc a.active {
+        color: var(--accent-strong);
+        background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
+        font-weight: 500;
+      }
+      .guide-content-scroll {
+        flex: 1;
+        max-height: 70vh;
+        overflow-y: auto;
+        padding-left: 8px;
+      }
+      .guide-markdown h2 {
+        scroll-margin-top: 12px;
       }
       .fields-table-wrap {
         max-height: 52vh;
@@ -1309,14 +1364,22 @@
     </div>
 
     <div id="guideModal" class="modal" onclick="onGuideModalBackdrop(event)">
-      <div class="modal-card" style="width:min(760px,94vw)">
+      <div class="modal-card" style="width:min(900px,94vw)">
         <div class="modal-head">
           <h2 style="margin:0">新手使用指引</h2>
           <button class="btn-icon" onclick="closeGuideWindow()" title="关闭">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
         </div>
-        <div id="guideContent" class="guide-markdown muted">正在加载教程内容...</div>
+        <div class="guide-layout">
+          <div class="guide-toc" id="guideToc">
+            <div class="guide-toc-title">目录</div>
+            <ul id="guideTocList"><li>加载中...</li></ul>
+          </div>
+          <div class="guide-content-scroll">
+            <div id="guideContent" class="guide-markdown muted">正在加载教程内容...</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1331,6 +1394,20 @@
       }
 
       const api = (p) => `/api${p}`;
+      const GUIDE_TOC_MANUAL = [
+        '1.我能用它做什么',
+        '2.首次使用',
+        '3.状态说明',
+        '4.自定义字段',
+        '5.生成后怎么用',
+        '6.取消与重置',
+        '7.常见错误与解决',
+        '8.备份与恢复',
+        '9.使用小技巧',
+        '10.三分钟总结',
+        '11.反馈方式',
+        '12.新版本持续更新',
+      ];
       let providerConfigs = [];
       let providerDrafts = [];
       const providerExpanded = new Set();
@@ -1557,6 +1634,7 @@
         let inUl = false;
         let inOl = false;
         let inCode = false;
+        let guideH2Count = 0;
 
         const closeLists = () => {
           if (inUl) {
@@ -1609,7 +1687,10 @@
           }
           if (t.startsWith('## ')) {
             closeLists();
-            html.push(`<h2>${inline(t.slice(3))}</h2>`);
+            const titleText = t.slice(3);
+            guideH2Count += 1;
+            const anchorId = `guide-h2-${guideH2Count}`;
+            html.push(`<h2 id="${anchorId}">${inline(titleText)}</h2>`);
             continue;
           }
           if (t.startsWith('# ')) {
@@ -2341,27 +2422,88 @@
       async function openGuideWindow() {
         document.getElementById('guideModal').classList.add('open');
         const container = document.getElementById('guideContent');
+        const tocList = document.getElementById('guideTocList');
         if (!container) return;
         container.className = 'guide-markdown muted';
         container.textContent = '正在加载教程内容...';
+        if (tocList) tocList.innerHTML = '<li>加载中...</li>';
         try {
           const res = await fetch(api('/system/tutorial'));
           const data = await res.json().catch(() => ({}));
           if (!res.ok) {
             container.className = 'guide-markdown err';
             container.textContent = data.detail || '读取教程失败';
+            if (tocList) tocList.innerHTML = '<li>加载失败</li>';
             return;
           }
+          const markdown = data.markdown || '';
           container.className = 'guide-markdown';
-          container.innerHTML = renderMarkdownToHtml(data.markdown || '');
+          container.innerHTML = renderMarkdownToHtml(markdown);
+          // 生成目录
+          const tocItems = generateGuideToc();
+          renderGuideToc(tocItems);
+          // 设置滚动监听
+          setupGuideTocScrollSpy();
         } catch (e) {
           container.className = 'guide-markdown err';
           container.textContent = `读取教程失败: ${e}`;
+          if (tocList) tocList.innerHTML = '<li>加载失败</li>';
         }
       }
 
       function closeGuideWindow() {
         document.getElementById('guideModal').classList.remove('open');
+      }
+
+      function generateGuideToc() {
+        const headings = [...document.querySelectorAll('#guideContent h2[id]')];
+        return headings.map((h, idx) => ({
+          title: GUIDE_TOC_MANUAL[idx] || `第${idx + 1}节`,
+          anchorId: h.id,
+        }));
+      }
+
+      function renderGuideToc(tocItems) {
+        const list = document.getElementById('guideTocList');
+        if (!list) return;
+        if (!tocItems.length) {
+          list.innerHTML = '<li>无目录</li>';
+          return;
+        }
+        list.innerHTML = tocItems.map(item =>
+          `<li><a href="#${item.anchorId}" onclick="scrollToGuideSection('${item.anchorId}', this); return false;">${h(item.title)}</a></li>`
+        ).join('');
+      }
+
+      function scrollToGuideSection(anchorId, linkEl) {
+        const section = document.getElementById(anchorId);
+        if (section) {
+          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        // 更新激活状态
+        document.querySelectorAll('.guide-toc a').forEach(a => a.classList.remove('active'));
+        if (linkEl) linkEl.classList.add('active');
+      }
+
+      function setupGuideTocScrollSpy() {
+        const contentScroll = document.querySelector('.guide-content-scroll');
+        if (!contentScroll) return;
+        contentScroll.addEventListener('scroll', () => {
+          const headings = contentScroll.querySelectorAll('h2[id]');
+          let currentId = null;
+          for (const h of headings) {
+            const rect = h.getBoundingClientRect();
+            const containerRect = contentScroll.getBoundingClientRect();
+            if (rect.top <= containerRect.top + 20) {
+              currentId = h.id;
+            }
+          }
+          if (currentId) {
+            document.querySelectorAll('.guide-toc a').forEach(a => {
+              a.classList.toggle('active', a.getAttribute('href') === '#' + currentId);
+            });
+          }
+        });
       }
 
       function onGuideModalBackdrop(e) {

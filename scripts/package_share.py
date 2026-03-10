@@ -91,7 +91,7 @@ def main() -> int:
             out_path = ROOT / out_path
     else:
         ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_path = DIST_DIR / f"literature-indexer-share-{ts}.zip"
+        out_path = DIST_DIR / f"aindexer-share-{ts}.zip"
 
     build_zip(out_path, files)
     print(f"Done. Included {len(files)} files")
