@@ -212,6 +212,7 @@ def get_index(doc_id: str) -> IndexRecordOut | None:
         custom_fields=json.loads(row["custom_fields_json"] or "{}"),
         provider=row["provider"],
         model=row["model"],
+        updated_at=row["updated_at"],
     )
 
 
@@ -262,6 +263,39 @@ def update_document_display_name(
             (doc_id,),
         ).fetchone()
         return dict(updated) if updated else None
+
+
+def update_index_editor_fields(
+    doc_id: str,
+    *,
+    display_name: str,
+    year: int | None,
+    generated_at: str | None,
+) -> bool:
+    cleaned_name = str(display_name or "").strip()
+    with get_conn() as conn:
+        doc_row = conn.execute(
+            "SELECT id, filename FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()
+        index_row = conn.execute(
+            "SELECT doc_id FROM index_records WHERE doc_id = ?", (doc_id,)
+        ).fetchone()
+        if not doc_row or not index_row:
+            return False
+
+        next_name = cleaned_name or str(doc_row["filename"] or "")
+        next_year = int(year or 0) if year else None
+        next_generated_at = str(generated_at or "").strip() or utcnow()
+
+        conn.execute(
+            "UPDATE documents SET display_name = ?, updated_at = ? WHERE id = ?",
+            (next_name, utcnow(), doc_id),
+        )
+        conn.execute(
+            "UPDATE index_records SET year = ?, updated_at = ? WHERE doc_id = ?",
+            (next_year, next_generated_at, doc_id),
+        )
+        return True
 
 
 def _recover_stale_parsing(conn: Any) -> None:

@@ -11,7 +11,10 @@
 ## 2) 技术栈与目录
 
 - 后端: FastAPI (`backend/app`)
-- 前端: 单文件页面 (`backend/frontend/index.html`)
+- 前端:
+  - 经典版入口 (`backend/frontend/index.html`)
+  - 新版工作台入口 (`backend/frontend/v2/index.html`)
+  - 新版 Provider 页 (`backend/frontend/v2/provider-config.html`)
 - 数据: SQLite + FTS5 (`data/app.db`)
 - Prompt: 集中在 `backend/prompts/`
   - `index_system_prompt.txt`
@@ -24,7 +27,9 @@
 
 ### 方式 A（推荐给普通用户）
 
-- 双击根目录 `start_literature_indexer.bat`
+- 双击 `start_literature_indexer_classic.bat` 进入经典版
+- 双击 `start_literature_indexer_v2.bat` 进入新版工作台
+- `start_literature_indexer.bat` 仅作为兼容入口，当前默认转到经典版
 
 ### 方式 B（开发模式）
 
@@ -36,7 +41,12 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-访问: `http://127.0.0.1:8000`
+访问:
+- 经典版: `http://127.0.0.1:8000/`
+- 新版工作台: `http://127.0.0.1:8000/v2/`
+
+补充说明:
+- 页面内已移除经典版 / 新版互跳按钮，前端入口改由启动脚本区分。
 
 ## 4) 当前核心功能
 

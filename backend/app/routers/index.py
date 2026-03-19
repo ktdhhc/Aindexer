@@ -23,6 +23,7 @@ from ..repository import (
     set_document_stage,
     set_document_status,
     is_cancel_requested,
+    update_index_editor_fields,
 )
 from ..schemas import IndexRecordIn
 from ..services.extractor import fallback_extract, run_extraction
@@ -391,6 +392,33 @@ def update_index_markdown(doc_id: str, payload: dict = Body(...)) -> dict:
 @router.post("/{doc_id}/markdown")
 def update_index_markdown_post(doc_id: str, payload: dict = Body(...)) -> dict:
     return update_index_markdown(doc_id, payload)
+
+
+@router.put("/{doc_id}/editor")
+def update_index_editor(doc_id: str, payload: dict = Body(...)) -> dict:
+    doc = get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    markdown = str(payload.get("markdown", ""))
+    display_name = str(payload.get("display_name", ""))
+    generated_at = payload.get("generated_at")
+    raw_year = payload.get("year")
+    year_text = str(raw_year or "").strip()
+    year = int(year_text) if year_text else None
+
+    updated = update_index_editor_fields(
+        doc_id,
+        display_name=display_name,
+        year=year,
+        generated_at=str(generated_at or ""),
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Index not found")
+
+    write_markdown(markdown_path(doc_id), markdown)
+    set_document_status(doc_id, "indexed")
+    return {"ok": True}
 
 
 @router.put("/{doc_id}")

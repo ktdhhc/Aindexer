@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import socket
 import subprocess
@@ -13,6 +14,7 @@ from pathlib import Path
 HOST = "127.0.0.1"
 PORT = 8000
 URL = f"http://{HOST}:{PORT}"
+LAUNCHER_STATE_FILE = "launcher_state.json"
 
 
 def _wait_port_open(host: str, port: int, timeout_sec: int) -> bool:
@@ -55,6 +57,23 @@ def _shutdown_server(server: subprocess.Popen) -> None:
         server.kill()
 
 
+def _write_launcher_state(root_dir: Path, payload: dict) -> None:
+    runtime_dir = root_dir / "data" / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    (runtime_dir / LAUNCHER_STATE_FILE).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _clear_launcher_state(root_dir: Path) -> None:
+    state_file = root_dir / "data" / "runtime" / LAUNCHER_STATE_FILE
+    try:
+        state_file.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def main() -> int:
     backend_dir = Path(__file__).resolve().parent
     root_dir = backend_dir.parent
@@ -70,6 +89,7 @@ def main() -> int:
         out_log.open("a", encoding="utf-8") as out,
         err_log.open("a", encoding="utf-8") as err,
     ):
+        _clear_launcher_state(root_dir)
         server = subprocess.Popen(
             [
                 sys.executable,
@@ -110,6 +130,16 @@ def main() -> int:
             ],
             creationflags=creationflags,
         )
+        _write_launcher_state(
+            root_dir,
+            {
+                "server_pid": server.pid,
+                "browser_pid": browser.pid,
+                "browser_exe": browser_exe,
+                "browser_profile": str(browser_profile),
+                "url": URL,
+            },
+        )
 
         try:
             while True:
@@ -120,6 +150,7 @@ def main() -> int:
                     return 0
                 time.sleep(1)
         finally:
+            _clear_launcher_state(root_dir)
             shutil.rmtree(browser_profile, ignore_errors=True)
 
 

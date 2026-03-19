@@ -1,0 +1,37 @@
+:root {
+  --surface: #0b1326;
+  --surface-low: #131b2e;
+  --surface-mid: #171f33;
+  --surface-high: #222a3d;
+  --surface-highest: #2d3449;
+  --surface-lowest: #060e20;
+  --primary: #89ceff;
+  --primary-dim: #0ea5e9;
+  --secondary: #93ccff;
+  --tertiary: #ffb86e;
+  --success: #4dd4a6;
+  --error: #ffb4ab;
+  --text: #dae2fd;
+  --text-dim: #95a4bc;
+  --text-faint: #6f8099;
+  --line-soft: rgba(255, 255, 255, 0.08);
+  --line-ghost: rgba(255, 255, 255, 0.14);
+  --glass-bg: rgba(34, 42, 61, 0.56);
+  --glass-bg-strong: rgba(19, 27, 46, 0.78);
+  --shadow-soft: 0 18px 42px rgba(2, 8, 23, 0.28);
+  --shadow-glow: 0 0 22px rgba(137, 206, 255, 0.18);
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --topbar-height: 76px;
+  --font-sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", Inter, system-ui, sans-serif;
+}

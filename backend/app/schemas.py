@@ -61,3 +61,4 @@ class IndexRecordOut(IndexRecordIn):
     doc_id: str
     provider: str | None = None
     model: str | None = None
+    updated_at: str | None = None

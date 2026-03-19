@@ -316,3 +316,53 @@
 - 主题系统新增并收敛为三套可循环色系：`default`（深蓝基调）、`cyber`（紫曜）、`obsidian`（曜黑）；其中曜黑主题采用“深灰主色 + 正蓝关键色 + 亮橙禁止色”，并完成浅/暗色双模式映射与背景动效调色盘联动。
 - 前端视觉统一做了玻璃化增强：四张主卡片基础透明度进一步提高，背景动效色调与存在感上调；Chat 会话栏小卡片、输入胶囊、上传空态卡片、预览编辑框等内层组件已改为随色系同步变色。
 - 交互层修复与收敛：预览区“编辑->完成”保存时的编辑框瞬移闪动已修复；彩色按钮去除立体高光并统一为扁平风格；暗/浅色切换流程增加过渡窗口与背景动效暂停，降低切换时卡顿与生硬感。
+
+## 更新条目 - 2026-03-19（V2 工作台壳层统一与仪表台首版落地）
+- 触发原因：用户要求持续推进新版 `/v2/` 工作台视觉接线，并将近期 UI/UX 优化写入维护日志。
+- 影响范围：前端 V2 页面、共享壳层、项目文档（`backend/frontend/v2/index.html`、`backend/frontend/v2/provider-config.html`、`backend/frontend/v2/assets/js/pages/dashboard.js`、`backend/frontend/v2/assets/js/shared/app-shell.js`、`task_docs/ui-ux-optimizations/20260319_dashboard-instrument-panel-plan.md`）。
+- 变更内容：
+  - 新版工作台已改用基于 `stitch_prd` 的高保真壳层，Provider 配置页同步统一为相同侧栏/顶栏导航；顶栏承载品牌 logo 与 `Aindexer / Crystalline Core`，logo 右下新增后端健康状态点，侧栏仅负责页面跳转。
+  - `/v2/` 顶部主卡片已从普通上传卡片重构为“仪表台”首版：左侧展示状态摘要、横向中心词云、已索引数量与可用模型数量，右侧为放大的上传与生成操作舱，保留虚线拖拽上传框、`Provider / Model` 并排选择与 `全部索引` 主按钮，并移除了 `retries` 的视觉入口。
+  - 搜索区、预览区与交互细节同步收敛：搜索结果条目支持 hover 微高亮与整条点击预览，预览文件信息栏拆出为独立一行；搜索区滚动从不稳定的 JS 测高方案改回纯 CSS 定高 + 内部滚动方案，以降低缩放后滚动条丢失和向下溢出问题。
+- 影响说明：
+  - V2 页面现在具备可继续精修的统一视觉基底，工作台与接口配置页之间的切换逻辑、品牌感和灰度入口策略更稳定。
+  - 仪表台把“状态展示”和“操作执行”拆成左右不对称结构，整体更接近新版中枢工作台定位；搜索区滚动与预览头部布局也更符合实际使用习惯。
+- 验证：
+  - 已多次通过 `node --check` 验证 `dashboard.js`、`provider-config.js`、`app-shell.js` 语法。
+  - 仪表台方案文档已新增：`task_docs/ui-ux-optimizations/20260319_dashboard-instrument-panel-plan.md`。
+- 后续事项：
+  - 继续观察搜索区在不同缩放档位下的滚动稳定性，并视反馈决定是否将固定高度改为更平滑的视口约束。
+  - 继续精修仪表台词云排布、右侧操作舱节奏和移动端收敛表现。
+
+## 更新条目 - 2026-03-19（V2 工作台壳层统一与仪表台改造）
+- 触发原因：用户要求继续推进 `/v2/` 灰度前端，并集中优化新版工作台、接口配置页与顶部主卡片视觉。
+- 影响范围：前端（`backend/frontend/v2/index.html`、`backend/frontend/v2/provider-config.html`、`backend/frontend/v2/assets/js/pages/dashboard.js`、`backend/frontend/v2/assets/js/pages/provider-config.js`、`backend/frontend/v2/assets/js/shared/app-shell.js`）、文档（`task_docs/ui-ux-optimizations/20260319_dashboard-instrument-panel-plan.md`）。
+- 变更内容：
+  - V2 主工作台与接口配置页已统一为同一套侧栏/顶栏壳层：侧栏仅保留页面跳转，顶栏承载品牌区与后端健康状态点；接口配置页同步接入该导航结构。
+  - V2 主工作台顶部主卡片已从“上传卡片”重构为“仪表台”：标题改为 `仪表台`，左侧承载索引语义云图与统计信息，右侧改为上传与生成操作舱，`Provider / Model` 并排，`Retries` 从该页视觉入口移除，主按钮统一为 `全部索引`。
+  - 搜索区与预览区交互继续收敛：搜索结果支持 hover 高亮与整条点击预览，预览元信息从标题同行拆出；搜索区滚动实现已放弃不稳定的 JS 动态测高，改回固定容器 + 内部滚动的稳健方案以降低缩放/重排时向下溢出的概率。
+- 影响说明：
+  - `/v2/` 已从“说明页 + 临时布局”推进到更接近正式新版工作台的壳层与信息架构，后续可在不破坏旧版 `/` 的前提下继续做灰度联调。
+  - 当前仍需继续观察搜索区在不同缩放档位下的稳定性，并可进一步微调仪表台比例、云图疏密与操作舱精致度。
+- 验证：
+  - 已多次执行 `node --check backend/frontend/v2/assets/js/pages/dashboard.js`、`node --check backend/frontend/v2/assets/js/pages/provider-config.js`、`node --check backend/frontend/v2/assets/js/shared/app-shell.js`，当前脚本语法通过。
+  - 仪表台方案文档已写入 `task_docs/ui-ux-optimizations/20260319_dashboard-instrument-panel-plan.md` 并据此开始实施。
+- 后续事项：
+  - 继续做 `/v2/` 浏览器级联调，重点观察搜索卡片滚动、仪表台操作舱比例、关键词云排布与桌面/移动端断点表现。
+
+## 更新条目 - 2026-03-19（V2 工作台外壳统一与仪表台首版落地）
+- 触发原因：用户要求持续推进新版 `/v2/` 工作台视觉接线，并将近期 UI/UX 优化写入维护日志。
+- 影响范围：前端 V2 页面、共享壳层、项目文档（`backend/frontend/v2/index.html`、`backend/frontend/v2/provider-config.html`、`backend/frontend/v2/assets/js/pages/dashboard.js`、`backend/frontend/v2/assets/js/shared/app-shell.js`、`task_docs/ui-ux-optimizations/20260319_dashboard-instrument-panel-plan.md`）。
+- 变更内容：
+  - 新版工作台已改用基于 `stitch_prd` 的高保真壳层，Provider 配置页同步统一为相同侧栏/顶栏导航；顶栏承载品牌 logo 与 `Aindexer / Crystalline Core`，logo 右下新增后端健康状态点，侧栏仅负责页面跳转。
+  - `/v2/` 顶部主卡片已从普通上传卡片重构为“仪表台”首版：左侧展示状态摘要、横向中心词云、已索引数量与可用模型数量，右侧为放大的上传与生成操作舱，保留虚线拖拽上传框、`Provider / Model` 并排选择与 `全部索引` 主按钮，并移除了 `retries` 的视觉入口。
+  - 搜索区、预览区与交互细节同步收敛：搜索结果条目支持 hover 微高亮与整条点击预览，预览文件信息栏拆出为独立一行；搜索区滚动从不稳定的 JS 测高方案改回纯 CSS 定高 + 内部滚动方案，以降低缩放后滚动条丢失和向下溢出问题。
+- 影响说明：
+  - V2 页面现在具备可继续精修的统一视觉基底，工作台与接口配置页之间的切换逻辑、品牌感和灰度入口策略更稳定。
+  - 仪表台把“状态展示”和“操作执行”拆成左右不对称结构，整体更接近新版中枢工作台定位；搜索区滚动与预览头部布局也更符合实际使用习惯。
+- 验证：
+  - 已多次通过 `node --check` 验证 `dashboard.js`、`provider-config.js`、`app-shell.js` 语法。
+  - 仪表台方案文档已新增：`task_docs/ui-ux-optimizations/20260319_dashboard-instrument-panel-plan.md`。
+- 后续事项：
+  - 继续观察搜索区在不同缩放档位下的滚动稳定性，并视反馈决定是否将固定高度改为更平滑的视口约束。
+  - 继续精修仪表台词云排布、右侧操作舱节奏和移动端收敛表现。

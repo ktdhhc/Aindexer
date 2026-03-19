@@ -34,13 +34,15 @@
 
 ### 方式 A（推荐）
 
-双击根目录脚本：
+双击根目录脚本之一：
 
-- `start_literature_indexer.bat`
+- `start_literature_indexer_classic.bat`：启动经典版，打开 `http://127.0.0.1:8000/`
+- `start_literature_indexer_v2.bat`：启动新版工作台，打开 `http://127.0.0.1:8000/v2/`
 
-启动后访问：
+兼容说明：
 
-- `http://127.0.0.1:8000`
+- `start_literature_indexer.bat` 仍保留，但现在默认转到经典版启动脚本
+- 页面内已移除经典版 / 新版互跳按钮，入口改由启动脚本分流
 
 ### 方式 B（开发模式）
 
@@ -56,11 +58,12 @@ uvicorn app.main:app --reload
 
 ## 使用流程
 
-1. 顶部进入 Provider 配置，填写 `base_url / model / api_key / timeout`，点击“测试连接”
-2. 上传文件（支持拖拽）
-3. 点击“生成索引”（单条或批量/全量）
-4. 在列表“动态信息”查看状态与阶段进度
-5. 生成后可预览 Markdown，并可手工编辑保存；或导出/批量导出
+1. 通过对应启动脚本进入经典版或新版
+2. 在页面内进入 Provider 配置，填写 `base_url / model / api_key / timeout`，点击“测试连接”
+3. 上传文件（支持拖拽）
+4. 点击“生成索引”（单条或批量/全量）
+5. 在列表“动态信息”查看状态与阶段进度
+6. 生成后可预览 Markdown，并可手工编辑保存；或导出/批量导出
 
 ---
 

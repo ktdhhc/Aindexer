@@ -5,6 +5,8 @@ set "ROOT=%~dp0"
 set "BACKEND=%ROOT%backend"
 set "VENV_PY=%BACKEND%\.venv\Scripts\python.exe"
 set "REQ_HASH_FILE=%BACKEND%\.venv\.requirements.sha256"
+if not defined START_URL set "START_URL=http://127.0.0.1:8000/"
+if not defined START_MODE set "START_MODE=classic"
 
 echo [INFO] Root: %ROOT%
 echo [INFO] Backend: %BACKEND%
@@ -66,7 +68,8 @@ if %errorlevel%==0 (
 )
 
 echo [RUN] Browser will open after server starts...
-start "" /min powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 2; Start-Process 'http://127.0.0.1:8000'"
+echo [RUN] Target mode: %START_MODE%
+start "" /min powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 2; Start-Process '%START_URL%'"
 
 echo [RUN] Starting uvicorn in this window (visible mode)...
 echo [RUN] Press Ctrl+C to stop server.
