@@ -21,9 +21,13 @@ def build_user_prompt(
     custom_fields: list[dict[str, Any]],
 ) -> str:
     fields = [
-        {"key": f["field_key"], "type": f["field_type"]}
+        {
+            "key": f.get("field_key") or f.get("label"),
+            "type": f["field_type"],
+            "description": str(f.get("description") or "").strip(),
+        }
         for f in custom_fields
-        if f["enabled"]
+        if f["enabled"] and (f.get("field_key") or f.get("label"))
     ]
     doc_full = (text or "").strip()
     page_count = _count_page_markers(doc_full)

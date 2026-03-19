@@ -128,6 +128,40 @@ class ProviderClient:
                 raise RuntimeError(_format_url_error(config.base_url, exc))
         raise RuntimeError("LLM request failed before response")
 
+    @staticmethod
+    def generate_text(
+        config: ProviderConfig,
+        system_prompt: str,
+        user_prompt: str,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> str:
+        payload = {
+            "model": config.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": _effective_temperature(config.model, config.temperature),
+            "max_tokens": 1800,
+            "stream": True,
+        }
+        url = config.base_url.rstrip("/") + "/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {config.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            text = _stream_chat_completion(
+                url=url,
+                headers=headers,
+                payload=payload,
+                timeout=config.timeout,
+                should_cancel=should_cancel,
+            )
+        except UnicodeError as exc:
+            raise RuntimeError(_format_url_error(config.base_url, exc)) from exc
+        return text.strip()
+
 
 def _stream_chat_completion(
     url: str,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from ..repository import delete_field, get_fields, save_fields
+from ..repository import delete_field, get_fields, reset_fields_to_defaults, save_fields
 
 router = APIRouter()
 
@@ -15,6 +15,12 @@ def list_fields() -> list[dict]:
 @router.put("")
 def update_fields(payload: list[dict]) -> dict:
     save_fields(payload)
+    return {"ok": True}
+
+
+@router.post("/reset")
+def reset_fields() -> dict:
+    reset_fields_to_defaults()
     return {"ok": True}
 
 

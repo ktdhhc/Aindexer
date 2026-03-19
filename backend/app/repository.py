@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sqlite3
 import uuid
 from difflib import SequenceMatcher
 from datetime import UTC, datetime, timedelta
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import INDEX_DIR
-from .db import get_conn, utcnow
+from .db import DEFAULT_FIELD_DEFINITIONS, get_conn, utcnow
 from .schemas import ClaimItem, IndexRecordIn, IndexRecordOut, ProviderConfigOut
 
 
@@ -34,11 +35,11 @@ def create_document(
         conn.execute(
             """
             INSERT INTO documents (
-              id, filename, file_type, file_hash, file_path, status, stage, stage_message, cancel_requested, created_at, updated_at
+              id, filename, display_name, file_type, file_hash, file_path, status, stage, stage_message, cancel_requested, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, 'uploaded', 'uploaded', '文件上传完成，等待生成索引', 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 'uploaded', 'uploaded', '文件上传完成，等待生成索引', 0, ?, ?)
             """,
-            (doc_id, filename, file_type, file_hash, file_path, now, now),
+            (doc_id, filename, filename, file_type, file_hash, file_path, now, now),
         )
     return doc_id
 
@@ -214,13 +215,53 @@ def get_index(doc_id: str) -> IndexRecordOut | None:
     )
 
 
+def get_first_indexed_document() -> dict[str, Any] | None:
+    with get_conn() as conn:
+        try:
+            row = conn.execute(
+                "SELECT id, filename, COALESCE(display_name, filename) AS display_name, status FROM documents WHERE status = 'indexed' ORDER BY updated_at DESC, created_at DESC LIMIT 1"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = conn.execute(
+                "SELECT id, filename, status FROM documents WHERE status = 'indexed' ORDER BY updated_at DESC, created_at DESC LIMIT 1"
+            ).fetchone()
+            if not row:
+                return None
+            data = dict(row)
+            data["display_name"] = data.get("filename") or ""
+            return data
+        return dict(row) if row else None
+
+
 def list_documents() -> list[dict[str, Any]]:
     with get_conn() as conn:
         _recover_stale_parsing(conn)
         rows = conn.execute(
-            "SELECT id, filename, file_type, status, stage, stage_message, cancel_requested, error_message, created_at, updated_at FROM documents ORDER BY created_at DESC"
+            "SELECT id, filename, COALESCE(display_name, filename) AS display_name, file_type, status, stage, stage_message, cancel_requested, error_message, created_at, updated_at FROM documents ORDER BY created_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def update_document_display_name(
+    doc_id: str, display_name: str
+) -> dict[str, Any] | None:
+    cleaned = str(display_name or "").strip()
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, filename FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()
+        if not row:
+            return None
+        next_name = cleaned or str(row["filename"] or "")
+        conn.execute(
+            "UPDATE documents SET display_name = ?, updated_at = ? WHERE id = ?",
+            (next_name, utcnow(), doc_id),
+        )
+        updated = conn.execute(
+            "SELECT id, filename, COALESCE(display_name, filename) AS display_name, status, updated_at FROM documents WHERE id = ?",
+            (doc_id,),
+        ).fetchone()
+        return dict(updated) if updated else None
 
 
 def _recover_stale_parsing(conn: Any) -> None:
@@ -278,6 +319,7 @@ def search_documents(
     with get_conn() as conn:
         sql = (
             "SELECT d.id, d.filename, d.status, "
+            "COALESCE(d.display_name, d.filename) AS display_name, "
             "COALESCE(i.updated_at, d.created_at) AS sort_time, "
             "i.title, i.year, i.authors_json, i.keywords_json, i.apa_citation, i.one_liner, i.core_points_json, i.custom_fields_json "
             "FROM documents d LEFT JOIN index_records i ON i.doc_id = d.id "
@@ -315,6 +357,7 @@ def search_documents(
         item = {
             "doc_id": r["id"],
             "filename": r["filename"],
+            "display_name": r["display_name"],
             "status": r["status"],
             "created_at": r["sort_time"],
             "title": r["title"],
@@ -335,10 +378,14 @@ def search_documents(
             except Exception:
                 markdown_text = ""
 
-        filename_text = str(r["filename"] or "")
+        display_name_text = str(r["display_name"] or "")
+        original_filename_text = str(r["filename"] or "")
+        filename_text = display_name_text or original_filename_text
         title_text = str(r["title"] or "")
         corpus = "\n".join(
             [
+                display_name_text,
+                original_filename_text,
                 filename_text,
                 title_text,
                 " ".join([str(x) for x in authors]),
@@ -353,9 +400,26 @@ def search_documents(
         corpus_lower = corpus.lower()
 
         exact_hit = q_lower in corpus_lower
-        filename_exact_hit = q_lower in filename_text.lower()
+        filename_exact_hit = (
+            q_lower in filename_text.lower()
+            or q_lower in original_filename_text.lower()
+        )
         term_hits = sum(1 for t in q_terms if t in corpus_lower) if q_terms else 0
-        filename_ratio = SequenceMatcher(None, q_lower, filename_text.lower()).ratio()
+        display_ratio = (
+            SequenceMatcher(None, q_lower, display_name_text.lower()).ratio()
+            if display_name_text
+            else 0.0
+        )
+        original_ratio = (
+            SequenceMatcher(None, q_lower, original_filename_text.lower()).ratio()
+            if original_filename_text
+            else 0.0
+        )
+        filename_ratio = max(
+            display_ratio,
+            original_ratio,
+            SequenceMatcher(None, q_lower, filename_text.lower()).ratio(),
+        )
         title_ratio = SequenceMatcher(None, q_lower, title_text.lower()).ratio()
         corpus_ratio = SequenceMatcher(None, q_lower, corpus_lower[:5000]).ratio()
         fuzzy_ratio = max(filename_ratio, title_ratio, corpus_ratio)
@@ -390,26 +454,49 @@ def get_fields() -> list[dict[str, Any]]:
 
 def save_fields(items: list[dict[str, Any]]) -> None:
     with get_conn() as conn:
+        conn.execute("DELETE FROM field_definitions")
         for item in items:
+            label = str(item.get("label") or item.get("field_key") or "").strip()
+            if not label:
+                continue
+            field_key = str(item.get("field_key") or label).strip() or label
+            description = str(item.get("description") or "").strip()
             conn.execute(
                 """
-                INSERT INTO field_definitions (field_key, label, field_type, required, enabled, sort_order, is_default)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(field_key) DO UPDATE SET
-                  label=excluded.label,
-                  field_type=excluded.field_type,
-                  required=excluded.required,
-                  enabled=excluded.enabled,
-                  sort_order=excluded.sort_order
+                INSERT INTO field_definitions (field_key, label, description, field_type, required, enabled, sort_order, is_default)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    field_key,
+                    label,
+                    description,
+                    item.get("field_type") or "text",
+                    1 if item.get("required") else 0,
+                    1 if item.get("enabled", True) else 0,
+                    item.get("sort_order", 0),
+                    1 if item.get("is_default") else 0,
+                ),
+            )
+
+
+def reset_fields_to_defaults() -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM field_definitions")
+        for item in DEFAULT_FIELD_DEFINITIONS:
+            conn.execute(
+                """
+                INSERT INTO field_definitions (field_key, label, description, field_type, required, enabled, sort_order, is_default)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item["field_key"],
                     item["label"],
+                    item["description"],
                     item["field_type"],
-                    1 if item.get("required") else 0,
-                    1 if item.get("enabled", True) else 0,
-                    item.get("sort_order", 0),
-                    0,
+                    item["required"],
+                    item["enabled"],
+                    item["sort_order"],
+                    item["is_default"],
                 ),
             )
 

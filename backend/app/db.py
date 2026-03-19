@@ -8,6 +8,90 @@ from typing import Generator
 from .config import DB_PATH, ensure_dirs
 
 
+DEFAULT_FIELD_DEFINITIONS = [
+    {
+        "field_key": "title",
+        "label": "标题",
+        "field_type": "text",
+        "required": 1,
+        "enabled": 1,
+        "sort_order": 1,
+        "is_default": 1,
+        "description": "提取文献的完整正式标题，尽量保留原文标题写法，不要自行简写或改写。",
+    },
+    {
+        "field_key": "authors",
+        "label": "作者",
+        "field_type": "list",
+        "required": 1,
+        "enabled": 1,
+        "sort_order": 2,
+        "is_default": 1,
+        "description": "提取全部作者姓名，按署名顺序输出；若原文有缩写或多作者，尽量完整保留。",
+    },
+    {
+        "field_key": "year",
+        "label": "年份",
+        "field_type": "number",
+        "required": 1,
+        "enabled": 1,
+        "sort_order": 3,
+        "is_default": 1,
+        "description": "提取文献正式发表年份，优先使用期刊/出版信息中的四位年份。",
+    },
+    {
+        "field_key": "keywords",
+        "label": "关键词",
+        "field_type": "list",
+        "required": 1,
+        "enabled": 1,
+        "sort_order": 4,
+        "is_default": 1,
+        "description": "提取 3 到 8 个最核心的主题词，优先使用原文关键词，没有时可结合摘要自行归纳。",
+    },
+    {
+        "field_key": "apa_citation",
+        "label": "APA引用",
+        "field_type": "text",
+        "required": 1,
+        "enabled": 1,
+        "sort_order": 5,
+        "is_default": 1,
+        "description": "生成规范的 APA 参考文献格式，尽量包含作者、年份、标题、期刊或出版社等关键信息。",
+    },
+    {
+        "field_key": "one_liner",
+        "label": "一句话定位",
+        "field_type": "text",
+        "required": 1,
+        "enabled": 1,
+        "sort_order": 6,
+        "is_default": 1,
+        "description": "用一句中文概括这篇文献最重要的研究问题、方法或结论，适合作为快速识别摘要。",
+    },
+    {
+        "field_key": "core_points",
+        "label": "核心观点",
+        "field_type": "list",
+        "required": 1,
+        "enabled": 1,
+        "sort_order": 7,
+        "is_default": 1,
+        "description": "提炼 3 到 5 条最重要的核心观点或结论，每条尽量简洁明确，避免泛泛而谈。",
+    },
+    {
+        "field_key": "claims",
+        "label": "重要claims",
+        "field_type": "list",
+        "required": 1,
+        "enabled": 1,
+        "sort_order": 8,
+        "is_default": 1,
+        "description": "提取文中关键论断，并尽量给出对应原文证据与页码，优先选择可被直接引用的具体表述。",
+    },
+]
+
+
 def utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -21,6 +105,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS documents (
                 id TEXT PRIMARY KEY,
                 filename TEXT NOT NULL,
+                display_name TEXT,
                 file_type TEXT NOT NULL,
                 file_hash TEXT NOT NULL UNIQUE,
                 file_path TEXT NOT NULL,
@@ -62,6 +147,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS field_definitions (
                 field_key TEXT PRIMARY KEY,
                 label TEXT NOT NULL,
+                description TEXT,
                 field_type TEXT NOT NULL,
                 required INTEGER NOT NULL DEFAULT 0,
                 enabled INTEGER NOT NULL DEFAULT 1,
@@ -99,6 +185,11 @@ def init_db() -> None:
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(documents)").fetchall()}
+    if "display_name" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN display_name TEXT")
+        conn.execute(
+            "UPDATE documents SET display_name = filename WHERE display_name IS NULL OR display_name = ''"
+        )
     if "stage" not in cols:
         conn.execute("ALTER TABLE documents ADD COLUMN stage TEXT")
     if "stage_message" not in cols:
@@ -112,6 +203,13 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     }
     if "apa_citation" not in idx_cols:
         conn.execute("ALTER TABLE index_records ADD COLUMN apa_citation TEXT")
+
+    field_cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(field_definitions)").fetchall()
+    }
+    if "description" not in field_cols:
+        conn.execute("ALTER TABLE field_definitions ADD COLUMN description TEXT")
 
     fts_cols = {
         row[1] for row in conn.execute("PRAGMA table_info(index_fts)").fetchall()
@@ -165,24 +263,31 @@ def _migrate_provider_api_keys_to_plain(conn: sqlite3.Connection) -> None:
 
 
 def _seed_default_fields(conn: sqlite3.Connection) -> None:
-    default_fields = [
-        ("title", "标题", "text", 1, 1, 1, 1),
-        ("authors", "作者", "list", 1, 1, 2, 1),
-        ("year", "年份", "number", 1, 1, 3, 1),
-        ("keywords", "关键词", "list", 1, 1, 4, 1),
-        ("apa_citation", "APA引用", "text", 1, 1, 5, 1),
-        ("one_liner", "一句话定位", "text", 1, 1, 6, 1),
-        ("core_points", "核心观点", "list", 1, 1, 7, 1),
-        ("claims", "重要claims", "list", 1, 1, 8, 1),
-    ]
     conn.executemany(
         """
         INSERT OR IGNORE INTO field_definitions
-        (field_key, label, field_type, required, enabled, sort_order, is_default)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (field_key, label, description, field_type, required, enabled, sort_order, is_default)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        default_fields,
+        [
+            (
+                item["field_key"],
+                item["label"],
+                item["description"],
+                item["field_type"],
+                item["required"],
+                item["enabled"],
+                item["sort_order"],
+                item["is_default"],
+            )
+            for item in DEFAULT_FIELD_DEFINITIONS
+        ],
     )
+    for item in DEFAULT_FIELD_DEFINITIONS:
+        conn.execute(
+            "UPDATE field_definitions SET description = ? WHERE field_key = ? AND (description IS NULL OR description = '')",
+            (item["description"], item["field_key"]),
+        )
 
 
 def _seed_default_providers(conn: sqlite3.Connection) -> None:

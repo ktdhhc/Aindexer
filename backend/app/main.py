@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import APP_LOG_PATH, ensure_dirs
 from .db import init_db
-from .routers import export, fields, files, index, providers, search, system
+from .routers import chat, export, fields, files, index, providers, search, system
 
 
 def _configure_logging() -> None:
@@ -55,6 +55,7 @@ def create_app() -> FastAPI:
     app.include_router(files.router, prefix="/api/files", tags=["files"])
     app.include_router(index.router, prefix="/api/index", tags=["index"])
     app.include_router(search.router, prefix="/api/search", tags=["search"])
+    app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
     app.include_router(export.router, prefix="/api/export", tags=["export"])
     app.include_router(fields.router, prefix="/api/fields", tags=["fields"])
     app.include_router(providers.router, prefix="/api/providers", tags=["providers"])

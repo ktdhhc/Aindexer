@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class FieldDefinition(BaseModel):
     field_key: str
     label: str
+    description: str = ""
     field_type: str
     required: bool = False
     enabled: bool = True

@@ -3,6 +3,7 @@ from __future__ import annotations
 import mimetypes
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from pydantic import BaseModel
 
 from ..config import UPLOAD_DIR
 from ..repository import (
@@ -13,11 +14,16 @@ from ..repository import (
     hash_file,
     list_documents,
     markdown_path,
+    update_document_display_name,
 )
 
 router = APIRouter()
 
 ALLOWED_EXT = {"pdf", "txt", "docx"}
+
+
+class DisplayNameUpdateIn(BaseModel):
+    display_name: str
 
 
 @router.post("/upload")
@@ -55,6 +61,14 @@ def file_detail(doc_id: str) -> dict:
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc
+
+
+@router.put("/{doc_id}/display_name")
+def update_file_display_name(doc_id: str, payload: DisplayNameUpdateIn) -> dict:
+    updated = update_document_display_name(doc_id, payload.display_name)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return updated
 
 
 @router.delete("/{doc_id}")
