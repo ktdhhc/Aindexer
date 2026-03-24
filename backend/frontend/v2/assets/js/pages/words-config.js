@@ -307,6 +307,22 @@ function bindEvents() {
     }
   });
 
+  refs.grid.addEventListener('change', (e) => {
+    const target = e.target;
+    const index = target.dataset.index;
+    const field = target.dataset.field;
+
+    if (index !== undefined && field) {
+      const row = state.rows[index];
+      if (target.type === 'checkbox') {
+        row[field] = target.checked;
+      } else {
+        row[field] = target.value;
+      }
+      updateActionButtons();
+    }
+  });
+
   refs.grid.addEventListener('click', (e) => {
     const btn = e.target.closest('button');
     if (!btn) return;

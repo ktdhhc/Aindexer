@@ -87,7 +87,7 @@ class ProviderClient:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": _effective_temperature(config.model, config.temperature),
-            "max_tokens": 2500,
+            "max_tokens": _effective_max_tokens(config.model, 2500),
             "stream": True,
         }
         url = config.base_url.rstrip("/") + "/chat/completions"
@@ -219,6 +219,16 @@ def stream_chat_completion_with_metrics(
                     except Exception:
                         continue
                     raw_response = chunk
+
+                    # 检测流内错误对象（deepseek / 部分 provider 在 SSE 中回传 error）
+                    chunk_error = chunk.get("error")
+                    if isinstance(chunk_error, dict):
+                        err_msg = chunk_error.get("message") or str(chunk_error)
+                        err_code = chunk_error.get("code", "")
+                        raise RuntimeError(
+                            f"LLM stream error code={err_code}: {err_msg}"
+                        )
+
                     chunk_usage = chunk.get("usage")
                     if isinstance(chunk_usage, dict):
                         usage = chunk_usage
@@ -272,7 +282,11 @@ def stream_chat_completion_with_metrics(
                                 * 1000.0,
                             )
 
-            raise RuntimeError("LLM流式响应为空")
+            raise RuntimeError(
+                f"LLM流式响应为空 (model={payload.get('model', '?')}, "
+                f"max_tokens={payload.get('max_tokens', '?')}, "
+                f"response_lines={len(raw_lines)})"
+            )
 
 
 def _stream_chat_completion(
@@ -352,8 +366,15 @@ def _extract_body_finish_reason(data: dict) -> str | None:
 
 def _parse_json_strict(text: str) -> dict:
     text = (text or "").strip()
-    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    # 去掉任意位置的 markdown 围栏（支持 ```json / ``` / ~~~json / ~~~）
+    text = re.sub(r"^```[a-zA-Z]*\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s*```$", "", text)
+    text = re.sub(r"^~~~[a-zA-Z]*\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*~~~$", "", text)
+    # 去掉可能出现的多余围栏（deepseek 有时在 JSON 前后多出围栏）
+    text = re.sub(r"```[a-zA-Z]*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"~~~[a-zA-Z]*", "", text, flags=re.IGNORECASE)
+    # 截取最外层 { } 配对
     start = text.find("{")
     end = text.rfind("}")
     if start >= 0 and end > start:
@@ -429,3 +450,11 @@ def _effective_temperature(model: str, temperature: float) -> float:
     if m.startswith("moonshotai/kimi") or m.startswith("kimi"):
         return 1.0
     return float(temperature)
+
+
+def _effective_max_tokens(model: str, default: int) -> int:
+    m = str(model or "").strip().lower()
+    # deepseek-reasoner 会消耗额外 token 在推理阶段，需要更高上限
+    if "reasoner" in m:
+        return max(default * 2, 4096)
+    return default

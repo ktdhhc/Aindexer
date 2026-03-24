@@ -5,8 +5,10 @@ set "ROOT=%~dp0"
 set "BACKEND=%ROOT%backend"
 set "VENV_PY=%BACKEND%\.venv\Scripts\python.exe"
 set "REQ_HASH_FILE=%BACKEND%\.venv\.requirements.sha256"
-if not defined START_URL set "START_URL=http://127.0.0.1:8000/"
+if not defined START_HOST set "START_HOST=127.0.0.1"
+if not defined BASE_PORT set "BASE_PORT=8000"
 if not defined START_MODE set "START_MODE=classic"
+if not defined START_PATH set "START_PATH=/"
 
 echo [INFO] Root: %ROOT%
 echo [INFO] Backend: %BACKEND%
@@ -58,22 +60,39 @@ if /I "%CUR_REQ_HASH%"=="%OLD_REQ_HASH%" (
   >"%REQ_HASH_FILE%" (<nul set /p="%CUR_REQ_HASH%")
 )
 
-netstat -ano | findstr /R /C:":8000 .*LISTENING" >nul
-if %errorlevel%==0 (
-  echo [ERROR] Port 8000 is already in use.
-  echo         Close existing process and retry.
-  netstat -ano | findstr /R /C:":8000 .*LISTENING"
+set "APP_PORT="
+set "PORT_TMP=%TEMP%\aindexer_port_%RANDOM%_%RANDOM%.txt"
+set "PORT_LOG=%ROOT%data\logs\port.log"
+"%VENV_PY%" "%ROOT%scripts\allocate_port.py" --host %START_HOST% --preferred %BASE_PORT% --log "%PORT_LOG%" > "%PORT_TMP%"
+if errorlevel 1 (
+  if exist "%PORT_TMP%" del /q "%PORT_TMP%" >nul 2>nul
+  echo [ERROR] Failed to allocate an available port.
+  pause
+  exit /b 1
+)
+if exist "%PORT_TMP%" set /p APP_PORT=<"%PORT_TMP%"
+if exist "%PORT_TMP%" del /q "%PORT_TMP%" >nul 2>nul
+
+if not defined APP_PORT (
+  echo [ERROR] Failed to allocate an available port.
   pause
   exit /b 1
 )
 
+if /I not "%APP_PORT%"=="%BASE_PORT%" (
+  echo [WARN] Port %BASE_PORT% is occupied. Switched to %APP_PORT%.
+)
+
+if not defined START_URL set "START_URL=http://%START_HOST%:%APP_PORT%%START_PATH%"
+
 echo [RUN] Browser will open after server starts...
 echo [RUN] Target mode: %START_MODE%
+echo [RUN] Listening on: http://%START_HOST%:%APP_PORT%/
 start "" /min powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 2; Start-Process '%START_URL%'"
 
 echo [RUN] Starting uvicorn in this window (visible mode)...
 echo [RUN] Press Ctrl+C to stop server.
-"%VENV_PY%" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+"%VENV_PY%" -m uvicorn app.main:app --host %START_HOST% --port %APP_PORT%
 
 set "RC=%errorlevel%"
 echo.

@@ -11,9 +11,12 @@ import time
 from pathlib import Path
 
 
-HOST = "127.0.0.1"
-PORT = 8000
-URL = f"http://{HOST}:{PORT}"
+HOST = os.getenv("APP_HOST", "127.0.0.1")
+PORT = int(os.getenv("APP_PORT", "8000"))
+START_PATH = os.getenv("APP_START_PATH", "/")
+if not START_PATH.startswith("/"):
+    START_PATH = f"/{START_PATH}"
+URL = os.getenv("APP_START_URL", f"http://{HOST}:{PORT}{START_PATH}")
 LAUNCHER_STATE_FILE = "launcher_state.json"
 
 
