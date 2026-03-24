@@ -29,8 +29,6 @@ import {
   testProvider,
   updateProvider,
 } from '../api/providers.js?v=20260319-providerfix2';
-import { exportBackupAll, importBackupAll } from '../api/export.js?v=20260319-providerfix2';
-import { exitApp } from '../api/system.js?v=20260319-providerfix2';
 
 const state = {
   rows: [],
@@ -48,10 +46,6 @@ const refs = {
   saveBtn: null,
   resetBtn: null,
   discardBtn: null,
-  exportAllBtnSide: null,
-  importAllBtnSide: null,
-  backupImportInput: null,
-  exitAppBtn: null,
 };
 
 function nextUid() {
@@ -197,7 +191,7 @@ function renderProviderCard(row) {
 
       <div class="provider-section">
         <div class="provider-section-head">
-          <label>Model Registry</label>
+          <label>模型注册表</label>
           <span class="provider-help">当前兼容旧版的本地扩展模型机制</span>
         </div>
         <div class="chip-row">
@@ -246,41 +240,6 @@ function setTestResult(provider, payload) {
   const key = String(provider || '').trim();
   if (!key) return;
   state.testResults[key] = payload;
-}
-
-function clearBackupImportInput() {
-  if (refs.backupImportInput) refs.backupImportInput.value = '';
-}
-
-function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-function exitFrontendWindow() {
-  window.setTimeout(() => {
-    try {
-      window.open('', '_self');
-    } catch (_) {
-      // ignore
-    }
-    try {
-      window.close();
-    } catch (_) {
-      // ignore
-    }
-    try {
-      window.location.replace('about:blank');
-    } catch (_) {
-      // ignore
-    }
-  }, 180);
 }
 
 function handleFieldInput(target) {
@@ -561,46 +520,6 @@ function handleSelectModel(uid, model) {
   renderGrid();
 }
 
-async function handleBackupExport() {
-  setMessage('正在准备备份包...', 'muted');
-  try {
-    const result = await exportBackupAll();
-    downloadBlob(result.blob, result.filename);
-    setMessage('备份导出成功', 'ok');
-  } catch (error) {
-    setMessage(error.message || '导出失败', 'err');
-  }
-}
-
-function triggerBackupImport() {
-  clearBackupImportInput();
-  refs.backupImportInput?.click();
-}
-
-async function handleBackupImport(event) {
-  const file = event.target?.files?.[0];
-  if (!file) return;
-  const yes = window.confirm('导入将覆盖当前文件、索引和配置，是否继续？');
-  if (!yes) {
-    clearBackupImportInput();
-    return;
-  }
-
-  setMessage('正在导入并恢复数据...', 'warn');
-  try {
-    const result = await importBackupAll(file);
-    await loadRows();
-    const message = result.pre_restore_backup
-      ? `导入成功，已创建恢复前快照：${result.pre_restore_backup}`
-      : '导入成功';
-    setMessage(message, 'ok');
-  } catch (error) {
-    setMessage(error.message || '导入失败', 'err');
-  } finally {
-    clearBackupImportInput();
-  }
-}
-
 function bindEvents() {
   refs.grid.addEventListener('input', (event) => {
     const target = event.target;
@@ -632,32 +551,14 @@ function bindEvents() {
   refs.saveBtn.addEventListener('click', handleSaveAll);
   refs.resetBtn.addEventListener('click', handleReset);
   refs.discardBtn.addEventListener('click', handleDiscard);
-  refs.exportAllBtnSide?.addEventListener('click', handleBackupExport);
-  refs.importAllBtnSide?.addEventListener('click', triggerBackupImport);
-  refs.backupImportInput?.addEventListener('change', handleBackupImport);
+
+  window.handleAppRefresh = () => refreshRows();
 
   window.addEventListener('beforeunload', (event) => {
     if (!hasUnsavedChanges()) return;
     event.preventDefault();
     event.returnValue = '';
   });
-
-  if (refs.exitAppBtn) {
-    refs.exitAppBtn.addEventListener('click', async () => {
-      const yes = window.confirm('确定退出 Aindexer 吗？');
-      if (!yes) return;
-      refs.exitAppBtn.disabled = true;
-      setMessage('正在退出应用...', 'warn');
-      try {
-        await exitApp();
-        setMessage('应用已退出，可关闭此页面', 'ok');
-        exitFrontendWindow();
-      } catch (error) {
-        refs.exitAppBtn.disabled = false;
-        setMessage(error.message || '退出失败', 'err');
-      }
-    });
-  }
 }
 
 async function init() {
@@ -667,10 +568,6 @@ async function init() {
   refs.saveBtn = document.getElementById('providerSaveBtn');
   refs.resetBtn = document.getElementById('providerResetBtn');
   refs.discardBtn = document.getElementById('providerDiscardBtn');
-  refs.exportAllBtnSide = document.getElementById('exportAllBtnSide');
-  refs.importAllBtnSide = document.getElementById('importAllBtnSide');
-  refs.backupImportInput = document.getElementById('backupImportInput');
-  refs.exitAppBtn = document.getElementById('exitAppBtn');
 
   initAppShell();
   bindEvents();

@@ -27,6 +27,16 @@ class ProviderConfig:
     timeout: int = 120
 
 
+@dataclass
+class StreamChatCompletionResult:
+    text: str
+    usage: dict | None = None
+    first_token_ms: float | None = None
+    total_duration_ms: float | None = None
+    finish_reason: str | None = None
+    raw_response: dict | None = None
+
+
 class ProviderClient:
     @staticmethod
     def test_connection(config: ProviderConfig) -> tuple[bool, str, float]:
@@ -91,13 +101,14 @@ class ProviderClient:
             if should_cancel and should_cancel():
                 raise RuntimeError("cancelled by user before request")
             try:
-                text = _stream_chat_completion(
+                stream_result = stream_chat_completion_with_metrics(
                     url=url,
                     headers=headers,
                     payload=payload,
                     timeout=config.timeout,
                     should_cancel=should_cancel,
                 )
+                text = stream_result.text
                 try:
                     return _parse_json_strict(text)
                 except Exception as exc:
@@ -151,28 +162,29 @@ class ProviderClient:
             "Content-Type": "application/json",
         }
         try:
-            text = _stream_chat_completion(
+            text = stream_chat_completion_with_metrics(
                 url=url,
                 headers=headers,
                 payload=payload,
                 timeout=config.timeout,
                 should_cancel=should_cancel,
-            )
+            ).text
         except UnicodeError as exc:
             raise RuntimeError(_format_url_error(config.base_url, exc)) from exc
         return text.strip()
 
 
-def _stream_chat_completion(
+def stream_chat_completion_with_metrics(
     url: str,
     headers: dict[str, str],
     payload: dict,
     timeout: int,
     should_cancel: Callable[[], bool] | None = None,
-) -> str:
+) -> StreamChatCompletionResult:
     timeout_cfg = httpx.Timeout(
         connect=min(timeout, 30), read=None, write=timeout, pool=timeout
     )
+    started_at = time.perf_counter()
     with httpx.Client(timeout=timeout_cfg) as client:
         with client.stream("POST", url, headers=headers, json=payload) as resp:
             if resp.status_code >= 400:
@@ -187,6 +199,10 @@ def _stream_chat_completion(
 
             parts: list[str] = []
             raw_lines: list[str] = []
+            usage: dict | None = None
+            finish_reason: str | None = None
+            raw_response: dict | None = None
+            first_token_ms: float | None = None
             for line in resp.iter_lines():
                 if should_cancel and should_cancel():
                     raise RuntimeError("cancelled by user during stream")
@@ -202,12 +218,28 @@ def _stream_chat_completion(
                         chunk = json.loads(data)
                     except Exception:
                         continue
+                    raw_response = chunk
+                    chunk_usage = chunk.get("usage")
+                    if isinstance(chunk_usage, dict):
+                        usage = chunk_usage
+                    finish_reason = (
+                        _extract_stream_finish_reason(chunk) or finish_reason
+                    )
                     delta_text = _extract_stream_delta_text(chunk)
                     if delta_text:
+                        if first_token_ms is None:
+                            first_token_ms = (time.perf_counter() - started_at) * 1000.0
                         parts.append(delta_text)
 
             if parts:
-                return "".join(parts).strip()
+                return StreamChatCompletionResult(
+                    text="".join(parts).strip(),
+                    usage=usage,
+                    first_token_ms=first_token_ms,
+                    total_duration_ms=(time.perf_counter() - started_at) * 1000.0,
+                    finish_reason=finish_reason,
+                    raw_response=raw_response,
+                )
 
             # 部分 provider 可能忽略 stream 参数，直接返回完整 JSON
             if raw_lines:
@@ -215,16 +247,48 @@ def _stream_chat_completion(
                 if joined.startswith("{"):
                     try:
                         body = json.loads(joined)
-                        return _extract_assistant_text(body)
+                        return StreamChatCompletionResult(
+                            text=_extract_assistant_text(body),
+                            usage=body.get("usage")
+                            if isinstance(body.get("usage"), dict)
+                            else None,
+                            first_token_ms=(time.perf_counter() - started_at) * 1000.0,
+                            total_duration_ms=(time.perf_counter() - started_at)
+                            * 1000.0,
+                            finish_reason=_extract_body_finish_reason(body),
+                            raw_response=body,
+                        )
                     except Exception:
                         pass
                 for line in raw_lines:
                     if line.startswith("data:"):
                         data = line[5:].strip()
                         if data and data != "[DONE]":
-                            return data
+                            return StreamChatCompletionResult(
+                                text=data,
+                                first_token_ms=(time.perf_counter() - started_at)
+                                * 1000.0,
+                                total_duration_ms=(time.perf_counter() - started_at)
+                                * 1000.0,
+                            )
 
             raise RuntimeError("LLM流式响应为空")
+
+
+def _stream_chat_completion(
+    url: str,
+    headers: dict[str, str],
+    payload: dict,
+    timeout: int,
+    should_cancel: Callable[[], bool] | None = None,
+) -> str:
+    return stream_chat_completion_with_metrics(
+        url=url,
+        headers=headers,
+        payload=payload,
+        timeout=timeout,
+        should_cancel=should_cancel,
+    ).text
 
 
 def _extract_stream_delta_text(chunk: dict) -> str:
@@ -256,6 +320,14 @@ def _extract_stream_delta_text(chunk: dict) -> str:
     return ""
 
 
+def _extract_stream_finish_reason(chunk: dict) -> str | None:
+    choices = chunk.get("choices") or []
+    if not choices or not isinstance(choices[0], dict):
+        return None
+    finish_reason = choices[0].get("finish_reason")
+    return str(finish_reason) if finish_reason else None
+
+
 def _extract_assistant_text(data: dict) -> str:
     choices = data.get("choices") or []
     if choices:
@@ -267,6 +339,15 @@ def _extract_assistant_text(data: dict) -> str:
             parts = [c.get("text", "") for c in content if isinstance(c, dict)]
             return "\n".join(parts).strip()
     return json.dumps(data, ensure_ascii=False)
+
+
+def _extract_body_finish_reason(data: dict) -> str | None:
+    choices = data.get("choices") or []
+    if choices and isinstance(choices[0], dict):
+        finish_reason = choices[0].get("finish_reason")
+        if finish_reason:
+            return str(finish_reason)
+    return None
 
 
 def _parse_json_strict(text: str) -> dict:

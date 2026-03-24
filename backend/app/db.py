@@ -166,6 +166,61 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS translation_documents (
+                id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                file_type TEXT NOT NULL,
+                file_hash TEXT NOT NULL UNIQUE,
+                file_path TEXT NOT NULL,
+                page_count INTEGER,
+                text_layer_status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS translation_page_text (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id TEXT NOT NULL REFERENCES translation_documents(id) ON DELETE CASCADE,
+                page_number INTEGER NOT NULL,
+                text_content TEXT NOT NULL,
+                text_map_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(document_id, page_number)
+            );
+
+            CREATE TABLE IF NOT EXISTS translation_requests (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL REFERENCES translation_documents(id) ON DELETE CASCADE,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                source_lang TEXT,
+                target_lang TEXT NOT NULL,
+                source_text TEXT NOT NULL,
+                anchor_json TEXT,
+                cache_key TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error_code TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS translation_results (
+                request_id TEXT PRIMARY KEY REFERENCES translation_requests(id) ON DELETE CASCADE,
+                translated_text TEXT NOT NULL,
+                result_meta_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_translation_requests_document_id
+            ON translation_requests(document_id, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_translation_requests_cache_key
+            ON translation_requests(cache_key);
+
             CREATE VIRTUAL TABLE IF NOT EXISTS index_fts USING fts5(
                 doc_id UNINDEXED,
                 title,

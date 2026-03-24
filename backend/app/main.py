@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -74,6 +75,7 @@ def _configure_logging() -> None:
 def create_app() -> FastAPI:
     _configure_logging()
     init_db()
+    translation_router = importlib.import_module("app.translation.router").router
     app = FastAPI(title="Aindexer", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
@@ -93,6 +95,20 @@ def create_app() -> FastAPI:
     app.include_router(system.router, prefix="/api/system", tags=["system"])
 
     static_dir = Path(__file__).resolve().parents[1] / "frontend"
+    translator_static_dir = static_dir / "translator"
+    if translator_static_dir.exists():
+        app.mount(
+            "/translator",
+            StaticFiles(directory=str(translator_static_dir), html=True),
+            name="translator_frontend",
+        )
+
+    app.include_router(
+        translation_router,
+        prefix="/api/translation",
+        tags=["translation"],
+    )
+
     if static_dir.exists():
         app.mount(
             "/", StaticFiles(directory=str(static_dir), html=True), name="frontend"

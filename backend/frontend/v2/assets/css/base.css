@@ -242,3 +242,53 @@ textarea:disabled {
     text-align: center;
   }
 }
+
+/* ── Light mode base overrides ──────────────────────────────── */
+html.light body {
+  background:
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.06), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(147, 204, 255, 0.04), transparent 30%),
+    linear-gradient(180deg, #f0f4f8 0%, #e2e8f0 100%);
+  color: var(--text);
+}
+
+html.light .blob {
+  opacity: 0.25;
+}
+
+html.light .blob-primary {
+  background: radial-gradient(circle, rgba(14, 165, 233, 0.35) 0%, transparent 70%);
+}
+
+html.light .blob-secondary {
+  background: radial-gradient(circle, rgba(137, 206, 255, 0.28) 0%, transparent 72%);
+}
+
+html.light .blob-tertiary {
+  background: radial-gradient(circle, rgba(255, 184, 110, 0.18) 0%, transparent 70%);
+}
+
+html.light .topbar {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
+html.light .topnav a {
+  color: var(--text-dim);
+}
+
+html.light .topnav a:hover {
+  color: var(--text);
+  background: rgba(15, 23, 42, 0.04);
+}
+
+html.light .topnav a.is-active {
+  color: var(--primary);
+  background: rgba(14, 165, 233, 0.08);
+}
+
+html.light .eyebrow {
+  color: var(--primary);
+}

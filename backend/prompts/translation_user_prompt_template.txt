@@ -1,0 +1,6 @@
+Translate the following selected passage into {target_lang}.
+If the source language differs, detect it automatically.
+Keep technical terms accurate and preserve inline citations.
+
+Selected passage:
+{source_text}

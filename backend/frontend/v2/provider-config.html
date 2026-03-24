@@ -8,12 +8,12 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
     />
-    <link rel="stylesheet" href="./assets/css/tokens.css" />
-    <link rel="stylesheet" href="./assets/css/base.css" />
-    <link rel="stylesheet" href="./assets/css/components.css" />
+    <link rel="stylesheet" href="./assets/css/tokens.css?v=20260323-lightmode" />
+    <link rel="stylesheet" href="./assets/css/base.css?v=20260323-lightmode" />
+    <link rel="stylesheet" href="./assets/css/components.css?v=20260323-lightmode" />
     <!-- Shell chrome (sidebar/topbar/main wrap) is isolated here. Do not mix with provider card styles. -->
-    <link rel="stylesheet" href="./assets/css/pages/provider-shell.css?v=20260319-shellsplit1" />
-    <link rel="stylesheet" href="./assets/css/pages/provider-config.css" />
+    <link rel="stylesheet" href="./assets/css/pages/provider-shell.css?v=20260323-lightmode" />
+    <link rel="stylesheet" href="./assets/css/pages/provider-config.css?v=20260323-lightmode" />
   </head>
   <body data-page="providers">
     <div class="app-bg" aria-hidden="true">
@@ -31,6 +31,10 @@
         <a href="/v2/provider-config.html" class="v2-shell-nav-link" data-nav-link="providers">
           <span class="material-symbols-outlined">tune</span>
           <span class="v2-shell-nav-label">接口配置</span>
+        </a>
+        <a href="/v2/words-config.html" class="v2-shell-nav-link" data-nav-link="fields">
+          <span class="material-symbols-outlined">list_alt</span>
+          <span class="v2-shell-nav-label">字段配置</span>
         </a>
       </nav>
       <div class="v2-shell-action-stack">
@@ -62,6 +66,14 @@
             <span class="v2-shell-topbar-brand-subtitle">Crystalline Core</span>
           </div>
         </div>
+        <div class="v2-shell-topbar-actions">
+          <button id="refreshBtn" type="button" class="v2-shell-topbar-btn" title="刷新">
+            <span class="material-symbols-outlined">refresh</span>
+          </button>
+          <button id="themeToggleBtn" type="button" class="v2-shell-topbar-btn" title="切换暗浅色">
+            <span id="themeToggleIcon" class="material-symbols-outlined">light_mode</span>
+          </button>
+        </div>
       </header>
 
       <div class="v2-content-wrap">
@@ -89,35 +101,6 @@
       </div>
     </footer>
 
-    <script>
-      (function () {
-        const HEALTHCHECK_URL = '/api/providers';
-        function applyBackendHealth(ok) {
-          document.querySelectorAll('[data-backend-indicator]').forEach((node) => {
-            node.dataset.state = ok ? 'ok' : 'err';
-            node.title = ok ? '后端运行正常' : '后端异常或不可达';
-            node.setAttribute('aria-label', ok ? '后端运行正常' : '后端异常或不可达');
-          });
-        }
-        async function pingBackend() {
-          const controller = new AbortController();
-          const timeoutId = window.setTimeout(() => controller.abort(), 4000);
-          try {
-            const response = await fetch(HEALTHCHECK_URL, {
-              method: 'GET',
-              cache: 'no-store',
-              signal: controller.signal,
-            });
-            applyBackendHealth(response.ok);
-          } catch (_) {
-            applyBackendHealth(false);
-          } finally {
-            window.clearTimeout(timeoutId);
-          }
-        }
-        window.addEventListener('DOMContentLoaded', pingBackend, { once: true });
-      })();
-    </script>
-    <script type="module" src="./assets/js/pages/provider-config.js?v=20260319-providerfix3"></script>
+    <script type="module" src="./assets/js/pages/provider-config.js?v=20260323-lightmode"></script>
   </body>
 </html>

@@ -274,3 +274,110 @@
     flex: 1 1 auto;
   }
 }
+
+/* ── Light mode component overrides ─────────────────────────── */
+html.light .glass-panel {
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow: var(--shadow-soft);
+}
+
+html.light .inline-note {
+  background: rgba(15, 23, 42, 0.03);
+  border-color: rgba(15, 23, 42, 0.06);
+  color: var(--text-dim);
+}
+
+html.light .btn-primary {
+  color: #fff;
+  box-shadow: 0 10px 26px rgba(14, 165, 233, 0.22);
+}
+
+html.light .btn-secondary {
+  color: var(--text);
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+html.light .btn-secondary:hover {
+  background: rgba(15, 23, 42, 0.08);
+  border-color: rgba(15, 23, 42, 0.16);
+}
+
+html.light .btn-ghost {
+  color: var(--text-dim);
+}
+
+html.light .btn-ghost:hover {
+  color: var(--text);
+  background: rgba(15, 23, 42, 0.04);
+}
+
+html.light .btn-danger {
+  color: var(--error);
+  background: rgba(220, 38, 38, 0.06);
+  border-color: rgba(220, 38, 38, 0.1);
+}
+
+html.light .btn-danger:hover {
+  background: rgba(220, 38, 38, 0.1);
+}
+
+html.light .input-clean,
+html.light .select-clean,
+html.light .textarea-clean {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+html.light .input-clean:focus,
+html.light .select-clean:focus,
+html.light .textarea-clean:focus {
+  border-color: rgba(14, 165, 233, 0.5);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+html.light .chip {
+  border-color: rgba(15, 23, 42, 0.08);
+  background: rgba(15, 23, 42, 0.04);
+  color: var(--text-dim);
+}
+
+html.light .chip:hover {
+  border-color: rgba(14, 165, 233, 0.2);
+  color: var(--text);
+}
+
+html.light .chip.is-active {
+  background: rgba(14, 165, 233, 0.08);
+  border-color: rgba(14, 165, 233, 0.2);
+  color: var(--primary);
+}
+
+html.light .status-pill.is-ok {
+  color: var(--success);
+  background: rgba(5, 150, 105, 0.08);
+}
+
+html.light .status-pill.is-ok::before {
+  background: var(--success);
+  box-shadow: 0 0 10px rgba(5, 150, 105, 0.4);
+}
+
+html.light .status-pill.is-muted {
+  color: var(--text-faint);
+  background: rgba(15, 23, 42, 0.04);
+}
+
+html.light .status-pill.is-warn {
+  color: var(--tertiary);
+  background: rgba(217, 119, 6, 0.08);
+}
+
+html.light .status-pill.is-warn::before {
+  background: var(--tertiary);
+}

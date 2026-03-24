@@ -37,7 +37,7 @@
 双击根目录脚本之一：
 
 - `start_literature_indexer_classic.bat`：启动经典版，打开 `http://127.0.0.1:8000/`
-- `start_literature_indexer_v2.bat`：启动新版工作台，打开 `http://127.0.0.1:8000/v2/`
+- `start_literature_indexer_v2.bat`：启动新版工作台，打开 `http://127.0.0.1:8000/v2/`（若 8000 端口被占用，将自动调用清理工具）
 
 兼容说明：
 
@@ -193,14 +193,25 @@ Backup / System
 
 ## 常见问题
 
-* 一直 parsing / 运行很慢
+### 一直 parsing / 运行很慢
 
-  * 常见原因：模型响应慢或网络波动
-  * 可把 `timeout` 调到 `120~180s`，或切换更快模型，先用小文档验证链路
-* 偶发失败 / needs_review
+常见原因：模型响应慢或网络波动。可把 `timeout` 调到 `120~180s`，或切换更快模型，先用小文档验证链路。
 
-  * 常见原因：供应商高峰、网络波动、输入过长
-  * 系统会尽量重试与降级；`needs_review` 表示已写入 fallback 模板，可在预览区手工修订并保存
+### 偶发失败 / needs_review
+
+常见原因：供应商高峰、网络波动、输入过长。系统会尽量重试与降级；`needs_review` 表示已写入 fallback 模板，可在预览区手工修订并保存。
+
+### 端口占用处理
+
+如果启动时提示端口 `8000` 被占用，可以使用以下工具手动清理。该工具会扫描 Windows 系统中占用 `8000` 端口的进程，并根据指令将其终止，确保后端服务能正常启动。
+
+```bash
+# 查看并交互式清理
+python scripts/free_port_8000.py
+
+# 强制清理（无需确认）
+python scripts/free_port_8000.py --yes
+```
 
 ---
 

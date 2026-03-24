@@ -35,3 +35,29 @@
   --topbar-height: 76px;
   --font-sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", Inter, system-ui, sans-serif;
 }
+
+/* ── Light mode token overrides ─────────────────────────────── */
+html.light {
+  color-scheme: light;
+  --surface: #f0f4f8;
+  --surface-low: #e8edf3;
+  --surface-mid: #f1f5f9;
+  --surface-high: #f8fafc;
+  --surface-highest: #ffffff;
+  --surface-lowest: #e2e8f0;
+  --primary: #0ea5e9;
+  --primary-dim: #0284c7;
+  --secondary: #0284c7;
+  --tertiary: #d97706;
+  --success: #059669;
+  --error: #dc2626;
+  --text: #0f172a;
+  --text-dim: #475569;
+  --text-faint: #64748b;
+  --line-soft: rgba(15, 23, 42, 0.08);
+  --line-ghost: rgba(15, 23, 42, 0.12);
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-bg-strong: rgba(255, 255, 255, 0.75);
+  --shadow-soft: inset 0 1px 1px rgba(255, 255, 255, 0.9), 0 12px 48px rgba(15, 23, 42, 0.05);
+  --shadow-glow: 0 0 22px rgba(14, 165, 233, 0.15);
+}

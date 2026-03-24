@@ -13,6 +13,7 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
     />
+    <link rel="stylesheet" href="./assets/css/pages/provider-shell.css?v=20260319-shellsplit1" />
     <script>
       tailwind.config = {
         darkMode: 'class',
@@ -66,17 +67,17 @@
 
       html.light {
         color-scheme: light;
-        --page-bg-start: #eff5ff;
-        --page-bg-end: #dbe7f8;
-        --page-text: #15263f;
-        --panel-bg: rgba(255, 255, 255, 0.68);
-        --panel-border: rgba(21, 38, 63, 0.1);
-        --panel-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.75), 0 24px 64px rgba(78, 108, 150, 0.18);
-        --soft-bg: rgba(241, 247, 255, 0.92);
-        --soft-border: rgba(21, 38, 63, 0.1);
-        --soft-text: #15263f;
-        --chrome-bg: rgba(255, 255, 255, 0.82);
-        --chrome-border: rgba(21, 38, 63, 0.08);
+        --page-bg-start: #f0f4f8;
+        --page-bg-end: #e2e8f0;
+        --page-text: #0f172a;
+        --panel-bg: rgba(255, 255, 255, 0.55);
+        --panel-border: rgba(255, 255, 255, 0.6);
+        --panel-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.9), 0 12px 48px rgba(15, 23, 42, 0.05);
+        --soft-bg: rgba(255, 255, 255, 0.45);
+        --soft-border: rgba(255, 255, 255, 0.5);
+        --soft-text: #0f172a;
+        --chrome-bg: rgba(255, 255, 255, 0.65);
+        --chrome-border: rgba(255, 255, 255, 0.5);
       }
 
       body {
@@ -99,6 +100,11 @@
         box-shadow: var(--panel-shadow);
       }
 
+      html.light .glass-panel {
+        background: var(--panel-bg);
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
+      }
       .workspace-search-column,
       .workspace-right-column,
       .workspace-panel,
@@ -251,13 +257,21 @@
         border-radius: 0.35em;
       }
 
-      .search-sort-select,
       .edit-field-input,
       .edit-field-textarea {
-        background: var(--soft-bg);
-        border: 1px solid var(--soft-border);
-        color: var(--soft-text);
-        color-scheme: dark;
+        background: rgba(15, 23, 42, 0.4) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        color: #f8fafc !important;
+        color-scheme: dark !important;
+        transition: all 200ms ease;
+      }
+
+      .edit-field-input:focus,
+      .edit-field-textarea:focus {
+        background: rgba(15, 23, 42, 0.6) !important;
+        border-color: rgba(137, 206, 255, 0.4) !important;
+        box-shadow: 0 0 0 1px rgba(137, 206, 255, 0.1) !important;
+        outline: none;
       }
 
       .edit-field-textarea {
@@ -275,6 +289,7 @@
         padding: 20px;
         background: rgba(2, 6, 23, 0.68);
         backdrop-filter: blur(20px);
+        color-scheme: dark;
       }
 
       .edit-modal.is-open {
@@ -287,44 +302,40 @@
         overflow: auto;
       }
 
-      .sort-split {
+      .sort-trigger {
         position: relative;
         display: inline-flex;
-        align-items: stretch;
-      }
-
-      .sort-split button {
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        border-radius: 14px;
         border: 1px solid var(--soft-border);
         background: var(--soft-bg);
         color: var(--soft-text);
-      }
-
-      .sort-split-main {
-        padding: 0.65rem 0.9rem;
-        border-radius: 12px 0 0 12px;
-        font-size: 0.7rem;
+        font-size: 0.72rem;
         font-weight: 800;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        transition: 200ms ease;
+        cursor: pointer;
       }
 
-      .sort-split-dir {
-        min-width: 42px;
-        border-left: 0;
-        border-radius: 0 12px 12px 0;
+      .sort-trigger:hover {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(255, 255, 255, 0.15);
       }
 
       .sort-menu {
         position: absolute;
-        top: calc(100% + 8px);
+        top: calc(100% + 10px);
         right: 0;
-        min-width: 168px;
+        min-width: 180px;
         padding: 8px;
-        border-radius: 16px;
-        border: 1px solid var(--soft-border);
-        background: color-mix(in srgb, var(--soft-bg) 94%, transparent);
-        backdrop-filter: blur(20px);
-        box-shadow: 0 24px 56px rgba(5, 10, 22, 0.34);
+        border-radius: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(15, 23, 42, 0.85);
+        backdrop-filter: blur(32px);
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+        z-index: 100;
       }
 
       .sort-menu[hidden] {
@@ -333,93 +344,99 @@
 
       .sort-menu-item {
         width: 100%;
-        padding: 0.75rem 0.85rem;
-        border-radius: 12px;
-        text-align: left;
-        font-size: 0.78rem;
-        color: var(--soft-text);
-      }
-
-      .sort-menu-item:hover,
-      .sort-menu-item.is-active {
-        background: rgba(137, 206, 255, 0.12);
-        color: #f8fbff;
-      }
-
-      .instrument-cloud-empty {
         display: flex;
         align-items: center;
-        justify-content: center;
-        position: absolute;
-        inset: 16% 10%;
-        border-radius: 9999px;
-        background: radial-gradient(circle, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.015) 52%, transparent 78%);
-        border: 1px dashed rgba(255, 255, 255, 0.08);
-        color: rgba(148, 163, 184, 0.88);
-        font-size: 0.9rem;
+        justify-content: space-between;
+        padding: 10px 12px;
+        border-radius: 12px;
+        text-align: left;
+        font-size: 0.8rem;
+        color: #94a3b8;
+        transition: 180ms ease;
       }
 
-      .instrument-stat {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        min-width: 110px;
+      .sort-menu-item:hover {
+        background: rgba(255, 255, 255, 0.05);
+        color: #f8fafc;
       }
 
-      .instrument-stat-value {
-        display: flex;
-        align-items: flex-end;
-        gap: 8px;
-      }
-
-      .instrument-dropzone.is-dragover {
-        border-color: rgba(137, 206, 255, 0.46);
-        background: linear-gradient(180deg, rgba(19, 27, 46, 0.92), rgba(6, 14, 32, 0.84));
-        box-shadow: 0 0 0 1px rgba(137, 206, 255, 0.18), 0 24px 48px rgba(14, 165, 233, 0.08);
-      }
-
-      .instrument-dropzone.is-dragover .material-symbols-outlined,
-      .instrument-dropzone.is-dragover .upload-drop-copy {
+      .sort-menu-item.is-active {
+        background: rgba(137, 206, 255, 0.12);
         color: #89ceff;
+        font-weight: 700;
       }
 
-      .instrument-dropzone.is-dragover .upload-drop-copy p:first-child {
-        color: #d8ecff;
+      html.light .sort-trigger {
+        background: rgba(255, 255, 255, 0.8) !important;
+        border-color: rgba(15, 23, 42, 0.1) !important;
+        color: #1e293b !important;
       }
 
-      .instrument-dropzone.is-dragover .upload-drop-copy p:last-child {
-        color: #89ceff;
+      html.light .sort-menu {
+        background: rgba(255, 255, 255, 0.92) !important;
+        border-color: rgba(15, 23, 42, 0.08) !important;
+        box-shadow: 0 20px 48px rgba(15, 23, 42, 0.12) !important;
       }
 
-      .edit-field-input::-webkit-calendar-picker-indicator {
-        filter: invert(1) brightness(1.2);
+      html.light .sort-menu-item {
+        color: #475569 !important;
+      }
+
+      html.light .sort-menu-item:hover {
+        background: rgba(15, 23, 42, 0.04) !important;
+        color: #0f172a !important;
+      }
+
+      html.light .sort-menu-item.is-active {
+        background: rgba(14, 165, 233, 0.08) !important;
+        color: #0ea5e9 !important;
       }
 
       html.light body {
-        color: #15263f;
+        color: #0f172a;
+      }
+
+      html.light .blob {
+        opacity: 0.25;
+      }
+
+      html.light .preview-render mark {
+        background: rgba(255, 184, 110, 0.45);
+        color: #0f172a;
       }
 
       html.light .thin-scrollbar::-webkit-scrollbar-thumb {
-        background: rgba(86, 112, 152, 0.26);
+        background: rgba(15, 23, 42, 0.15);
       }
 
       html.light #sideNav,
       html.light #appTopbar {
-        background: var(--chrome-bg) !important;
-        border-color: var(--chrome-border) !important;
+        background: rgba(255, 255, 255, 0.6) !important;
+        backdrop-filter: blur(24px) saturate(150%) !important;
+        -webkit-backdrop-filter: blur(24px) saturate(150%) !important;
+        border-color: rgba(15, 23, 42, 0.08) !important;
       }
 
       html.light #appTopbar .text-white,
       html.light #sideNav .text-white,
       html.light .text-on-surface,
-      html.light .text-on-background {
-        color: #15263f !important;
+      html.light .text-on-background,
+      html.light .text-white {
+        color: #0f172a !important;
+      }
+
+      html.light .text-slate-200 {
+        color: #334155 !important;
+      }
+
+      html.light .text-slate-100 {
+        color: #1e293b !important;
       }
 
       html.light .text-slate-400,
       html.light .text-slate-500,
       html.light .text-slate-600 {
-        color: #5a6f8f !important;
+        color: #475569 !important;
       }
 
       html.light .bg-surface-container-lowest,
@@ -430,37 +447,75 @@
       html.light .bg-surface-container-lowest\/50,
       html.light .bg-surface-container-low,
       html.light .bg-surface-container-low\/80,
+      html.light .bg-surface-container-low\/85,
+      html.light .hover\:bg-surface-container-low\/80:hover,
       html.light .bg-surface-container-high,
       html.light .bg-surface-container {
-        background-color: rgba(241, 247, 255, 0.88) !important;
+        background-color: rgba(255, 255, 255, 0.45) !important;
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
       }
 
       html.light .border-white\/5,
-      html.light .border-white\/10 {
-        border-color: rgba(21, 38, 63, 0.08) !important;
+      html.light .border-white\/10,
+      html.light .border-white\/8 {
+        border-color: rgba(15, 23, 42, 0.08) !important;
+      }
+
+      html.light .bg-white\/5,
+      html.light .bg-white\/10 {
+        background-color: rgba(15, 23, 42, 0.04) !important;
+      }
+
+      html.light .hover\:bg-white\/10:hover,
+      html.light .hover\:bg-white\/5:hover {
+        background-color: rgba(15, 23, 42, 0.08) !important;
+      }
+      
+      html.light .hover\:text-white:hover {
+        color: #0f172a !important;
       }
 
       html.light .instrument-dropzone {
-        background: rgba(241, 247, 255, 0.86);
-        border-color: rgba(86, 112, 152, 0.18);
+        background: rgba(255, 255, 255, 0.5);
+        border-color: rgba(15, 23, 42, 0.1);
       }
 
       html.light .instrument-dropzone.is-dragover {
-        background: linear-gradient(180deg, rgba(231, 240, 255, 0.96), rgba(220, 233, 252, 0.92));
+        background: rgba(255, 255, 255, 0.8);
+        border-color: rgba(14, 165, 233, 0.4);
       }
 
       html.light .edit-modal {
-        background: rgba(219, 231, 248, 0.68);
+        background: rgba(248, 250, 252, 0.8);
       }
 
       html.light .edit-field-input,
       html.light .edit-field-textarea,
-      html.light .sort-split button {
-        color-scheme: light;
+      html.light .sort-trigger {
+        color-scheme: light !important;
       }
 
       html.light .edit-field-input::-webkit-calendar-picker-indicator {
         filter: none;
+      }
+
+      html.light .instrument-cloud-chip {
+        background: rgba(15, 23, 42, 0.04);
+        border-color: rgba(15, 23, 42, 0.06);
+        color: #334155;
+      }
+
+      html.light .instrument-cloud-chip:hover {
+        background: rgba(14, 165, 233, 0.1);
+        border-color: rgba(14, 165, 233, 0.2);
+        color: #0ea5e9;
+      }
+
+      html.light .sort-menu-item:hover,
+      html.light .sort-menu-item.is-active {
+        background: rgba(14, 165, 233, 0.12);
+        color: #0ea5e9;
       }
 
       @media (max-width: 1024px) {
@@ -488,6 +543,10 @@
         <a href="/v2/provider-config.html" data-nav-link="providers" class="flex items-center gap-4 px-3 py-4 rounded-xl transition-all duration-300 text-slate-500 hover:text-slate-200 hover:bg-slate-800/50">
           <span class="material-symbols-outlined">tune</span>
           <span class="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold uppercase tracking-widest whitespace-nowrap">接口配置</span>
+        </a>
+        <a href="/v2/words-config.html" data-nav-link="fields" class="flex items-center gap-4 px-3 py-4 rounded-xl transition-all duration-300 text-slate-500 hover:text-slate-200 hover:bg-slate-800/50">
+          <span class="material-symbols-outlined">list_alt</span>
+          <span class="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold uppercase tracking-widest whitespace-nowrap">字段配置</span>
         </a>
       </nav>
 
@@ -521,10 +580,10 @@
           </div>
         </div>
         <div class="flex items-center gap-3 lg:gap-4">
-          <button id="refreshBtn" type="button" class="p-2 rounded-lg text-slate-400 hover:bg-white/10 transition-all active:scale-90" title="刷新">
+          <button id="refreshBtn" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-[10px] border-0 bg-transparent text-slate-400 transition-all duration-200 cursor-pointer hover:text-white hover:bg-white/[0.08] active:scale-[0.92]" title="刷新">
             <span class="material-symbols-outlined">refresh</span>
           </button>
-          <button id="themeToggleBtn" type="button" class="p-2 rounded-lg text-slate-400 hover:bg-white/10 transition-all active:scale-90" title="切换暗浅色">
+          <button id="themeToggleBtn" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-[10px] border-0 bg-transparent text-slate-400 transition-all duration-200 cursor-pointer hover:text-white hover:bg-white/[0.08] active:scale-[0.92]" title="切换暗浅色">
             <span id="themeToggleIcon" class="material-symbols-outlined">light_mode</span>
           </button>
         </div>
@@ -624,15 +683,29 @@
                 <span class="material-symbols-outlined text-secondary">filter_list</span>
                 <span>搜索与导出</span>
               </h2>
-              <div class="sort-split">
-                <button id="searchSortTypeBtn" type="button" class="sort-split-main">生成时间</button>
-                <button id="searchSortDirectionBtn" type="button" class="sort-split-dir" aria-label="切换排序方向">
-                  <span id="searchSortDirectionIcon" class="material-symbols-outlined text-[18px]">south</span>
+              <div class="relative inline-block">
+                <button id="searchSortTrigger" type="button" class="sort-trigger">
+                  <span id="searchSortLabel">生成时间</span>
+                  <span id="searchSortDirectionIcon" class="material-symbols-outlined text-[16px]">south</span>
                 </button>
                 <div id="searchSortMenu" class="sort-menu" hidden>
-                  <button type="button" class="sort-menu-item is-active" data-sort-field="created">生成时间</button>
-                  <button type="button" class="sort-menu-item" data-sort-field="year">年份</button>
-                  <button type="button" class="sort-menu-item" data-sort-field="display">显示名</button>
+                  <button type="button" class="sort-menu-item" data-sort-field="created">
+                    <span>生成时间</span>
+                    <span class="material-symbols-outlined text-[16px] active-indicator hidden">check</span>
+                  </button>
+                  <button type="button" class="sort-menu-item" data-sort-field="year">
+                    <span>年份</span>
+                    <span class="material-symbols-outlined text-[16px] active-indicator hidden">check</span>
+                  </button>
+                  <button type="button" class="sort-menu-item" data-sort-field="display">
+                    <span>显示名</span>
+                    <span class="material-symbols-outlined text-[16px] active-indicator hidden">check</span>
+                  </button>
+                  <div class="h-px bg-white/5 my-2 opacity-50"></div>
+                  <button id="searchSortDirectionBtn" type="button" class="sort-menu-item">
+                    <span>反转排序方向</span>
+                    <span class="material-symbols-outlined text-[16px]">swap_vert</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -756,35 +829,6 @@
       </div>
     </div>
 
-    <script>
-      (function () {
-        const HEALTHCHECK_URL = '/api/providers';
-        function applyBackendHealth(ok) {
-          document.querySelectorAll('[data-backend-indicator]').forEach((node) => {
-            node.dataset.state = ok ? 'ok' : 'err';
-            node.title = ok ? '后端运行正常' : '后端异常或不可达';
-            node.setAttribute('aria-label', ok ? '后端运行正常' : '后端异常或不可达');
-          });
-        }
-        async function pingBackend() {
-          const controller = new AbortController();
-          const timeoutId = window.setTimeout(() => controller.abort(), 4000);
-          try {
-            const response = await fetch(HEALTHCHECK_URL, {
-              method: 'GET',
-              cache: 'no-store',
-              signal: controller.signal,
-            });
-            applyBackendHealth(response.ok);
-          } catch (_) {
-            applyBackendHealth(false);
-          } finally {
-            window.clearTimeout(timeoutId);
-          }
-        }
-        window.addEventListener('DOMContentLoaded', pingBackend, { once: true });
-      })();
-    </script>
     <script type="module" src="./assets/js/pages/dashboard.js?v=20260319-runtime2"></script>
   </body>
 </html>

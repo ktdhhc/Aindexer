@@ -1,0 +1,353 @@
+/* words-config.css */
+
+.fields-page-hero {
+  margin-bottom: var(--space-8);
+}
+
+.fields-page-hero h1 {
+  margin: 0;
+  font-size: clamp(2rem, 3vw, 3rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.fields-page-hero p {
+  margin: var(--space-3) 0 0;
+  color: var(--text-dim);
+}
+
+.fields-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* Table Styles */
+.fields-table-container {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-high) 62%, transparent);
+  backdrop-filter: blur(22px) saturate(170%);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  border: 1px solid var(--line-soft);
+  box-shadow: var(--shadow-soft);
+}
+
+.fields-table {
+  width: 100%;
+  text-align: left;
+  border-collapse: collapse;
+}
+
+.fields-table th {
+  padding: var(--space-5) var(--space-6);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: color-mix(in srgb, var(--primary) 70%, transparent);
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.fields-table td {
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  vertical-align: middle;
+}
+
+.fields-table tr:last-child td {
+  border-bottom: none;
+}
+
+.fields-table tr:hover td {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.fields-table .field-name {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.fields-table .field-desc {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.fields-table .field-type-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--surface-high);
+  font-size: 0.75rem;
+  font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.fields-table .field-origin-badge {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.fields-table .field-origin-custom {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--tertiary) 20%, transparent);
+  color: var(--tertiary);
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.fields-table .action-btn {
+  padding: 8px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fields-table .action-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+.fields-table .action-btn.delete:hover {
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  color: var(--error);
+}
+
+/* Switch Toggle */
+.switch-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.switch-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.switch-track {
+  width: 44px;
+  height: 24px;
+  background-color: var(--surface-high);
+  border-radius: 999px;
+  position: relative;
+  transition: background-color 0.2s;
+}
+
+.switch-toggle input:checked + .switch-track {
+  background-color: var(--primary);
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background-color: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.switch-toggle input:checked + .switch-track .switch-thumb {
+  transform: translateX(20px);
+}
+
+.switch-toggle input:focus-visible + .switch-track {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Checkbox */
+.custom-checkbox {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid var(--line-soft);
+  background-color: var(--surface-low);
+  appearance: none;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s;
+}
+
+.custom-checkbox:checked {
+  background-color: var(--primary);
+  border-color: var(--primary);
+}
+
+.custom-checkbox:checked::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 5px;
+  height: 10px;
+  border: solid #00344d;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.custom-checkbox:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Expanded Row */
+.fields-table .expanded-content {
+  padding: var(--space-6) var(--space-8);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.fields-table .expanded-content label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: color-mix(in srgb, var(--primary) 70%, transparent);
+  margin-bottom: var(--space-3);
+}
+
+.fields-table .expanded-content textarea {
+  width: 100%;
+  min-height: 100px;
+  background: var(--surface-low);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  color: var(--text);
+  font-size: 0.875rem;
+  resize: vertical;
+  transition: all 0.2s;
+}
+
+.fields-table .expanded-content textarea:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--primary) 50%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+/* Table Footer */
+.fields-table-footer {
+  padding: var(--space-5) var(--space-6);
+  background: rgba(255, 255, 255, 0.03);
+  border-top: 1px solid var(--line-soft);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fields-table-footer .footer-text {
+  font-size: 0.875rem;
+  color: var(--text-dim);
+}
+
+.fields-table-footer .add-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--primary);
+  font-weight: 700;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: gap 0.2s;
+}
+
+.fields-table-footer .add-btn:hover {
+  gap: var(--space-3);
+}
+
+/* ── Light mode words-config overrides ──────────────────────── */
+html.light .fields-table-container {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+html.light .fields-table th {
+  background: rgba(15, 23, 42, 0.03);
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
+html.light .fields-table td {
+  border-bottom-color: rgba(15, 23, 42, 0.06);
+}
+
+html.light .fields-table tr:hover td {
+  background: rgba(15, 23, 42, 0.02);
+}
+
+html.light .fields-table .field-type-badge {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.08);
+}
+
+html.light .switch-track {
+  background-color: #cbd5e1;
+}
+
+html.light .custom-checkbox {
+  border-color: rgba(15, 23, 42, 0.25);
+  background-color: #fff;
+}
+
+html.light .custom-checkbox:checked {
+  background-color: #0284c7;
+  border-color: #0284c7;
+}
+
+html.light .custom-checkbox:checked::after {
+  border-color: #fff;
+}
+
+html.light .fields-table .expanded-content {
+  background: rgba(15, 23, 42, 0.02);
+}
+
+html.light .fields-table .expanded-content textarea {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+html.light .fields-table .expanded-content textarea:focus {
+  border-color: rgba(14, 165, 233, 0.5);
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.1);
+}
+
+html.light .fields-table-footer {
+  background: rgba(15, 23, 42, 0.02);
+  border-top-color: rgba(15, 23, 42, 0.08);
+}
+
+html.light .fields-table .action-btn:hover {
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--text);
+}
+
+html.light .fields-table .action-btn.delete:hover {
+  background: rgba(220, 38, 38, 0.08);
+}

@@ -1,0 +1,75 @@
+--- backend/frontend/translator/assets/js/app.js
++++ backend/frontend/translator/assets/js/app.js
+@@ -116,10 +116,11 @@
+     if (!pageData) return;
+     
+     const text = pageData.text_content || '';
++    
++    // Reset regex state
++    regex.lastIndex = 0;
++    
+     if (!text.match(regex)) {
+       pageEl.innerHTML = escapeHtml(text);
+       return;
+     }
+ 
+     let html = '';
+     let lastIndex = 0;
+     let match;
+     
+-    // Reset regex state
+     regex.lastIndex = 0;
+-    
+     while ((match = regex.exec(text)) !== null) {
+       html += escapeHtml(text.substring(lastIndex, match.index));
+       html += `<mark data-match-index="${matchCount}">${escapeHtml(match[0])}</mark>`;
+@@ -139,10 +138,10 @@
+     pageEl.innerHTML = html;
+   });
+ 
+-  els.searchCount.textContent = matchCount > 0 ? `0/${matchCount}` : '0/0';
+-  state.currentSearchIndex = -1;
++  els.searchCount.textContent = matchCount > 0 ? `1/${matchCount}` : '0/0';
++  state.currentSearchIndex = matchCount > 0 ? 0 : -1;
+   
+   if (matchCount > 0) {
+-    navigateSearch(1);
++    highlightCurrentSearch();
+   }
+ }
+ 
+@@ -169,14 +168,17 @@
+   }
+ 
+-  // Update UI
+   els.searchCount.textContent = `${state.currentSearchIndex + 1}/${state.searchResults.length}`;
++  highlightCurrentSearch();
++}
+   
+-  // Highlight active
++function highlightCurrentSearch() {
+   els.viewerContent.querySelectorAll('mark.active').forEach(m => m.classList.remove('active'));
+   const activeMark = els.viewerContent.querySelector(`mark[data-match-index="${state.currentSearchIndex}"]`);
+   if (activeMark) {
+     activeMark.classList.add('active');
+     activeMark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+   }
+ }
+ 
+@@ -195,7 +197,7 @@
+   // Find which page this selection belongs to
+   let pageNumber = 1;
+   let node = selection.anchorNode;
+-  while (node && node !== els.viewerContent) {
++  while (node && node !== document.body) {
+     if (node.classList && node.classList.contains('page-container')) {
+       pageNumber = parseInt(node.dataset.page, 10) || 1;
+       break;
+@@ -249,6 +251,7 @@
+     els.sidepanelLoading.classList.add('hidden');
+     els.sidepanelLoading.classList.remove('flex');
+     els.sidepanelError.classList.remove('hidden');
++    els.sidepanelError.classList.add('flex');
+     els.sidepanelErrorText.textContent = err.message || 'Translation failed';
+   }
+ }
