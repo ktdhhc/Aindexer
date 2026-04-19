@@ -1,17 +1,17 @@
-import { initAppShell } from '../shared/app-shell.js?v=20260319-runtime2';
-import { listProviders } from '../api/providers.js?v=20260319-runtime2';
-import { deleteFile, getFileDetail, listFiles, uploadFile } from '../api/files.js?v=20260319-runtime2';
-import { askChatV0 } from '../api/chat.js?v=20260319-runtime2';
-import { exportBackupAll, exportDocUrl, importBackupAll } from '../api/export.js?v=20260319-runtime2';
-import { cancelIndex, getIndexDetail, getMarkdown, runAll, runIndex, updateIndexEditor } from '../api/index.js?v=20260319-runtime2';
-import { searchDocs } from '../api/search.js?v=20260319-runtime2';
-import { exitApp } from '../api/system.js?v=20260319-runtime2';
+import { initAppShell } from '../shared/app-shell.js?v=20260324-dropdown';
+import { listProviders } from '../api/providers.js?v=20260324-dropdown';
+import { deleteFile, getFileDetail, listFiles, uploadFile } from '../api/files.js?v=20260324-dropdown';
+import { askChatV0 } from '../api/chat.js?v=20260324-dropdown';
+import { exportBackupAll, exportDocUrl, importBackupAll } from '../api/export.js?v=20260324-dropdown';
+import { cancelIndex, getIndexDetail, getMarkdown, runAll, runIndex, updateIndexEditor } from '../api/index.js?v=20260324-dropdown';
+import { searchDocs } from '../api/search.js?v=20260324-dropdown';
+import { exitApp } from '../api/system.js?v=20260324-dropdown';
 import {
   DEFAULT_PROVIDER_ORDER,
   MODEL_PRESETS,
   getProviderCustomModels,
   getProviderRetry,
-} from '../shared/storage.js?v=20260319-runtime2';
+} from '../shared/storage.js?v=20260324-dropdown';
 
 const ACTIVE_STATUSES = new Set(['parsing']);
 const DASHBOARD_THEME_KEY = 'aindexer_v2_theme';
@@ -37,7 +37,11 @@ const state = {
 const refs = {
   bgFxLayer: null,
   dashProvider: null,
+  dashProviderLabel: null,
+  dashProviderMenu: null,
   dashModel: null,
+  dashModelLabel: null,
+  dashModelMenu: null,
   dashTopStatus: null,
   runAllBtn: null,
   refreshBtn: null,
@@ -103,6 +107,18 @@ function escapeHtml(value) {
 
 function escapeRegExp(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function toProviderKey(provider) {
+  return String(provider || '').trim().toLowerCase();
+}
+
+function pickAvailableModel(models, preferredModel, fallbackModel) {
+  const preferred = String(preferredModel || '').trim();
+  if (preferred && models.includes(preferred)) return preferred;
+  const fallback = String(fallbackModel || '').trim();
+  if (fallback && models.includes(fallback)) return fallback;
+  return models[0] || '';
 }
 
 function getCurrentTheme() {
@@ -174,28 +190,72 @@ async function executeSearch(value) {
 }
 
 function bindEvents() {
-  refs.dashProvider.addEventListener('change', () => {
-    state.selectedProvider = refs.dashProvider.value;
-    applyModelSelector(state.selectedProvider, state.selectedModel);
-    const retry = getProviderRetry(state.selectedProvider, 3);
-    state.selectedRetry = retry;
-    refreshChatContextIfIdle();
-    if (state.selectedProvider && state.selectedModel) {
-      setTopStatus(`就绪 · ${state.selectedProvider} / ${state.selectedModel}`, 'ok');
-    } else {
-      setTopStatus('未检测到可用 Provider/Model', 'err');
+  // Provider dropdown toggle
+  refs.dashProvider.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (refs.dashModelMenu) refs.dashModelMenu.hidden = true;
+    if (refs.dashProviderMenu) {
+      refs.dashProviderMenu.hidden = !refs.dashProviderMenu.hidden;
     }
   });
 
-  refs.dashModel.addEventListener('change', () => {
-    state.selectedModel = refs.dashModel.value;
-    updateControlAvailability();
-    refreshChatContextIfIdle();
-    if (state.selectedProvider && state.selectedModel) {
-      setTopStatus(`就绪 · ${state.selectedProvider} / ${state.selectedModel}`, 'ok');
-    } else {
-      setTopStatus('未检测到可用 Provider/Model', 'err');
+  // Provider dropdown item selection
+  if (refs.dashProviderMenu) {
+    refs.dashProviderMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = e.target.closest('.sort-menu-item');
+      if (!item) return;
+      const provider = item.dataset.value || '';
+      state.selectedProvider = provider;
+      if (refs.dashProviderLabel) refs.dashProviderLabel.textContent = provider || '选择 Provider';
+      _markDropdownActive(refs.dashProviderMenu, provider);
+      refs.dashProviderMenu.hidden = true;
+      applyModelSelector(provider, state.selectedModel);
+      const retry = getProviderRetry(provider, 3);
+      state.selectedRetry = retry;
+      refreshChatContextIfIdle();
+      if (provider && state.selectedModel) {
+        setTopStatus(`就绪 · ${provider} / ${state.selectedModel}`, 'ok');
+      } else {
+        setTopStatus('未检测到可用 Provider/Model', 'err');
+      }
+    });
+  }
+
+  // Model dropdown toggle
+  refs.dashModel.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (refs.dashProviderMenu) refs.dashProviderMenu.hidden = true;
+    if (refs.dashModelMenu) {
+      refs.dashModelMenu.hidden = !refs.dashModelMenu.hidden;
     }
+  });
+
+  // Model dropdown item selection
+  if (refs.dashModelMenu) {
+    refs.dashModelMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = e.target.closest('.sort-menu-item');
+      if (!item) return;
+      const model = item.dataset.value || '';
+      state.selectedModel = model;
+      if (refs.dashModelLabel) refs.dashModelLabel.textContent = model || '选择 Model';
+      _markDropdownActive(refs.dashModelMenu, model);
+      refs.dashModelMenu.hidden = true;
+      updateControlAvailability();
+      refreshChatContextIfIdle();
+      if (state.selectedProvider && model) {
+        setTopStatus(`就绪 · ${state.selectedProvider} / ${model}`, 'ok');
+      } else {
+        setTopStatus('未检测到可用 Provider/Model', 'err');
+      }
+    });
+  }
+
+  // Close dropdowns on outside click
+  document.addEventListener('click', () => {
+    if (refs.dashProviderMenu) refs.dashProviderMenu.hidden = true;
+    if (refs.dashModelMenu) refs.dashModelMenu.hidden = true;
   });
 
   refs.runAllBtn.addEventListener('click', handleRunAll);
@@ -350,42 +410,51 @@ async function loadProviders() {
   const providers = await listProviders();
   state.providers = providers;
 
-  const select = refs.dashProvider;
-  if (!select) return;
-  select.innerHTML = '';
+  const menu = refs.dashProviderMenu;
+  if (!menu) return;
+  menu.innerHTML = '';
 
   const enabled = providers.filter((p) => p.enabled !== false);
   if (!enabled.length) {
-    const opt = document.createElement('option');
-    opt.textContent = '无可用 Provider';
-    opt.value = '';
-    select.appendChild(opt);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'sort-menu-item';
+    btn.textContent = '无可用 Provider';
+    menu.appendChild(btn);
     state.selectedProvider = '';
+    if (refs.dashProviderLabel) refs.dashProviderLabel.textContent = '无可用 Provider';
     applyModelSelector('', null);
     return;
   }
 
   const order = DEFAULT_PROVIDER_ORDER;
   enabled.sort((a, b) => {
-    const ia = order.indexOf(a.provider);
-    const ib = order.indexOf(b.provider);
+    const ia = order.indexOf(toProviderKey(a.provider));
+    const ib = order.indexOf(toProviderKey(b.provider));
     return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
   });
 
   for (const p of enabled) {
-    const opt = document.createElement('option');
-    opt.value = p.provider;
-    opt.textContent = `${p.provider} — ${p.model || 'N/A'}`;
-    select.appendChild(opt);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'sort-menu-item';
+    btn.dataset.value = p.provider;
+    btn.innerHTML = `<span class="sort-menu-item-label">${escapeHtml(p.provider)}</span><span class="material-symbols-outlined text-[14px] check-icon hidden">check</span>`;
+    menu.appendChild(btn);
   }
 
-  state.selectedProvider = state.selectedProvider || enabled[0].provider;
-  select.value = state.selectedProvider;
+  const availableProviders = enabled.map((p) => String(p.provider || '').trim()).filter(Boolean);
+  if (!availableProviders.includes(state.selectedProvider)) {
+    state.selectedProvider = availableProviders[0] || '';
+  }
+  if (refs.dashProviderLabel) refs.dashProviderLabel.textContent = state.selectedProvider;
+  _markDropdownActive(menu, state.selectedProvider);
   applyModelSelector(state.selectedProvider, state.selectedModel);
 
   const counts = enabled.map((p) => {
-    const presets = new Set(MODEL_PRESETS[p.provider] || []);
-    const custom = new Set(getProviderCustomModels(p.provider));
+    const providerKey = toProviderKey(p.provider);
+    const presets = new Set(MODEL_PRESETS[providerKey] || []);
+    const custom = new Set(getProviderCustomModels(providerKey));
     if (p.model) presets.add(p.model);
     return new Set([...presets, ...custom]).size;
   });
@@ -413,15 +482,16 @@ function populateChatModelSelector() {
 
   const order = DEFAULT_PROVIDER_ORDER;
   enabled.sort((a, b) => {
-    const ia = order.indexOf(a.provider);
-    const ib = order.indexOf(b.provider);
+    const ia = order.indexOf(toProviderKey(a.provider));
+    const ib = order.indexOf(toProviderKey(b.provider));
     return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
   });
 
   let foundCurrent = false;
   for (const p of enabled) {
-    const presets = MODEL_PRESETS[p.provider] || [];
-    const custom = getProviderCustomModels(p.provider);
+    const providerKey = toProviderKey(p.provider);
+    const presets = MODEL_PRESETS[providerKey] || [];
+    const custom = getProviderCustomModels(providerKey);
     const models = [...new Set([...presets, ...custom])];
     if (!models.length && p.model) models.push(p.model);
 
@@ -447,48 +517,64 @@ function populateChatModelSelector() {
   select.value = `${state.chatProvider}::${state.chatModel}`;
 }
 
-function applyModelSelector(provider, currentModel) {
-  const select = refs.dashModel;
-  if (!select) return;
-  select.innerHTML = '';
+function _markDropdownActive(menu, value) {
+  if (!menu) return;
+  menu.querySelectorAll('.sort-menu-item[data-value]').forEach((btn) => {
+    const isActive = btn.dataset.value === value;
+    btn.classList.toggle('is-active', isActive);
+    const check = btn.querySelector('.check-icon');
+    if (check) check.classList.toggle('hidden', !isActive);
+  });
+}
 
-  if (!provider) {
+function applyModelSelector(provider, currentModel) {
+  const menu = refs.dashModelMenu;
+  if (!menu) return;
+  menu.innerHTML = '';
+
+  const providerName = String(provider || '').trim();
+  if (!providerName) {
     state.selectedModel = '';
+    if (refs.dashModelLabel) refs.dashModelLabel.textContent = '选择 Model';
     updateControlAvailability();
     return;
   }
 
-  const presets = MODEL_PRESETS[provider] || [];
-  const custom = getProviderCustomModels(provider);
-  const cfg = state.providers.find((p) => p.provider === provider);
+  const providerKey = toProviderKey(providerName);
+  const presets = MODEL_PRESETS[providerKey] || [];
+  const custom = getProviderCustomModels(providerKey);
+  const cfg = state.providers.find((p) => toProviderKey(p.provider) === providerKey);
   const cfgModel = cfg ? cfg.model : '';
 
   const all = [...new Set([...presets, ...custom])];
   if (cfgModel && !all.includes(cfgModel)) all.unshift(cfgModel);
 
   if (!all.length) {
-    const opt = document.createElement('option');
-    opt.textContent = '无可用模型';
-    opt.value = '';
-    select.appendChild(opt);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'sort-menu-item';
+    btn.textContent = '无可用模型';
+    menu.appendChild(btn);
     state.selectedModel = '';
+    if (refs.dashModelLabel) refs.dashModelLabel.textContent = '无可用模型';
     updateControlAvailability();
     return;
   }
 
   for (const model of all) {
-    const opt = document.createElement('option');
-    opt.value = model;
-    opt.textContent = model;
-    select.appendChild(opt);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'sort-menu-item';
+    btn.dataset.value = model;
+    btn.innerHTML = `<span class="sort-menu-item-label">${escapeHtml(model)}</span><span class="material-symbols-outlined text-[14px] check-icon hidden">check</span>`;
+    menu.appendChild(btn);
   }
 
-  state.selectedModel = currentModel || cfgModel || all[0];
-  if (all.includes(state.selectedModel)) {
-    select.value = state.selectedModel;
-  }
+  state.selectedModel = pickAvailableModel(all, currentModel, cfgModel);
+  if (refs.dashModelLabel) refs.dashModelLabel.textContent = state.selectedModel;
+  _markDropdownActive(menu, state.selectedModel);
 
-  state.selectedRetry = getProviderRetry(provider, 3);
+  state.selectedRetry = getProviderRetry(providerName, 3);
   updateControlAvailability();
 }
 
@@ -1220,7 +1306,11 @@ function initBackgroundFx() {
 function cacheRefs() {
   refs.bgFxLayer = document.getElementById('bgFxLayer');
   refs.dashProvider = document.getElementById('dashProvider');
+  refs.dashProviderLabel = document.getElementById('dashProviderLabel');
+  refs.dashProviderMenu = document.getElementById('dashProviderMenu');
   refs.dashModel = document.getElementById('dashModel');
+  refs.dashModelLabel = document.getElementById('dashModelLabel');
+  refs.dashModelMenu = document.getElementById('dashModelMenu');
   refs.dashTopStatus = document.getElementById('dashTopStatus');
   refs.runAllBtn = document.getElementById('runAllBtn');
   refs.refreshBtn = document.getElementById('refreshBtn');

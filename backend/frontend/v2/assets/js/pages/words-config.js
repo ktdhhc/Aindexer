@@ -144,11 +144,12 @@ function renderGrid() {
                     <input type="text" class="input-clean" value="${escapeHtml(row.label)}" data-field="label" data-index="${index}" placeholder="Field Label">
                   </td>
                   <td>
-                    <select class="select-clean" data-field="field_type" data-index="${index}">
-                      <option value="text" ${row.field_type === 'text' ? 'selected' : ''}>Text</option>
-                      <option value="number" ${row.field_type === 'number' ? 'selected' : ''}>Number</option>
-                      <option value="list" ${row.field_type === 'list' ? 'selected' : ''}>List</option>
-                    </select>
+                    <div class="relative inline-block">
+                      <button type="button" class="sort-trigger" data-field-type-dropdown="${index}">
+                        <span>${row.field_type === 'text' ? 'Text' : row.field_type === 'number' ? 'Number' : row.field_type === 'list' ? 'List' : row.field_type}</span>
+                        <span class="material-symbols-outlined text-[14px]">expand_more</span>
+                      </button>
+                    </div>
                   </td>
                   <td style="text-align: center">
                     <input type="checkbox" class="custom-checkbox" ${row.required ? 'checked' : ''} data-field="required" data-index="${index}">
@@ -330,6 +331,15 @@ function bindEvents() {
     const action = btn.dataset.action;
     const index = parseInt(btn.dataset.index, 10);
 
+    // Dropdown trigger: toggle menu
+    // Dropdown trigger: open portal menu
+    if (btn.dataset.fieldTypeDropdown !== undefined) {
+      e.stopPropagation();
+      _closeFieldTypeDropdown();
+      _openFieldTypeDropdown(btn, parseInt(btn.dataset.fieldTypeDropdown, 10));
+      return;
+    }
+
     if (action === 'add') {
       handleAddField();
     } else if (action === 'delete') {
@@ -339,6 +349,58 @@ function bindEvents() {
       renderGrid();
     }
   });
+
+  document.addEventListener('click', () => {
+    _closeFieldTypeDropdown();
+  });
+}
+
+function _openFieldTypeDropdown(trigger, index) {
+  const rect = trigger.getBoundingClientRect();
+  const currentType = state.rows[index]?.field_type || 'text';
+  const types = [
+    { value: 'text', label: 'Text' },
+    { value: 'number', label: 'Number' },
+    { value: 'list', label: 'List' },
+  ];
+
+  const menu = document.createElement('div');
+  menu.className = 'sort-menu';
+  menu.style.position = 'fixed';
+  menu.style.top = `${rect.bottom + 4}px`;
+  menu.style.left = `${rect.left}px`;
+  menu.style.minWidth = `${rect.width}px`;
+
+  for (const t of types) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = `sort-menu-item${t.value === currentType ? ' is-active' : ''}`;
+    item.dataset.value = t.value;
+    item.dataset.portalIndex = String(index);
+    item.innerHTML = `<span>${t.label}</span>${t.value === currentType ? '<span class="material-symbols-outlined text-[14px]">check</span>' : ''}`;
+    menu.appendChild(item);
+  }
+
+  document.body.appendChild(menu);
+  document.body.addEventListener('click', function handler(ev) {
+    if (!menu.contains(ev.target) && ev.target !== trigger) {
+      _closeFieldTypeDropdown();
+      document.body.removeEventListener('click', handler);
+    }
+  });
+}
+
+function _closeFieldTypeDropdown() {
+  document.querySelectorAll('body > .sort-menu').forEach((el) => el.remove());
+}
+
+function _handleFieldTypeSelect(value, index) {
+  if (index !== undefined && state.rows[index]) {
+    state.rows[index].field_type = value;
+  }
+  _closeFieldTypeDropdown();
+  renderGrid();
+  updateActionButtons();
 }
 
 async function init() {
@@ -348,6 +410,15 @@ async function init() {
   refs.saveBtn = document.getElementById('fieldsSaveBtn');
   refs.resetBtn = document.getElementById('fieldsResetBtn');
   refs.discardBtn = document.getElementById('fieldsDiscardBtn');
+
+  // Delegate portal dropdown item clicks
+  document.addEventListener('click', (e) => {
+    const item = e.target.closest('.sort-menu-item[data-portal-index]');
+    if (item) {
+      e.stopPropagation();
+      _handleFieldTypeSelect(item.dataset.value, parseInt(item.dataset.portalIndex, 10));
+    }
+  });
 
   initAppShell();
   bindEvents();

@@ -318,6 +318,20 @@ def _migrate_provider_api_keys_to_plain(conn: sqlite3.Connection) -> None:
 
 
 def _seed_default_fields(conn: sqlite3.Connection) -> None:
+    # 清除重复 label（保留 sort_order 最小的那条）
+    conn.execute("""
+        DELETE FROM field_definitions WHERE rowid NOT IN (
+            SELECT MIN(rowid) FROM field_definitions GROUP BY label
+        )
+    """)
+    # 添加 label 唯一索引（如果不存在）
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_field_definitions_label ON field_definitions(label)"
+        )
+    except sqlite3.OperationalError:
+        pass
+
     conn.executemany(
         """
         INSERT OR IGNORE INTO field_definitions

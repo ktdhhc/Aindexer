@@ -487,6 +487,16 @@ def get_fields() -> list[dict[str, Any]]:
 
 
 def save_fields(items: list[dict[str, Any]]) -> None:
+    # 检查 label 重复
+    seen_labels: set[str] = set()
+    for item in items:
+        label = str(item.get("label") or item.get("field_key") or "").strip()
+        if not label:
+            continue
+        if label in seen_labels:
+            raise ValueError(f'字段名称 "{label}" 重复，请修改后再保存')
+        seen_labels.add(label)
+
     with get_conn() as conn:
         conn.execute("DELETE FROM field_definitions")
         for item in items:

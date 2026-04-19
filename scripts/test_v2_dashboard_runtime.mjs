@@ -91,12 +91,14 @@ const elementIds = [
   'exportAllBtnSide', 'importAllBtnSide', 'backupImportInput', 'footerStatus', 'dashIndexedCount',
   'dashModelCount', 'dashboardKeywordCloud', 'uploadInput', 'uploadDropBox', 'uploadEmptyState',
   'queuePanel', 'uploadDragNotice', 'uploadState', 'queueSummary', 'queueRows', 'searchInput',
-  'searchBtn', 'searchSortTypeBtn', 'searchSortDirectionBtn', 'searchSortDirectionIcon',
+  'searchBtn', 'searchSortTrigger', 'searchSortLabel', 'searchSortDirectionBtn', 'searchSortDirectionIcon',
   'searchSortMenu', 'searchState', 'searchRows', 'previewDocId', 'previewLoadBtn', 'previewState',
   'previewMarkdown', 'previewCopyBtn', 'previewExportBtn', 'previewOriginalBtn', 'previewEditBtn',
-  'themeToggleBtn', 'themeToggleIcon', 'chatMessages', 'chatState', 'chatQuestion', 'chatAskBtn', 'exitAppBtn', 'editIndexModal',
+  'themeToggleBtn', 'themeToggleIcon', 'chatMessages', 'chatState', 'chatQuestion', 'chatAskBtn',
+  'chatModelSelector', 'exitAppBtn', 'editIndexModal',
   'editModalStatus', 'editModalCloseBtn', 'editModalCancelBtn', 'editModalSaveBtn', 'editDisplayName',
-  'editYear', 'editGeneratedAt', 'editMarkdown'
+  'editYear', 'editGeneratedAt', 'editMarkdown',
+  'dashProviderLabel', 'dashProviderMenu', 'dashModelLabel', 'dashModelMenu'
 ];
 
 const nodes = new Map(elementIds.map((id) => [id, new FakeElement(id)]));

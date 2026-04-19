@@ -16,6 +16,9 @@
   --text-faint: #6f8099;
   --line-soft: rgba(255, 255, 255, 0.08);
   --line-ghost: rgba(255, 255, 255, 0.14);
+  --soft-bg: rgba(6, 14, 32, 0.8);
+  --soft-border: rgba(255, 255, 255, 0.08);
+  --soft-text: #dae2fd;
   --glass-bg: rgba(34, 42, 61, 0.56);
   --glass-bg-strong: rgba(19, 27, 46, 0.78);
   --shadow-soft: 0 18px 42px rgba(2, 8, 23, 0.28);
@@ -56,6 +59,9 @@ html.light {
   --text-faint: #64748b;
   --line-soft: rgba(15, 23, 42, 0.08);
   --line-ghost: rgba(15, 23, 42, 0.12);
+  --soft-bg: rgba(255, 255, 255, 0.8);
+  --soft-border: rgba(15, 23, 42, 0.1);
+  --soft-text: #1e293b;
   --glass-bg: rgba(255, 255, 255, 0.55);
   --glass-bg-strong: rgba(255, 255, 255, 0.75);
   --shadow-soft: inset 0 1px 1px rgba(255, 255, 255, 0.9), 0 12px 48px rgba(15, 23, 42, 0.05);

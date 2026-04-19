@@ -14,7 +14,10 @@ def list_fields() -> list[dict]:
 
 @router.put("")
 def update_fields(payload: list[dict]) -> dict:
-    save_fields(payload)
+    try:
+        save_fields(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return {"ok": True}
 
 

@@ -13,6 +13,8 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
     />
+    <link rel="stylesheet" href="./assets/css/tokens.css?v=20260324-dropdown" />
+    <link rel="stylesheet" href="./assets/css/components.css?v=20260324-dropdown" />
     <link rel="stylesheet" href="./assets/css/pages/provider-shell.css?v=20260319-shellsplit1" />
     <script>
       tailwind.config = {
@@ -302,95 +304,6 @@
         overflow: auto;
       }
 
-      .sort-trigger {
-        position: relative;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 14px;
-        border-radius: 14px;
-        border: 1px solid var(--soft-border);
-        background: var(--soft-bg);
-        color: var(--soft-text);
-        font-size: 0.72rem;
-        font-weight: 800;
-        letter-spacing: 0.05em;
-        transition: 200ms ease;
-        cursor: pointer;
-      }
-
-      .sort-trigger:hover {
-        background: rgba(255, 255, 255, 0.05);
-        border-color: rgba(255, 255, 255, 0.15);
-      }
-
-      .sort-menu {
-        position: absolute;
-        top: calc(100% + 10px);
-        right: 0;
-        min-width: 180px;
-        padding: 8px;
-        border-radius: 18px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(15, 23, 42, 0.85);
-        backdrop-filter: blur(32px);
-        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
-        z-index: 100;
-      }
-
-      .sort-menu[hidden] {
-        display: none;
-      }
-
-      .sort-menu-item {
-        width: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 10px 12px;
-        border-radius: 12px;
-        text-align: left;
-        font-size: 0.8rem;
-        color: #94a3b8;
-        transition: 180ms ease;
-      }
-
-      .sort-menu-item:hover {
-        background: rgba(255, 255, 255, 0.05);
-        color: #f8fafc;
-      }
-
-      .sort-menu-item.is-active {
-        background: rgba(137, 206, 255, 0.12);
-        color: #89ceff;
-        font-weight: 700;
-      }
-
-      html.light .sort-trigger {
-        background: rgba(255, 255, 255, 0.8) !important;
-        border-color: rgba(15, 23, 42, 0.1) !important;
-        color: #1e293b !important;
-      }
-
-      html.light .sort-menu {
-        background: rgba(255, 255, 255, 0.92) !important;
-        border-color: rgba(15, 23, 42, 0.08) !important;
-        box-shadow: 0 20px 48px rgba(15, 23, 42, 0.12) !important;
-      }
-
-      html.light .sort-menu-item {
-        color: #475569 !important;
-      }
-
-      html.light .sort-menu-item:hover {
-        background: rgba(15, 23, 42, 0.04) !important;
-        color: #0f172a !important;
-      }
-
-      html.light .sort-menu-item.is-active {
-        background: rgba(14, 165, 233, 0.08) !important;
-        color: #0ea5e9 !important;
-      }
 
       html.light body {
         color: #0f172a;
@@ -491,8 +404,7 @@
       }
 
       html.light .edit-field-input,
-      html.light .edit-field-textarea,
-      html.light .sort-trigger {
+      html.light .edit-field-textarea {
         color-scheme: light !important;
       }
 
@@ -509,12 +421,6 @@
       html.light .instrument-cloud-chip:hover {
         background: rgba(14, 165, 233, 0.1);
         border-color: rgba(14, 165, 233, 0.2);
-        color: #0ea5e9;
-      }
-
-      html.light .sort-menu-item:hover,
-      html.light .sort-menu-item.is-active {
-        background: rgba(14, 165, 233, 0.12);
         color: #0ea5e9;
       }
 
@@ -590,7 +496,7 @@
       </header>
 
       <div class="flex-1 p-4 lg:pl-[104px] lg:pr-8 lg:py-8 grid grid-cols-12 gap-6 lg:gap-8 max-w-[1600px] mx-auto w-full">
-        <section class="col-span-12 glass-panel rounded-3xl p-5 lg:p-6 shadow-glow">
+        <section class="col-span-12 glass-panel rounded-3xl p-5 lg:p-6 shadow-glow relative z-30">
           <div class="grid gap-6 xl:grid-cols-[minmax(0,1.618fr)_minmax(360px,1fr)] xl:items-stretch">
             <div class="min-w-0 flex flex-col gap-5 justify-between">
               <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5 lg:gap-8">
@@ -662,11 +568,23 @@
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <label class="block min-w-0">
                     <span class="block text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-2">Provider</span>
-                    <select id="dashProvider" class="w-full max-w-full truncate bg-surface-container-lowest border-none rounded-2xl text-[15px] px-4 py-3.5 focus:ring-1 focus:ring-primary/50"></select>
+                    <div class="relative">
+                      <button id="dashProvider" type="button" class="sort-trigger w-full min-w-0 justify-between text-[15px] px-4 py-3 rounded-2xl">
+                        <span id="dashProviderLabel" class="sort-trigger-label">选择 Provider</span>
+                        <span class="material-symbols-outlined text-[18px] shrink-0">expand_more</span>
+                      </button>
+                      <div id="dashProviderMenu" class="sort-menu w-full" hidden></div>
+                    </div>
                   </label>
                   <label class="block min-w-0">
                     <span class="block text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-2">Model</span>
-                    <select id="dashModel" class="w-full max-w-full truncate bg-surface-container-lowest border-none rounded-2xl text-[15px] px-4 py-3.5 focus:ring-1 focus:ring-primary/50"></select>
+                    <div class="relative">
+                      <button id="dashModel" type="button" class="sort-trigger w-full min-w-0 justify-between text-[15px] px-4 py-3 rounded-2xl">
+                        <span id="dashModelLabel" class="sort-trigger-label">选择 Model</span>
+                        <span class="material-symbols-outlined text-[18px] shrink-0">expand_more</span>
+                      </button>
+                      <div id="dashModelMenu" class="sort-menu w-full" hidden></div>
+                    </div>
                   </label>
                 </div>
 
@@ -830,6 +748,6 @@
       </div>
     </div>
 
-    <script type="module" src="./assets/js/pages/dashboard.js?v=20260319-runtime2"></script>
+    <script type="module" src="./assets/js/pages/dashboard.js?v=20260324-dropdown"></script>
   </body>
 </html>
