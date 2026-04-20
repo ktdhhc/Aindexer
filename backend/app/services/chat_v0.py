@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..db import DEFAULT_WORKSPACE_ID
 from ..repository import get_first_indexed_document, get_index, markdown_path
 from .markdown_export import render_markdown
 from .prompt_store import get_required_prompt
@@ -12,8 +13,8 @@ CHAT_V0_SYSTEM_PROMPT = get_required_prompt("chat_v0_system_prompt.txt")
 CHAT_V0_USER_PROMPT_TEMPLATE = get_required_prompt("chat_v0_user_prompt_template.txt")
 
 
-def pick_test_chat_document() -> dict | None:
-    return get_first_indexed_document()
+def pick_test_chat_document(workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict | None:
+    return get_first_indexed_document(workspace_id=workspace_id)
 
 
 def load_test_chat_context(doc_id: str) -> str:
@@ -37,8 +38,9 @@ def build_chat_v0_prompt(question: str, context: str) -> tuple[str, str]:
 def run_chat_v0(
     question: str,
     provider_cfg: ProviderConfig,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> dict:
-    doc = pick_test_chat_document()
+    doc = pick_test_chat_document(workspace_id=workspace_id)
     if not doc:
         raise RuntimeError("暂无可用索引，请先完成至少一条文献索引生成")
     doc_id = str(doc.get("id") or "")

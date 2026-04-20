@@ -92,6 +92,12 @@ DEFAULT_FIELD_DEFINITIONS = [
 ]
 
 
+DEFAULT_WORKSPACE_ID = "ws_default"
+DEFAULT_WORKSPACE_NAME = "默认工作区"
+DEFAULT_FIELD_TEMPLATE_ID = "tpl_default"
+DEFAULT_FIELD_TEMPLATE_NAME = "默认字段模板"
+
+
 def utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -102,8 +108,18 @@ def init_db() -> None:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS workspaces (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS documents (
                 id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                field_template_id TEXT NOT NULL,
                 filename TEXT NOT NULL,
                 display_name TEXT,
                 file_type TEXT NOT NULL,
@@ -154,6 +170,31 @@ def init_db() -> None:
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 is_default INTEGER NOT NULL DEFAULT 0
             );
+
+            CREATE TABLE IF NOT EXISTS field_templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS field_template_fields (
+                template_id TEXT NOT NULL REFERENCES field_templates(id) ON DELETE CASCADE,
+                field_key TEXT NOT NULL,
+                label TEXT NOT NULL,
+                description TEXT,
+                field_type TEXT NOT NULL,
+                required INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(template_id, field_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_field_template_fields_template
+            ON field_template_fields(template_id, sort_order ASC);
 
             CREATE TABLE IF NOT EXISTS provider_configs (
                 provider TEXT PRIMARY KEY,
@@ -234,12 +275,37 @@ def init_db() -> None:
             """
         )
         _migrate_schema(conn)
+        _seed_default_workspace(conn)
         _seed_default_fields(conn)
+        _seed_default_field_templates(conn)
         _seed_default_providers(conn)
 
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(documents)").fetchall()}
+    if "workspace_id" not in cols:
+        conn.execute(
+            f"ALTER TABLE documents ADD COLUMN workspace_id TEXT NOT NULL DEFAULT '{DEFAULT_WORKSPACE_ID}'"
+        )
+    if "field_template_id" not in cols:
+        conn.execute(
+            f"ALTER TABLE documents ADD COLUMN field_template_id TEXT NOT NULL DEFAULT '{DEFAULT_FIELD_TEMPLATE_ID}'"
+        )
+    conn.execute(
+        "UPDATE documents SET workspace_id = ? WHERE workspace_id IS NULL OR workspace_id = ''",
+        (DEFAULT_WORKSPACE_ID,),
+    )
+    conn.execute(
+        "UPDATE documents SET field_template_id = ? WHERE field_template_id IS NULL OR field_template_id = ''",
+        (DEFAULT_FIELD_TEMPLATE_ID,),
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_documents_workspace_id ON documents(workspace_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_documents_field_template_id ON documents(field_template_id)"
+    )
+
     if "display_name" not in cols:
         conn.execute("ALTER TABLE documents ADD COLUMN display_name TEXT")
         conn.execute(
@@ -286,7 +352,45 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
             """
         )
 
+    _migrate_document_hash_scope(conn)
     _migrate_provider_api_keys_to_plain(conn)
+
+
+def _migrate_document_hash_scope(conn: sqlite3.Connection) -> None:
+    rows = conn.execute("SELECT id, workspace_id, file_hash FROM documents").fetchall()
+    for row in rows:
+        doc_id = str(row[0] or "")
+        workspace_id = (
+            str(row[1] or DEFAULT_WORKSPACE_ID).strip() or DEFAULT_WORKSPACE_ID
+        )
+        file_hash = str(row[2] or "").strip()
+        if not doc_id or not file_hash:
+            continue
+        prefix = f"{workspace_id}:"
+        if file_hash.startswith(prefix):
+            continue
+        scoped_hash = f"{prefix}{file_hash}"
+        conn.execute(
+            "UPDATE documents SET file_hash = ?, updated_at = ? WHERE id = ?",
+            (scoped_hash, utcnow(), doc_id),
+        )
+
+
+def _seed_default_workspace(conn: sqlite3.Connection) -> None:
+    now = utcnow()
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO workspaces (id, name, description, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            DEFAULT_WORKSPACE_ID,
+            DEFAULT_WORKSPACE_NAME,
+            "系统默认工作区",
+            now,
+            now,
+        ),
+    )
 
 
 def _migrate_provider_api_keys_to_plain(conn: sqlite3.Connection) -> None:
@@ -356,6 +460,84 @@ def _seed_default_fields(conn: sqlite3.Connection) -> None:
         conn.execute(
             "UPDATE field_definitions SET description = ? WHERE field_key = ? AND (description IS NULL OR description = '')",
             (item["description"], item["field_key"]),
+        )
+
+
+def _seed_default_field_templates(conn: sqlite3.Connection) -> None:
+    now = utcnow()
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO field_templates (id, name, description, is_default, created_at, updated_at)
+        VALUES (?, ?, ?, 1, ?, ?)
+        """,
+        (
+            DEFAULT_FIELD_TEMPLATE_ID,
+            DEFAULT_FIELD_TEMPLATE_NAME,
+            "系统默认字段模板",
+            now,
+            now,
+        ),
+    )
+
+    count_row = conn.execute(
+        "SELECT COUNT(*) FROM field_template_fields WHERE template_id = ?",
+        (DEFAULT_FIELD_TEMPLATE_ID,),
+    ).fetchone()
+    if int(count_row[0] or 0) > 0:
+        return
+
+    rows = conn.execute(
+        "SELECT field_key, label, description, field_type, required, enabled, sort_order, is_default FROM field_definitions ORDER BY sort_order ASC"
+    ).fetchall()
+    source = rows if rows else DEFAULT_FIELD_DEFINITIONS
+
+    for item in source:
+        if isinstance(item, sqlite3.Row):
+            field_key = str(item["field_key"])
+            label = str(item["label"])
+            description = str(item["description"] or "")
+            field_type = str(item["field_type"])
+            required = int(item["required"] or 0)
+            enabled = int(item["enabled"] or 0)
+            sort_order = int(item["sort_order"] or 0)
+            is_default = int(item["is_default"] or 0)
+        elif isinstance(item, tuple):
+            field_key = str(item[0] or "")
+            label = str(item[1] or "")
+            description = str(item[2] or "")
+            field_type = str(item[3] or "text")
+            required = int(item[4] or 0)
+            enabled = int(item[5] or 0)
+            sort_order = int(item[6] or 0)
+            is_default = int(item[7] or 0)
+        else:
+            field_key = str(item["field_key"])
+            label = str(item["label"])
+            description = str(item["description"] or "")
+            field_type = str(item["field_type"])
+            required = int(item["required"])
+            enabled = int(item["enabled"])
+            sort_order = int(item["sort_order"])
+            is_default = int(item["is_default"])
+
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO field_template_fields (
+                template_id, field_key, label, description, field_type, required, enabled, sort_order, is_default
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                DEFAULT_FIELD_TEMPLATE_ID,
+                field_key,
+                label,
+                description,
+                field_type,
+                required,
+                enabled,
+                sort_order,
+                is_default,
+            ),
         )
 
 

@@ -5,7 +5,9 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..db import DEFAULT_WORKSPACE_ID
 from ..repository import get_provider_config_raw
+from ..repository import workspace_exists
 from ..services.chat_v0 import run_chat_v0
 from ..services.provider_client import ProviderConfig
 
@@ -17,6 +19,7 @@ class ChatV0AskIn(BaseModel):
     question: str
     provider: str = ""
     model: str | None = None
+    workspace_id: str = DEFAULT_WORKSPACE_ID
 
 
 @router.post("/ask_v0")
@@ -35,6 +38,13 @@ def ask_chat_v0(payload: ChatV0AskIn) -> dict:
     if not provider_name:
         raise HTTPException(status_code=400, detail="没有可用模型，请先配置接口")
 
+    workspace_id = (
+        str(payload.workspace_id or DEFAULT_WORKSPACE_ID).strip()
+        or DEFAULT_WORKSPACE_ID
+    )
+    if not workspace_exists(workspace_id):
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
     provider_row = get_provider_config_raw(provider_name)
     if not provider_row:
         raise HTTPException(status_code=400, detail="Provider 配置不存在")
@@ -50,7 +60,11 @@ def ask_chat_v0(payload: ChatV0AskIn) -> dict:
         timeout=provider_row["timeout"] or 120,
     )
     try:
-        result = run_chat_v0(question=question, provider_cfg=cfg)
+        result = run_chat_v0(
+            question=question,
+            provider_cfg=cfg,
+            workspace_id=workspace_id,
+        )
         logger.info(
             "chat_v0 success doc_id=%s display_name=%s answer_chars=%s",
             result.get("doc_id"),

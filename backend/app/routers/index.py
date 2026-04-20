@@ -7,14 +7,18 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from ..db import DEFAULT_FIELD_TEMPLATE_ID, DEFAULT_WORKSPACE_ID
 from ..repository import (
+    field_template_exists,
     get_document,
     get_fields,
     get_index,
     get_provider_config_raw,
+    set_document_field_template,
+    workspace_exists,
     list_documents,
     markdown_path,
     reset_index_content,
@@ -37,6 +41,23 @@ EXECUTOR = ThreadPoolExecutor(max_workers=3, thread_name_prefix="indexer")
 FUTURES: dict[str, Future] = {}
 FUTURES_LOCK = threading.Lock()
 TERMINAL_STATUS = {"indexed", "needs_review", "failed", "cancelled"}
+
+
+def _resolve_workspace_id(workspace_id: str | None) -> str:
+    value = str(workspace_id or DEFAULT_WORKSPACE_ID).strip() or DEFAULT_WORKSPACE_ID
+    if not workspace_exists(value):
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return value
+
+
+def _resolve_field_template_id(field_template_id: str | None) -> str:
+    value = (
+        str(field_template_id or DEFAULT_FIELD_TEMPLATE_ID).strip()
+        or DEFAULT_FIELD_TEMPLATE_ID
+    )
+    if not field_template_exists(value):
+        raise HTTPException(status_code=400, detail="Field template not found")
+    return value
 
 
 def _progress_payload(doc: dict, elapsed_seconds: int = 0) -> dict:
@@ -79,16 +100,28 @@ def _progress_payload(doc: dict, elapsed_seconds: int = 0) -> dict:
 
 
 def _start_job(
-    doc_id: str, provider: str, retries: int = 3, model: str | None = None
+    doc_id: str,
+    provider: str,
+    retries: int = 3,
+    model: str | None = None,
+    field_template_id: str = DEFAULT_FIELD_TEMPLATE_ID,
 ) -> bool:
     with FUTURES_LOCK:
         existing = FUTURES.get(doc_id)
         if existing and not existing.done():
             return False
         set_cancel_requested(doc_id, False)
+        set_document_field_template(doc_id, field_template_id)
         set_document_status(doc_id, "parsing")
         set_document_stage(doc_id, "queued", "任务已加入队列，最多并发3条")
-        future = EXECUTOR.submit(_process_indexing, doc_id, provider, retries, model)
+        future = EXECUTOR.submit(
+            _process_indexing,
+            doc_id,
+            provider,
+            retries,
+            model,
+            field_template_id,
+        )
         FUTURES[doc_id] = future
         future.add_done_callback(lambda _f, did=doc_id: _clear_future(did))
         return True
@@ -114,7 +147,11 @@ def _check_cancel(doc_id: str) -> bool:
 
 
 def _process_indexing(
-    doc_id: str, provider: str, retries: int = 3, model: str | None = None
+    doc_id: str,
+    provider: str,
+    retries: int = 3,
+    model: str | None = None,
+    field_template_id: str = DEFAULT_FIELD_TEMPLATE_ID,
 ) -> None:
     doc = None
     try:
@@ -149,7 +186,9 @@ def _process_indexing(
             temperature=provider_row["temperature"] or 0.1,
             timeout=provider_row["timeout"] or 120,
         )
-        custom_fields = [f for f in get_fields() if not f["is_default"]]
+        custom_fields = [
+            f for f in get_fields(template_id=field_template_id) if not f["is_default"]
+        ]
         record = run_extraction(
             text=text,
             provider_cfg=cfg,
@@ -208,9 +247,16 @@ def _process_indexing(
 
 @router.post("/{doc_id}/run")
 def run_indexing(
-    doc_id: str, provider: str = "openai", retries: int = 3, model: str | None = None
+    doc_id: str,
+    provider: str = "openai",
+    retries: int = 3,
+    model: str | None = None,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+    field_template_id: str = Query(default=DEFAULT_FIELD_TEMPLATE_ID),
 ) -> dict:
-    doc = get_document(doc_id)
+    workspace = _resolve_workspace_id(workspace_id)
+    template = _resolve_field_template_id(field_template_id)
+    doc = get_document(doc_id, workspace_id=workspace)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -218,7 +264,7 @@ def run_indexing(
         raise HTTPException(status_code=400, detail="Provider config missing")
 
     if _is_job_active(doc_id):
-        latest = get_document(doc_id) or doc
+        latest = get_document(doc_id, workspace_id=workspace) or doc
         if (
             latest.get("status") == "cancelled"
             or latest.get("stage") == "cancel_requested"
@@ -229,7 +275,7 @@ def run_indexing(
                 "message": "上次中断任务仍在清理，请稍后重试",
             }
 
-    started = _start_job(doc_id, provider, retries, model)
+    started = _start_job(doc_id, provider, retries, model, template)
     if not started:
         return {
             "doc_id": doc_id,
@@ -241,12 +287,18 @@ def run_indexing(
 
 @router.post("/run_all")
 def run_indexing_all(
-    provider: str = "openai", retries: int = 3, model: str | None = None
+    provider: str = "openai",
+    retries: int = 3,
+    model: str | None = None,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+    field_template_id: str = Query(default=DEFAULT_FIELD_TEMPLATE_ID),
 ) -> dict:
+    workspace = _resolve_workspace_id(workspace_id)
+    template = _resolve_field_template_id(field_template_id)
     if not get_provider_config_raw(provider):
         raise HTTPException(status_code=400, detail="Provider config missing")
 
-    rows = list_documents()
+    rows = list_documents(workspace_id=workspace)
     queued = 0
     skipped = 0
     accepted_status = {"uploaded", "needs_review", "failed", "cancelled"}
@@ -258,7 +310,7 @@ def run_indexing_all(
         if row.get("status") not in accepted_status:
             skipped += 1
             continue
-        if _start_job(doc_id, provider, retries, model):
+        if _start_job(doc_id, provider, retries, model, template):
             queued += 1
         else:
             skipped += 1
@@ -271,16 +323,20 @@ def run_indexing_stream(
     provider: str = "openai",
     retries: int = 3,
     model: str | None = None,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+    field_template_id: str = Query(default=DEFAULT_FIELD_TEMPLATE_ID),
 ) -> StreamingResponse:
-    doc = get_document(doc_id)
+    workspace = _resolve_workspace_id(workspace_id)
+    template = _resolve_field_template_id(field_template_id)
+    doc = get_document(doc_id, workspace_id=workspace)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     if not get_provider_config_raw(provider):
         raise HTTPException(status_code=400, detail="Provider config missing")
 
-    started = _start_job(doc_id, provider, retries, model)
+    started = _start_job(doc_id, provider, retries, model, template)
     if not started:
-        latest = get_document(doc_id) or doc
+        latest = get_document(doc_id, workspace_id=workspace) or doc
         if (
             latest.get("status") == "cancelled"
             or latest.get("stage") == "cancel_requested"
@@ -292,7 +348,7 @@ def run_indexing_stream(
     def event_gen():
         start = time.time()
         while True:
-            row = get_document(doc_id)
+            row = get_document(doc_id, workspace_id=workspace)
             if not row:
                 payload = {
                     "doc_id": doc_id,
@@ -325,8 +381,12 @@ def run_indexing_stream(
 
 
 @router.post("/{doc_id}/cancel")
-def cancel_indexing(doc_id: str) -> dict:
-    doc = get_document(doc_id)
+def cancel_indexing(
+    doc_id: str,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+) -> dict:
+    workspace = _resolve_workspace_id(workspace_id)
+    doc = get_document(doc_id, workspace_id=workspace)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     with FUTURES_LOCK:
@@ -344,7 +404,15 @@ def cancel_indexing(doc_id: str) -> dict:
 
 
 @router.post("/{doc_id}/reset")
-def reset_index(doc_id: str) -> dict:
+def reset_index(
+    doc_id: str,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+) -> dict:
+    workspace = _resolve_workspace_id(workspace_id)
+    doc = get_document(doc_id, workspace_id=workspace)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
     with FUTURES_LOCK:
         future = FUTURES.get(doc_id)
     if future and not future.done():
@@ -352,7 +420,7 @@ def reset_index(doc_id: str) -> dict:
             pass
         set_cancel_requested(doc_id, True)
 
-    ok = reset_index_content(doc_id)
+    ok = reset_index_content(doc_id, workspace_id=workspace)
     if not ok:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -363,7 +431,15 @@ def reset_index(doc_id: str) -> dict:
 
 
 @router.get("/{doc_id}")
-def index_detail(doc_id: str) -> dict:
+def index_detail(
+    doc_id: str,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+) -> dict:
+    workspace = _resolve_workspace_id(workspace_id)
+    doc = get_document(doc_id, workspace_id=workspace)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
     item = get_index(doc_id)
     if not item:
         raise HTTPException(status_code=404, detail="Index not found")
@@ -371,7 +447,15 @@ def index_detail(doc_id: str) -> dict:
 
 
 @router.get("/{doc_id}/markdown")
-def index_markdown(doc_id: str) -> dict:
+def index_markdown(
+    doc_id: str,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+) -> dict:
+    workspace = _resolve_workspace_id(workspace_id)
+    doc = get_document(doc_id, workspace_id=workspace)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
     path = markdown_path(doc_id)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Markdown not found")
@@ -379,8 +463,13 @@ def index_markdown(doc_id: str) -> dict:
 
 
 @router.put("/{doc_id}/markdown")
-def update_index_markdown(doc_id: str, payload: dict = Body(...)) -> dict:
-    doc = get_document(doc_id)
+def update_index_markdown(
+    doc_id: str,
+    payload: dict = Body(...),
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+) -> dict:
+    workspace = _resolve_workspace_id(workspace_id)
+    doc = get_document(doc_id, workspace_id=workspace)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     markdown = str(payload.get("markdown", ""))
@@ -390,13 +479,22 @@ def update_index_markdown(doc_id: str, payload: dict = Body(...)) -> dict:
 
 
 @router.post("/{doc_id}/markdown")
-def update_index_markdown_post(doc_id: str, payload: dict = Body(...)) -> dict:
-    return update_index_markdown(doc_id, payload)
+def update_index_markdown_post(
+    doc_id: str,
+    payload: dict = Body(...),
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+) -> dict:
+    return update_index_markdown(doc_id, payload, workspace_id)
 
 
 @router.put("/{doc_id}/editor")
-def update_index_editor(doc_id: str, payload: dict = Body(...)) -> dict:
-    doc = get_document(doc_id)
+def update_index_editor(
+    doc_id: str,
+    payload: dict = Body(...),
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+) -> dict:
+    workspace = _resolve_workspace_id(workspace_id)
+    doc = get_document(doc_id, workspace_id=workspace)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -412,6 +510,7 @@ def update_index_editor(doc_id: str, payload: dict = Body(...)) -> dict:
         display_name=display_name,
         year=year,
         generated_at=str(generated_at or ""),
+        workspace_id=workspace,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Index not found")
@@ -422,8 +521,13 @@ def update_index_editor(doc_id: str, payload: dict = Body(...)) -> dict:
 
 
 @router.put("/{doc_id}")
-def update_index(doc_id: str, payload: IndexRecordIn) -> dict:
-    doc = get_document(doc_id)
+def update_index(
+    doc_id: str,
+    payload: IndexRecordIn,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+) -> dict:
+    workspace = _resolve_workspace_id(workspace_id)
+    doc = get_document(doc_id, workspace_id=workspace)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     save_index(doc_id, payload, provider="manual", model="manual")

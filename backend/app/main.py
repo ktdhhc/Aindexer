@@ -5,13 +5,24 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import APP_LOG_PATH, LOG_DIR, ensure_dirs
 from .db import init_db
-from .routers import chat, export, fields, files, index, providers, search, system
+from .routers import (
+    chat,
+    export,
+    fields,
+    files,
+    index,
+    providers,
+    search,
+    system,
+    workspaces,
+)
 
 
 class DailyFileHandler(logging.FileHandler):
@@ -92,10 +103,12 @@ def create_app() -> FastAPI:
     app.include_router(export.router, prefix="/api/export", tags=["export"])
     app.include_router(fields.router, prefix="/api/fields", tags=["fields"])
     app.include_router(providers.router, prefix="/api/providers", tags=["providers"])
+    app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
     app.include_router(system.router, prefix="/api/system", tags=["system"])
 
     static_dir = Path(__file__).resolve().parents[1] / "frontend"
     translator_static_dir = static_dir / "translator"
+    v3_static_dir = static_dir / "v3"
     if translator_static_dir.exists():
         app.mount(
             "/translator",
@@ -108,6 +121,26 @@ def create_app() -> FastAPI:
         prefix="/api/translation",
         tags=["translation"],
     )
+
+    if v3_static_dir.exists():
+
+        def _resolve_v3_path(full_path: str) -> Path:
+            target = (v3_static_dir / full_path).resolve()
+            v3_root = v3_static_dir.resolve()
+            try:
+                target.relative_to(v3_root)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail="Not found") from exc
+            return target
+
+        @app.get("/v3", include_in_schema=False)
+        @app.get("/v3/{full_path:path}", include_in_schema=False)
+        def serve_v3(full_path: str = "") -> FileResponse:
+            if full_path:
+                target = _resolve_v3_path(full_path)
+                if target.is_file():
+                    return FileResponse(target)
+            return FileResponse(v3_static_dir / "index.html")
 
     if static_dir.exists():
         app.mount(

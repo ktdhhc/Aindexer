@@ -11,7 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from .config import INDEX_DIR
-from .db import DEFAULT_FIELD_DEFINITIONS, get_conn, utcnow
+from .db import (
+    DEFAULT_FIELD_DEFINITIONS,
+    DEFAULT_FIELD_TEMPLATE_ID,
+    DEFAULT_WORKSPACE_ID,
+    get_conn,
+    utcnow,
+)
 from .schemas import ClaimItem, IndexRecordIn, IndexRecordOut, ProviderConfigOut
 
 
@@ -26,28 +32,212 @@ def hash_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def create_document(
-    filename: str, file_type: str, file_hash: str, file_path: str
-) -> str:
-    doc_id = f"doc_{uuid.uuid4().hex[:12]}"
+def normalize_workspace_id(workspace_id: str | None) -> str:
+    value = str(workspace_id or DEFAULT_WORKSPACE_ID).strip()
+    return value or DEFAULT_WORKSPACE_ID
+
+
+def normalize_field_template_id(template_id: str | None) -> str:
+    value = str(template_id or DEFAULT_FIELD_TEMPLATE_ID).strip()
+    return value or DEFAULT_FIELD_TEMPLATE_ID
+
+
+def build_scoped_file_hash(file_hash: str, workspace_id: str | None) -> str:
+    workspace = normalize_workspace_id(workspace_id)
+    digest = str(file_hash or "").strip()
+    if digest.startswith(f"{workspace}:"):
+        return digest
+    return f"{workspace}:{digest}"
+
+
+def workspace_exists(workspace_id: str | None) -> bool:
+    workspace = normalize_workspace_id(workspace_id)
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM workspaces WHERE id = ?",
+            (workspace,),
+        ).fetchone()
+        return bool(row)
+
+
+def list_workspaces() -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+              w.id,
+              w.name,
+              COALESCE(w.description, '') AS description,
+              w.created_at,
+              w.updated_at,
+              COUNT(d.id) AS document_count
+            FROM workspaces w
+            LEFT JOIN documents d ON d.workspace_id = w.id
+            GROUP BY w.id, w.name, w.description, w.created_at, w.updated_at
+            ORDER BY w.created_at ASC
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_workspace(workspace_id: str | None) -> dict[str, Any] | None:
+    workspace = normalize_workspace_id(workspace_id)
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, name, COALESCE(description, '') AS description, created_at, updated_at FROM workspaces WHERE id = ?",
+            (workspace,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def create_workspace(name: str, description: str = "") -> dict[str, Any]:
+    cleaned_name = str(name or "").strip()
+    if not cleaned_name:
+        raise ValueError("工作区名称不能为空")
+    workspace_id = f"ws_{uuid.uuid4().hex[:10]}"
     now = utcnow()
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO documents (
-              id, filename, display_name, file_type, file_hash, file_path, status, stage, stage_message, cancel_requested, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, 'uploaded', 'uploaded', '文件上传完成，等待生成索引', 0, ?, ?)
+            INSERT INTO workspaces (id, name, description, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (doc_id, filename, filename, file_type, file_hash, file_path, now, now),
+            (workspace_id, cleaned_name, str(description or "").strip(), now, now),
+        )
+        row = conn.execute(
+            "SELECT id, name, COALESCE(description, '') AS description, created_at, updated_at FROM workspaces WHERE id = ?",
+            (workspace_id,),
+        ).fetchone()
+    if not row:
+        raise RuntimeError("创建工作区失败")
+    payload = dict(row)
+    payload["document_count"] = 0
+    return payload
+
+
+def update_workspace(
+    workspace_id: str,
+    *,
+    name: str,
+    description: str | None = None,
+) -> dict[str, Any] | None:
+    workspace = normalize_workspace_id(workspace_id)
+    cleaned_name = str(name or "").strip()
+    if not cleaned_name:
+        raise ValueError("工作区名称不能为空")
+
+    with get_conn() as conn:
+        current = conn.execute(
+            "SELECT id, description FROM workspaces WHERE id = ?",
+            (workspace,),
+        ).fetchone()
+        if not current:
+            return None
+
+        next_description = (
+            str(description or "").strip()
+            if description is not None
+            else str(current["description"] or "")
+        )
+        conn.execute(
+            "UPDATE workspaces SET name = ?, description = ?, updated_at = ? WHERE id = ?",
+            (cleaned_name, next_description, utcnow(), workspace),
+        )
+        row = conn.execute(
+            """
+            SELECT
+              w.id,
+              w.name,
+              COALESCE(w.description, '') AS description,
+              w.created_at,
+              w.updated_at,
+              COUNT(d.id) AS document_count
+            FROM workspaces w
+            LEFT JOIN documents d ON d.workspace_id = w.id
+            WHERE w.id = ?
+            GROUP BY w.id, w.name, w.description, w.created_at, w.updated_at
+            """,
+            (workspace,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_workspace(workspace_id: str) -> dict[str, Any] | None:
+    workspace = normalize_workspace_id(workspace_id)
+    if workspace == DEFAULT_WORKSPACE_ID:
+        raise ValueError("默认工作区不允许删除")
+
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, name FROM workspaces WHERE id = ?",
+            (workspace,),
+        ).fetchone()
+        if not row:
+            return None
+
+        docs = conn.execute(
+            "SELECT id, file_path FROM documents WHERE workspace_id = ?",
+            (workspace,),
+        ).fetchall()
+        doc_ids = [str(item["id"]) for item in docs]
+
+        for doc_id in doc_ids:
+            conn.execute("DELETE FROM index_fts WHERE doc_id = ?", (doc_id,))
+        conn.execute("DELETE FROM documents WHERE workspace_id = ?", (workspace,))
+        conn.execute("DELETE FROM workspaces WHERE id = ?", (workspace,))
+
+    return {
+        "id": str(row["id"]),
+        "name": str(row["name"]),
+        "documents": [dict(item) for item in docs],
+    }
+
+
+def create_document(
+    filename: str,
+    file_type: str,
+    file_hash: str,
+    file_path: str,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+    field_template_id: str = DEFAULT_FIELD_TEMPLATE_ID,
+) -> str:
+    doc_id = f"doc_{uuid.uuid4().hex[:12]}"
+    now = utcnow()
+    workspace = normalize_workspace_id(workspace_id)
+    template = normalize_field_template_id(field_template_id)
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO documents (
+              id, workspace_id, field_template_id, filename, display_name, file_type, file_hash, file_path, status, stage, stage_message, cancel_requested, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', 'uploaded', '文件上传完成，等待生成索引', 0, ?, ?)
+            """,
+            (
+                doc_id,
+                workspace,
+                template,
+                filename,
+                filename,
+                file_type,
+                file_hash,
+                file_path,
+                now,
+                now,
+            ),
         )
     return doc_id
 
 
-def get_document_by_hash(file_hash: str) -> dict[str, Any] | None:
+def get_document_by_hash(
+    file_hash: str,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> dict[str, Any] | None:
+    workspace = normalize_workspace_id(workspace_id)
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM documents WHERE file_hash = ?", (file_hash,)
+            "SELECT * FROM documents WHERE file_hash = ? AND workspace_id = ?",
+            (file_hash, workspace),
         ).fetchone()
         return dict(row) if row else None
 
@@ -90,9 +280,28 @@ def set_document_stage(
         )
 
 
-def get_document(doc_id: str) -> dict[str, Any] | None:
+def set_document_field_template(doc_id: str, field_template_id: str) -> None:
+    template = normalize_field_template_id(field_template_id)
     with get_conn() as conn:
-        row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        conn.execute(
+            "UPDATE documents SET field_template_id = ?, updated_at = ? WHERE id = ?",
+            (template, utcnow(), doc_id),
+        )
+
+
+def get_document(doc_id: str, workspace_id: str | None = None) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        if workspace_id is None:
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id = ?",
+                (doc_id,),
+            ).fetchone()
+        else:
+            workspace = normalize_workspace_id(workspace_id)
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id = ? AND workspace_id = ?",
+                (doc_id, workspace),
+            ).fetchone()
         return dict(row) if row else None
 
 
@@ -216,15 +425,20 @@ def get_index(doc_id: str) -> IndexRecordOut | None:
     )
 
 
-def get_first_indexed_document() -> dict[str, Any] | None:
+def get_first_indexed_document(
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> dict[str, Any] | None:
+    workspace = normalize_workspace_id(workspace_id)
     with get_conn() as conn:
         try:
             row = conn.execute(
-                "SELECT id, filename, COALESCE(display_name, filename) AS display_name, status FROM documents WHERE status = 'indexed' ORDER BY updated_at DESC, created_at DESC LIMIT 1"
+                "SELECT id, filename, COALESCE(display_name, filename) AS display_name, status FROM documents WHERE status = 'indexed' AND workspace_id = ? ORDER BY updated_at DESC, created_at DESC LIMIT 1",
+                (workspace,),
             ).fetchone()
         except sqlite3.OperationalError:
             row = conn.execute(
-                "SELECT id, filename, status FROM documents WHERE status = 'indexed' ORDER BY updated_at DESC, created_at DESC LIMIT 1"
+                "SELECT id, filename, status FROM documents WHERE status = 'indexed' AND workspace_id = ? ORDER BY updated_at DESC, created_at DESC LIMIT 1",
+                (workspace,),
             ).fetchone()
             if not row:
                 return None
@@ -234,23 +448,40 @@ def get_first_indexed_document() -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
-def list_documents() -> list[dict[str, Any]]:
+def list_documents(workspace_id: str | None = None) -> list[dict[str, Any]]:
     with get_conn() as conn:
         _recover_stale_parsing(conn)
-        rows = conn.execute(
-            "SELECT id, filename, COALESCE(display_name, filename) AS display_name, file_type, status, stage, stage_message, cancel_requested, error_message, created_at, updated_at FROM documents ORDER BY created_at DESC"
-        ).fetchall()
+        if workspace_id is None:
+            rows = conn.execute(
+                "SELECT id, workspace_id, field_template_id, filename, COALESCE(display_name, filename) AS display_name, file_type, status, stage, stage_message, cancel_requested, error_message, created_at, updated_at FROM documents ORDER BY created_at DESC"
+            ).fetchall()
+        else:
+            workspace = normalize_workspace_id(workspace_id)
+            rows = conn.execute(
+                "SELECT id, workspace_id, field_template_id, filename, COALESCE(display_name, filename) AS display_name, file_type, status, stage, stage_message, cancel_requested, error_message, created_at, updated_at FROM documents WHERE workspace_id = ? ORDER BY created_at DESC",
+                (workspace,),
+            ).fetchall()
         return [dict(r) for r in rows]
 
 
 def update_document_display_name(
-    doc_id: str, display_name: str
+    doc_id: str,
+    display_name: str,
+    workspace_id: str | None = None,
 ) -> dict[str, Any] | None:
     cleaned = str(display_name or "").strip()
     with get_conn() as conn:
-        row = conn.execute(
-            "SELECT id, filename FROM documents WHERE id = ?", (doc_id,)
-        ).fetchone()
+        if workspace_id is None:
+            row = conn.execute(
+                "SELECT id, filename FROM documents WHERE id = ?",
+                (doc_id,),
+            ).fetchone()
+        else:
+            workspace = normalize_workspace_id(workspace_id)
+            row = conn.execute(
+                "SELECT id, filename FROM documents WHERE id = ? AND workspace_id = ?",
+                (doc_id, workspace),
+            ).fetchone()
         if not row:
             return None
         next_name = cleaned or str(row["filename"] or "")
@@ -259,7 +490,7 @@ def update_document_display_name(
             (next_name, utcnow(), doc_id),
         )
         updated = conn.execute(
-            "SELECT id, filename, COALESCE(display_name, filename) AS display_name, status, updated_at FROM documents WHERE id = ?",
+            "SELECT id, workspace_id, filename, COALESCE(display_name, filename) AS display_name, status, updated_at FROM documents WHERE id = ?",
             (doc_id,),
         ).fetchone()
         return dict(updated) if updated else None
@@ -271,12 +502,21 @@ def update_index_editor_fields(
     display_name: str,
     year: int | None,
     generated_at: str | None,
+    workspace_id: str | None = None,
 ) -> bool:
     cleaned_name = str(display_name or "").strip()
     with get_conn() as conn:
-        doc_row = conn.execute(
-            "SELECT id, filename FROM documents WHERE id = ?", (doc_id,)
-        ).fetchone()
+        if workspace_id is None:
+            doc_row = conn.execute(
+                "SELECT id, filename FROM documents WHERE id = ?",
+                (doc_id,),
+            ).fetchone()
+        else:
+            workspace = normalize_workspace_id(workspace_id)
+            doc_row = conn.execute(
+                "SELECT id, filename FROM documents WHERE id = ? AND workspace_id = ?",
+                (doc_id, workspace),
+            ).fetchone()
         index_row = conn.execute(
             "SELECT doc_id FROM index_records WHERE doc_id = ?", (doc_id,)
         ).fetchone()
@@ -315,9 +555,21 @@ def _recover_stale_parsing(conn: Any) -> None:
             )
 
 
-def delete_document(doc_id: str) -> dict[str, Any] | None:
+def delete_document(
+    doc_id: str, workspace_id: str | None = None
+) -> dict[str, Any] | None:
     with get_conn() as conn:
-        row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        if workspace_id is None:
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id = ?",
+                (doc_id,),
+            ).fetchone()
+        else:
+            workspace = normalize_workspace_id(workspace_id)
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id = ? AND workspace_id = ?",
+                (doc_id, workspace),
+            ).fetchone()
         if not row:
             return None
         conn.execute("DELETE FROM index_fts WHERE doc_id = ?", (doc_id,))
@@ -325,11 +577,19 @@ def delete_document(doc_id: str) -> dict[str, Any] | None:
         return dict(row)
 
 
-def reset_index_content(doc_id: str) -> bool:
+def reset_index_content(doc_id: str, workspace_id: str | None = None) -> bool:
     with get_conn() as conn:
-        row = conn.execute(
-            "SELECT id FROM documents WHERE id = ?", (doc_id,)
-        ).fetchone()
+        if workspace_id is None:
+            row = conn.execute(
+                "SELECT id FROM documents WHERE id = ?",
+                (doc_id,),
+            ).fetchone()
+        else:
+            workspace = normalize_workspace_id(workspace_id)
+            row = conn.execute(
+                "SELECT id FROM documents WHERE id = ? AND workspace_id = ?",
+                (doc_id, workspace),
+            ).fetchone()
         if not row:
             return False
         conn.execute("DELETE FROM claims WHERE doc_id = ?", (doc_id,))
@@ -349,10 +609,11 @@ def search_documents(
     author: str | None,
     keyword: str | None,
     status: str | None,
+    workspace_id: str | None = None,
 ) -> list[dict[str, Any]]:
     with get_conn() as conn:
         sql = (
-            "SELECT d.id, d.filename, d.status, "
+            "SELECT d.id, d.workspace_id, d.filename, d.status, "
             "COALESCE(d.display_name, d.filename) AS display_name, "
             "COALESCE(i.updated_at, d.created_at) AS sort_time, "
             "i.title, i.year, i.authors_json, i.keywords_json, i.apa_citation, i.one_liner, i.core_points_json, i.custom_fields_json "
@@ -360,6 +621,9 @@ def search_documents(
             "WHERE 1=1"
         )
         params: list[Any] = []
+        if workspace_id is not None:
+            sql += " AND d.workspace_id = ?"
+            params.append(normalize_workspace_id(workspace_id))
         if status:
             sql += " AND d.status = ?"
             params.append(status)
@@ -390,6 +654,7 @@ def search_documents(
 
         item = {
             "doc_id": r["id"],
+            "workspace_id": r["workspace_id"],
             "filename": r["filename"],
             "display_name": r["display_name"],
             "status": r["status"],
@@ -478,16 +743,226 @@ def _extract_search_terms(text: str) -> list[str]:
     return [t for t in re.findall(r"[\w\u4e00-\u9fff]+", text or "") if t]
 
 
-def get_fields() -> list[dict[str, Any]]:
+def field_template_exists(template_id: str | None) -> bool:
+    template = normalize_field_template_id(template_id)
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM field_templates WHERE id = ?",
+            (template,),
+        ).fetchone()
+        return bool(row)
+
+
+def get_field_template(template_id: str | None) -> dict[str, Any] | None:
+    template = normalize_field_template_id(template_id)
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, name, COALESCE(description, '') AS description, is_default, created_at, updated_at FROM field_templates WHERE id = ?",
+            (template,),
+        ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["is_default"] = bool(data.get("is_default"))
+        return data
+
+
+def list_field_templates() -> list[dict[str, Any]]:
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM field_definitions ORDER BY sort_order ASC"
+            """
+            SELECT
+              t.id,
+              t.name,
+              COALESCE(t.description, '') AS description,
+              t.is_default,
+              t.created_at,
+              t.updated_at,
+              COUNT(f.field_key) AS field_count
+            FROM field_templates t
+            LEFT JOIN field_template_fields f ON f.template_id = t.id
+            GROUP BY t.id, t.name, t.description, t.is_default, t.created_at, t.updated_at
+            ORDER BY t.created_at ASC
+            """
+        ).fetchall()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["is_default"] = bool(item.get("is_default"))
+        items.append(item)
+    return items
+
+
+def create_field_template(
+    name: str,
+    description: str = "",
+    source_template_id: str | None = DEFAULT_FIELD_TEMPLATE_ID,
+) -> dict[str, Any]:
+    cleaned_name = str(name or "").strip()
+    if not cleaned_name:
+        raise ValueError("模板名称不能为空")
+
+    source_template = normalize_field_template_id(source_template_id)
+    if not field_template_exists(source_template):
+        raise ValueError("来源模板不存在")
+
+    template_id = f"tpl_{uuid.uuid4().hex[:10]}"
+    now = utcnow()
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO field_templates (id, name, description, is_default, created_at, updated_at)
+            VALUES (?, ?, ?, 0, ?, ?)
+            """,
+            (template_id, cleaned_name, str(description or "").strip(), now, now),
+        )
+
+        source_rows = conn.execute(
+            """
+            SELECT field_key, label, description, field_type, required, enabled, sort_order, is_default
+            FROM field_template_fields
+            WHERE template_id = ?
+            ORDER BY sort_order ASC
+            """,
+            (source_template,),
+        ).fetchall()
+
+        for row in source_rows:
+            conn.execute(
+                """
+                INSERT INTO field_template_fields (
+                    template_id, field_key, label, description, field_type, required, enabled, sort_order, is_default
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    template_id,
+                    row["field_key"],
+                    row["label"],
+                    row["description"],
+                    row["field_type"],
+                    row["required"],
+                    row["enabled"],
+                    row["sort_order"],
+                    row["is_default"],
+                ),
+            )
+
+        row = conn.execute(
+            """
+            SELECT id, name, COALESCE(description, '') AS description, is_default, created_at, updated_at
+            FROM field_templates
+            WHERE id = ?
+            """,
+            (template_id,),
+        ).fetchone()
+
+    if not row:
+        raise RuntimeError("创建字段模板失败")
+    payload = dict(row)
+    payload["is_default"] = bool(payload.get("is_default"))
+    payload["field_count"] = len(source_rows)
+    return payload
+
+
+def update_field_template(
+    template_id: str,
+    *,
+    name: str,
+    description: str | None = None,
+) -> dict[str, Any] | None:
+    template = normalize_field_template_id(template_id)
+    cleaned_name = str(name or "").strip()
+    if not cleaned_name:
+        raise ValueError("模板名称不能为空")
+
+    with get_conn() as conn:
+        current = conn.execute(
+            "SELECT id, description FROM field_templates WHERE id = ?",
+            (template,),
+        ).fetchone()
+        if not current:
+            return None
+
+        next_description = (
+            str(description or "").strip()
+            if description is not None
+            else str(current["description"] or "")
+        )
+        conn.execute(
+            "UPDATE field_templates SET name = ?, description = ?, updated_at = ? WHERE id = ?",
+            (cleaned_name, next_description, utcnow(), template),
+        )
+        row = conn.execute(
+            """
+            SELECT
+              t.id,
+              t.name,
+              COALESCE(t.description, '') AS description,
+              t.is_default,
+              t.created_at,
+              t.updated_at,
+              COUNT(f.field_key) AS field_count
+            FROM field_templates t
+            LEFT JOIN field_template_fields f ON f.template_id = t.id
+            WHERE t.id = ?
+            GROUP BY t.id, t.name, t.description, t.is_default, t.created_at, t.updated_at
+            """,
+            (template,),
+        ).fetchone()
+
+    if not row:
+        return None
+    payload = dict(row)
+    payload["is_default"] = bool(payload.get("is_default"))
+    return payload
+
+
+def delete_field_template(template_id: str) -> bool:
+    template = normalize_field_template_id(template_id)
+    if template == DEFAULT_FIELD_TEMPLATE_ID:
+        raise ValueError("默认模板不允许删除")
+
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM field_templates WHERE id = ?",
+            (template,),
+        ).fetchone()
+        if not row:
+            return False
+
+        conn.execute(
+            "UPDATE documents SET field_template_id = ?, updated_at = ? WHERE field_template_id = ?",
+            (DEFAULT_FIELD_TEMPLATE_ID, utcnow(), template),
+        )
+        conn.execute("DELETE FROM field_templates WHERE id = ?", (template,))
+        return True
+
+
+def get_fields(
+    template_id: str | None = DEFAULT_FIELD_TEMPLATE_ID,
+) -> list[dict[str, Any]]:
+    template = normalize_field_template_id(template_id)
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT field_key, label, description, field_type, required, enabled, sort_order, is_default
+            FROM field_template_fields
+            WHERE template_id = ?
+            ORDER BY sort_order ASC
+            """,
+            (template,),
         ).fetchall()
         return [dict(r) for r in rows]
 
 
-def save_fields(items: list[dict[str, Any]]) -> None:
-    # 检查 label 重复
+def save_fields(
+    items: list[dict[str, Any]],
+    template_id: str | None = DEFAULT_FIELD_TEMPLATE_ID,
+) -> None:
+    template = normalize_field_template_id(template_id)
+    if not field_template_exists(template):
+        raise ValueError("字段模板不存在")
+
     seen_labels: set[str] = set()
     for item in items:
         label = str(item.get("label") or item.get("field_key") or "").strip()
@@ -498,7 +973,10 @@ def save_fields(items: list[dict[str, Any]]) -> None:
         seen_labels.add(label)
 
     with get_conn() as conn:
-        conn.execute("DELETE FROM field_definitions")
+        conn.execute(
+            "DELETE FROM field_template_fields WHERE template_id = ?",
+            (template,),
+        )
         for item in items:
             label = str(item.get("label") or item.get("field_key") or "").strip()
             if not label:
@@ -507,10 +985,12 @@ def save_fields(items: list[dict[str, Any]]) -> None:
             description = str(item.get("description") or "").strip()
             conn.execute(
                 """
-                INSERT INTO field_definitions (field_key, label, description, field_type, required, enabled, sort_order, is_default)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO field_template_fields (
+                    template_id, field_key, label, description, field_type, required, enabled, sort_order, is_default
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    template,
                     field_key,
                     label,
                     description,
@@ -522,17 +1002,33 @@ def save_fields(items: list[dict[str, Any]]) -> None:
                 ),
             )
 
+        conn.execute(
+            "UPDATE field_templates SET updated_at = ? WHERE id = ?",
+            (utcnow(), template),
+        )
 
-def reset_fields_to_defaults() -> None:
+
+def reset_fields_to_defaults(
+    template_id: str | None = DEFAULT_FIELD_TEMPLATE_ID,
+) -> None:
+    template = normalize_field_template_id(template_id)
+    if not field_template_exists(template):
+        raise ValueError("字段模板不存在")
+
     with get_conn() as conn:
-        conn.execute("DELETE FROM field_definitions")
+        conn.execute(
+            "DELETE FROM field_template_fields WHERE template_id = ?",
+            (template,),
+        )
         for item in DEFAULT_FIELD_DEFINITIONS:
             conn.execute(
                 """
-                INSERT INTO field_definitions (field_key, label, description, field_type, required, enabled, sort_order, is_default)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO field_template_fields (
+                    template_id, field_key, label, description, field_type, required, enabled, sort_order, is_default
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    template,
                     item["field_key"],
                     item["label"],
                     item["description"],
@@ -544,14 +1040,29 @@ def reset_fields_to_defaults() -> None:
                 ),
             )
 
+        conn.execute(
+            "UPDATE field_templates SET updated_at = ? WHERE id = ?",
+            (utcnow(), template),
+        )
 
-def delete_field(field_key: str) -> bool:
+
+def delete_field(
+    field_key: str,
+    template_id: str | None = DEFAULT_FIELD_TEMPLATE_ID,
+) -> bool:
+    template = normalize_field_template_id(template_id)
     with get_conn() as conn:
         cur = conn.execute(
-            "DELETE FROM field_definitions WHERE field_key = ?",
-            (field_key,),
+            "DELETE FROM field_template_fields WHERE template_id = ? AND field_key = ?",
+            (template, field_key),
         )
-    return (cur.rowcount or 0) > 0
+        if (cur.rowcount or 0) > 0:
+            conn.execute(
+                "UPDATE field_templates SET updated_at = ? WHERE id = ?",
+                (utcnow(), template),
+            )
+            return True
+    return False
 
 
 def get_provider_configs() -> list[ProviderConfigOut]:
