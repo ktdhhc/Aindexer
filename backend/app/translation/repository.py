@@ -4,7 +4,12 @@ import json
 import uuid
 from typing import Any
 
-from ..db import get_conn, utcnow
+from ..db import DEFAULT_WORKSPACE_ID, get_conn, utcnow
+
+
+def normalize_workspace_id(workspace_id: str | None) -> str:
+    value = str(workspace_id or DEFAULT_WORKSPACE_ID).strip()
+    return value or DEFAULT_WORKSPACE_ID
 
 
 def create_translation_document(
@@ -16,19 +21,22 @@ def create_translation_document(
     file_path: str,
     page_count: int | None = None,
     text_layer_status: str = "pending",
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> str:
     document_id = f"tdoc_{uuid.uuid4().hex[:12]}"
     now = utcnow()
+    workspace = normalize_workspace_id(workspace_id)
     with get_conn() as conn:
         conn.execute(
             """
             INSERT INTO translation_documents (
-              id, filename, display_name, file_type, file_hash, file_path, page_count,
+              id, workspace_id, filename, display_name, file_type, file_hash, file_path, page_count,
               text_layer_status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 document_id,
+                workspace,
                 filename,
                 display_name,
                 file_type,
@@ -51,18 +59,40 @@ def get_translation_document(document_id: str) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
-def get_translation_document_by_hash(file_hash: str) -> dict[str, Any] | None:
+def get_translation_document_in_workspace(
+    document_id: str,
+    workspace_id: str | None,
+) -> dict[str, Any] | None:
+    workspace = normalize_workspace_id(workspace_id)
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM translation_documents WHERE file_hash = ?", (file_hash,)
+            "SELECT * FROM translation_documents WHERE id = ? AND workspace_id = ?",
+            (document_id, workspace),
         ).fetchone()
         return dict(row) if row else None
 
 
-def list_translation_documents() -> list[dict[str, Any]]:
+def get_translation_document_by_hash(
+    file_hash: str,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> dict[str, Any] | None:
+    workspace = normalize_workspace_id(workspace_id)
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM translation_documents WHERE file_hash = ? AND workspace_id = ?",
+            (file_hash, workspace),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def list_translation_documents(
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> list[dict[str, Any]]:
+    workspace = normalize_workspace_id(workspace_id)
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM translation_documents ORDER BY created_at DESC"
+            "SELECT * FROM translation_documents WHERE workspace_id = ? ORDER BY created_at DESC",
+            (workspace,),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -119,19 +149,22 @@ def create_translation_request(
     source_lang: str | None = None,
     anchor: dict[str, Any] | None = None,
     status: str = "pending",
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> str:
     request_id = f"treq_{uuid.uuid4().hex[:12]}"
     now = utcnow()
+    workspace = normalize_workspace_id(workspace_id)
     with get_conn() as conn:
         conn.execute(
             """
             INSERT INTO translation_requests (
-              id, document_id, provider, model, source_lang, target_lang, source_text,
+              id, workspace_id, document_id, provider, model, source_lang, target_lang, source_text,
               anchor_json, cache_key, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 request_id,
+                workspace,
                 document_id,
                 provider,
                 model,
@@ -217,34 +250,56 @@ def get_translation_result(request_id: str) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
-def find_completed_translation_by_cache_key(cache_key: str) -> dict[str, Any] | None:
+def find_completed_translation_by_cache_key(
+    cache_key: str,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+) -> dict[str, Any] | None:
+    workspace = normalize_workspace_id(workspace_id)
     with get_conn() as conn:
         row = conn.execute(
             """
             SELECT r.*, o.translated_text, o.result_meta_json
             FROM translation_requests r
             JOIN translation_results o ON o.request_id = r.id
-            WHERE r.cache_key = ? AND r.status = 'completed'
+            WHERE r.cache_key = ? AND r.workspace_id = ? AND r.status = 'completed'
             ORDER BY r.updated_at DESC, r.created_at DESC
             LIMIT 1
             """,
-            (cache_key,),
+            (cache_key, workspace),
         ).fetchone()
         return dict(row) if row else None
 
 
-def list_translation_history(document_id: str) -> list[dict[str, Any]]:
+def list_translation_history(
+    document_id: str,
+    workspace_id: str | None = None,
+) -> list[dict[str, Any]]:
     with get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT r.id AS request_id, r.provider, r.model, r.source_text, r.target_lang,
-                   r.created_at, r.updated_at, r.status, r.error_code, r.error_message,
-                   o.translated_text, o.result_meta_json
-            FROM translation_requests r
-            LEFT JOIN translation_results o ON o.request_id = r.id
-            WHERE r.document_id = ?
-            ORDER BY r.created_at DESC, r.id DESC
-            """,
-            (document_id,),
-        ).fetchall()
+        if workspace_id is None:
+            rows = conn.execute(
+                """
+                SELECT r.id AS request_id, r.provider, r.model, r.source_text, r.target_lang,
+                       r.created_at, r.updated_at, r.status, r.error_code, r.error_message,
+                       o.translated_text, o.result_meta_json
+                FROM translation_requests r
+                LEFT JOIN translation_results o ON o.request_id = r.id
+                WHERE r.document_id = ?
+                ORDER BY r.created_at DESC, r.id DESC
+                """,
+                (document_id,),
+            ).fetchall()
+        else:
+            workspace = normalize_workspace_id(workspace_id)
+            rows = conn.execute(
+                """
+                SELECT r.id AS request_id, r.provider, r.model, r.source_text, r.target_lang,
+                       r.created_at, r.updated_at, r.status, r.error_code, r.error_message,
+                       o.translated_text, o.result_meta_json
+                FROM translation_requests r
+                LEFT JOIN translation_results o ON o.request_id = r.id
+                WHERE r.document_id = ? AND r.workspace_id = ?
+                ORDER BY r.created_at DESC, r.id DESC
+                """,
+                (document_id, workspace),
+            ).fetchall()
         return [dict(row) for row in rows]

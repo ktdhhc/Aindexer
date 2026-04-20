@@ -7,10 +7,10 @@ from pydantic import BaseModel
 
 from ..config import UPLOAD_DIR
 from ..db import DEFAULT_WORKSPACE_ID
+from ._context import resolve_workspace_id
 from ..repository import (
     build_scoped_file_hash,
     create_document,
-    workspace_exists,
     get_document,
     get_document_by_hash,
     delete_document,
@@ -29,19 +29,12 @@ class DisplayNameUpdateIn(BaseModel):
     display_name: str
 
 
-def _resolve_workspace_id(workspace_id: str | None) -> str:
-    value = str(workspace_id or DEFAULT_WORKSPACE_ID).strip() or DEFAULT_WORKSPACE_ID
-    if not workspace_exists(value):
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    return value
-
-
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
     workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
 ) -> dict:
-    workspace = _resolve_workspace_id(workspace_id)
+    workspace = resolve_workspace_id(workspace_id)
     filename = file.filename or "unknown"
     suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
     if suffix not in ALLOWED_EXT:
@@ -80,7 +73,7 @@ async def upload_file(
 
 @router.get("")
 def list_files(workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID)) -> list[dict]:
-    workspace = _resolve_workspace_id(workspace_id)
+    workspace = resolve_workspace_id(workspace_id)
     return list_documents(workspace_id=workspace)
 
 
@@ -89,7 +82,7 @@ def file_detail(
     doc_id: str,
     workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
 ) -> dict:
-    workspace = _resolve_workspace_id(workspace_id)
+    workspace = resolve_workspace_id(workspace_id)
     doc = get_document(doc_id, workspace_id=workspace)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -102,7 +95,7 @@ def update_file_display_name(
     payload: DisplayNameUpdateIn,
     workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
 ) -> dict:
-    workspace = _resolve_workspace_id(workspace_id)
+    workspace = resolve_workspace_id(workspace_id)
     updated = update_document_display_name(
         doc_id,
         payload.display_name,
@@ -118,7 +111,7 @@ def remove_file(
     doc_id: str,
     workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
 ) -> dict:
-    workspace = _resolve_workspace_id(workspace_id)
+    workspace = resolve_workspace_id(workspace_id)
     doc = delete_document(doc_id, workspace_id=workspace)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -153,7 +146,7 @@ def serve_original_file(
     from fastapi.responses import FileResponse
     from pathlib import Path
 
-    workspace = _resolve_workspace_id(workspace_id)
+    workspace = resolve_workspace_id(workspace_id)
     doc = get_document(doc_id, workspace_id=workspace)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")

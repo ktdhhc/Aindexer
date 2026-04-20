@@ -499,11 +499,13 @@ def update_document_display_name(
 def update_index_editor_fields(
     doc_id: str,
     *,
+    title: str,
     display_name: str,
     year: int | None,
     generated_at: str | None,
     workspace_id: str | None = None,
 ) -> bool:
+    cleaned_title = str(title or "").strip()
     cleaned_name = str(display_name or "").strip()
     with get_conn() as conn:
         if workspace_id is None:
@@ -524,6 +526,7 @@ def update_index_editor_fields(
             return False
 
         next_name = cleaned_name or str(doc_row["filename"] or "")
+        next_title = cleaned_title or next_name
         next_year = int(year or 0) if year else None
         next_generated_at = str(generated_at or "").strip() or utcnow()
 
@@ -532,8 +535,8 @@ def update_index_editor_fields(
             (next_name, utcnow(), doc_id),
         )
         conn.execute(
-            "UPDATE index_records SET year = ?, updated_at = ? WHERE doc_id = ?",
-            (next_year, next_generated_at, doc_id),
+            "UPDATE index_records SET title = ?, year = ?, updated_at = ? WHERE doc_id = ?",
+            (next_title, next_year, next_generated_at, doc_id),
         )
         return True
 

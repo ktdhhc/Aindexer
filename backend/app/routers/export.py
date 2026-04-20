@@ -6,7 +6,7 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from ..config import (
@@ -17,7 +17,10 @@ from ..config import (
     UPLOAD_DIR,
     ensure_dirs,
 )
+from ..db import DEFAULT_WORKSPACE_ID
+from ..repository import get_document
 from ..repository import markdown_path, search_documents
+from ._context import resolve_workspace_id
 
 router = APIRouter()
 
@@ -156,7 +159,14 @@ async def restore_backup_all(archive: UploadFile = File(...)) -> dict:
 
 
 @router.get("/{doc_id}")
-def export_one(doc_id: str):
+def export_one(
+    doc_id: str,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+):
+    workspace = resolve_workspace_id(workspace_id)
+    doc = get_document(doc_id, workspace_id=workspace)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
     path = markdown_path(doc_id)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Markdown file not found")

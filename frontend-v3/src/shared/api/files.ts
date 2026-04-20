@@ -41,3 +41,20 @@ export async function uploadFile(file: File, workspaceId: string): Promise<Uploa
   }
   return (await response.json()) as UploadResult;
 }
+
+export async function deleteFile(docId: string, workspaceId: string): Promise<{ ok: boolean }> {
+  const params = new URLSearchParams({ workspace_id: workspaceId }).toString();
+  const response = await fetch(`/api/files/${encodeURIComponent(docId)}?${params}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as { detail?: string; message?: string };
+    throw new Error(payload.detail || payload.message || "删除失败");
+  }
+  return (await response.json()) as { ok: boolean };
+}
+
+export function buildOriginalFileUrl(docId: string, workspaceId: string): string {
+  const params = new URLSearchParams({ workspace_id: workspaceId });
+  return `/api/files/${encodeURIComponent(docId)}/original?${params.toString()}`;
+}

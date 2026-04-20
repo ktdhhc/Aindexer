@@ -209,6 +209,7 @@ def init_db() -> None:
 
             CREATE TABLE IF NOT EXISTS translation_documents (
                 id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
                 filename TEXT NOT NULL,
                 display_name TEXT NOT NULL,
                 file_type TEXT NOT NULL,
@@ -233,6 +234,7 @@ def init_db() -> None:
 
             CREATE TABLE IF NOT EXISTS translation_requests (
                 id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
                 document_id TEXT NOT NULL REFERENCES translation_documents(id) ON DELETE CASCADE,
                 provider TEXT NOT NULL,
                 model TEXT NOT NULL,
@@ -332,6 +334,38 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     if "description" not in field_cols:
         conn.execute("ALTER TABLE field_definitions ADD COLUMN description TEXT")
 
+    translation_doc_cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(translation_documents)").fetchall()
+    }
+    if "workspace_id" not in translation_doc_cols:
+        conn.execute(
+            f"ALTER TABLE translation_documents ADD COLUMN workspace_id TEXT NOT NULL DEFAULT '{DEFAULT_WORKSPACE_ID}'"
+        )
+    conn.execute(
+        "UPDATE translation_documents SET workspace_id = ? WHERE workspace_id IS NULL OR workspace_id = ''",
+        (DEFAULT_WORKSPACE_ID,),
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_translation_documents_workspace_id ON translation_documents(workspace_id, created_at DESC)"
+    )
+
+    translation_req_cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(translation_requests)").fetchall()
+    }
+    if "workspace_id" not in translation_req_cols:
+        conn.execute(
+            f"ALTER TABLE translation_requests ADD COLUMN workspace_id TEXT NOT NULL DEFAULT '{DEFAULT_WORKSPACE_ID}'"
+        )
+    conn.execute(
+        "UPDATE translation_requests SET workspace_id = ? WHERE workspace_id IS NULL OR workspace_id = ''",
+        (DEFAULT_WORKSPACE_ID,),
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_translation_requests_workspace_id ON translation_requests(workspace_id, created_at DESC)"
+    )
+
     fts_cols = {
         row[1] for row in conn.execute("PRAGMA table_info(index_fts)").fetchall()
     }
@@ -353,6 +387,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         )
 
     _migrate_document_hash_scope(conn)
+    _migrate_translation_document_hash_scope(conn)
     _migrate_provider_api_keys_to_plain(conn)
 
 
@@ -372,6 +407,28 @@ def _migrate_document_hash_scope(conn: sqlite3.Connection) -> None:
         scoped_hash = f"{prefix}{file_hash}"
         conn.execute(
             "UPDATE documents SET file_hash = ?, updated_at = ? WHERE id = ?",
+            (scoped_hash, utcnow(), doc_id),
+        )
+
+
+def _migrate_translation_document_hash_scope(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        "SELECT id, workspace_id, file_hash FROM translation_documents"
+    ).fetchall()
+    for row in rows:
+        doc_id = str(row[0] or "")
+        workspace_id = (
+            str(row[1] or DEFAULT_WORKSPACE_ID).strip() or DEFAULT_WORKSPACE_ID
+        )
+        file_hash = str(row[2] or "").strip()
+        if not doc_id or not file_hash:
+            continue
+        prefix = f"{workspace_id}:"
+        if file_hash.startswith(prefix):
+            continue
+        scoped_hash = f"{prefix}{file_hash}"
+        conn.execute(
+            "UPDATE translation_documents SET file_hash = ?, updated_at = ? WHERE id = ?",
             (scoped_hash, utcnow(), doc_id),
         )
 

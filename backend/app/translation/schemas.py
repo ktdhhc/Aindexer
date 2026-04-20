@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from ..db import DEFAULT_WORKSPACE_ID
+
 
 class SelectionRect(BaseModel):
     page: int = Field(..., ge=1)
@@ -43,6 +45,7 @@ class SelectionAnchor(BaseModel):
 
 class TranslationDocumentOut(BaseModel):
     id: str
+    workspace_id: str = DEFAULT_WORKSPACE_ID
     filename: str
     display_name: str
     file_type: str
@@ -55,6 +58,7 @@ class TranslationDocumentOut(BaseModel):
 
 class TranslationRequestIn(BaseModel):
     document_id: str
+    workspace_id: str = DEFAULT_WORKSPACE_ID
     provider: str
     model: str | None = None
     source_text: str

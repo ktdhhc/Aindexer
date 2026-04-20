@@ -1,13 +1,13 @@
 import { create } from "zustand";
 
 interface ShellState {
-  navCollapsed: boolean;
-  toggleNav: () => void;
+  navExpanded: boolean;
+  setNavExpanded: (next: boolean) => void;
 }
 
 export const useShellStore = create<ShellState>((set) => ({
-  navCollapsed: false,
-  toggleNav: () => {
-    set((state) => ({ navCollapsed: !state.navCollapsed }));
+  navExpanded: false,
+  setNavExpanded: (next) => {
+    set({ navExpanded: next });
   },
 }));

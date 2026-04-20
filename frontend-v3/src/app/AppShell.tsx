@@ -8,15 +8,15 @@ import { DEFAULT_WORKSPACE_ID, useWorkspaceStore } from "./workspaceStore";
 import { listWorkspaces } from "../shared/api/workspaces";
 
 const navItems = [
-  { to: "/workbench", label: "工作台" },
-  { to: "/config", label: "配置" },
-  { to: "/chat", label: "Chat" },
-  { to: "/translator", label: "翻译工作区" },
+  { to: "/workbench", label: "工作台", icon: "WB" },
+  { to: "/config", label: "配置", icon: "CF" },
+  { to: "/chat", label: "高级 Chat", icon: "CH" },
+  { to: "/translator", label: "翻译工作区", icon: "TR" },
 ] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const navCollapsed = useShellStore((state) => state.navCollapsed);
-  const toggleNav = useShellStore((state) => state.toggleNav);
+  const navExpanded = useShellStore((state) => state.navExpanded);
+  const setNavExpanded = useShellStore((state) => state.setNavExpanded);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const setWorkspaceId = useWorkspaceStore((state) => state.setWorkspaceId);
 
@@ -36,13 +36,28 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   }, [setWorkspaceId, workspaceId, workspacesQuery.data]);
 
+  useEffect(() => {
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setNavExpanded(false);
+      }
+    };
+    window.addEventListener("keydown", onKeydown);
+    return () => {
+      window.removeEventListener("keydown", onKeydown);
+    };
+  }, [setNavExpanded]);
+
   return (
     <div className="v3-shell-root">
       <header className="v3-topbar">
-        <div className="v3-topbar-brand">Aindexer V3</div>
+        <div className="v3-topbar-brand-wrap">
+          <span className="v3-topbar-brand-dot" />
+          <div className="v3-topbar-brand">Aindexer</div>
+          <span className="v3-topbar-badge">V3</span>
+        </div>
         <div className="v3-topbar-actions">
           <label className="v3-workspace-select-wrap" htmlFor="workspaceSelect">
-            <span>工作区</span>
             <select
               id="workspaceSelect"
               className="v3-input v3-input-compact"
@@ -59,14 +74,25 @@ export function AppShell({ children }: { children: ReactNode }) {
               ))}
             </select>
           </label>
-          <button className="v3-button v3-button-secondary" onClick={toggleNav}>
-            {navCollapsed ? "展开导航" : "收起导航"}
-          </button>
         </div>
       </header>
 
-      <div className="v3-layout">
-        <aside className={`v3-sidebar ${navCollapsed ? "is-collapsed" : ""}`}>
+      <div className="v3-shell-frame">
+        <div
+          className="v3-side-hover-zone"
+          onMouseEnter={() => {
+            setNavExpanded(true);
+          }}
+        />
+        <aside
+          className={`v3-sidebar ${navExpanded ? "is-expanded" : ""}`}
+          onMouseEnter={() => {
+            setNavExpanded(true);
+          }}
+          onMouseLeave={() => {
+            setNavExpanded(false);
+          }}
+        >
           <nav className="v3-nav">
             {navItems.map((item) => (
               <Link
@@ -75,7 +101,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                 activeProps={{ className: "v3-nav-link is-active" }}
                 to={item.to}
               >
-                {item.label}
+                <span className="v3-nav-icon" aria-hidden="true">{item.icon}</span>
+                <span className="v3-nav-label">{item.label}</span>
               </Link>
             ))}
           </nav>

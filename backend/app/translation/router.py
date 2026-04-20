@@ -5,10 +5,13 @@ from importlib import import_module
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
+from ..db import DEFAULT_WORKSPACE_ID
+from ..routers._context import resolve_workspace_id
 from ..repository import (
+    build_scoped_file_hash,
     get_provider_config_raw,
     hash_file,
     save_provider_config,
@@ -18,7 +21,7 @@ from ..services.provider_client import ProviderClient, ProviderConfig
 from .cancellation import cancel_request
 from .repository import (
     create_translation_document,
-    get_translation_document,
+    get_translation_document_in_workspace,
     get_translation_document_by_hash,
     list_translation_history,
     list_translation_documents,
@@ -42,11 +45,14 @@ def health() -> dict[str, bool]:
 @router.post("/documents/upload")
 async def upload_translation_document(
     file: UploadFile = File(...),
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
 ) -> dict[str, object]:
     translation_config = import_module("app.translation.config")
     text_map_module = import_module("app.translation.pdf.text_map")
 
     translation_config.ensure_translation_dirs()
+
+    workspace = resolve_workspace_id(workspace_id)
 
     filename = (file.filename or "unknown.pdf").strip() or "unknown.pdf"
     suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
@@ -59,11 +65,13 @@ async def upload_translation_document(
     if len(content) > translation_config.TRANSLATION_MAX_FILE_BYTES:
         raise HTTPException(status_code=400, detail="Uploaded file is too large")
 
-    save_path = translation_config.TRANSLATION_UPLOAD_DIR / filename
+    workspace_upload_dir = translation_config.TRANSLATION_UPLOAD_DIR / workspace
+    workspace_upload_dir.mkdir(parents=True, exist_ok=True)
+    save_path = workspace_upload_dir / filename
     save_path.write_bytes(content)
-    file_hash = hash_file(save_path)
+    file_hash = build_scoped_file_hash(hash_file(save_path), workspace)
 
-    duplicate = get_translation_document_by_hash(file_hash)
+    duplicate = get_translation_document_by_hash(file_hash, workspace_id=workspace)
     if duplicate:
         return {
             "document_id": duplicate["id"],
@@ -81,6 +89,7 @@ async def upload_translation_document(
             file_path=str(save_path),
             page_count=len(page_maps),
             text_layer_status="ready",
+            workspace_id=workspace,
         )
         for page_map in page_maps:
             upsert_translation_page_text(
@@ -96,27 +105,39 @@ async def upload_translation_document(
 
     return {
         "document_id": document_id,
+        "workspace_id": workspace,
         "duplicate": False,
         "text_layer_status": "ready",
     }
 
 
 @router.get("/documents")
-def list_documents() -> list[dict[str, object]]:
-    return list_translation_documents()
+def list_documents(
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+) -> list[dict[str, object]]:
+    workspace = resolve_workspace_id(workspace_id)
+    return list_translation_documents(workspace_id=workspace)
 
 
 @router.get("/documents/{document_id}")
-def document_detail(document_id: str) -> dict[str, object]:
-    document = get_translation_document(document_id)
+def document_detail(
+    document_id: str,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+) -> dict[str, object]:
+    workspace = resolve_workspace_id(workspace_id)
+    document = get_translation_document_in_workspace(document_id, workspace)
     if not document:
         raise HTTPException(status_code=404, detail="Translation document not found")
     return document
 
 
 @router.get("/documents/{document_id}/original")
-def serve_original_translation_document(document_id: str):
-    document = get_translation_document(document_id)
+def serve_original_translation_document(
+    document_id: str,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+):
+    workspace = resolve_workspace_id(workspace_id)
+    document = get_translation_document_in_workspace(document_id, workspace)
     if not document:
         raise HTTPException(status_code=404, detail="Translation document not found")
 
@@ -136,6 +157,7 @@ def serve_original_translation_document(document_id: str):
 
 @router.post("/translate-selection")
 def translate_selection(payload: TranslationRequestIn):
+    payload.workspace_id = resolve_workspace_id(payload.workspace_id)
     try:
         return execute_translation_request(payload).model_dump()
     except Exception as exc:
@@ -152,19 +174,27 @@ def cancel_translation(client_request_id: str) -> dict[str, object]:
 
 
 @router.get("/documents/{document_id}/pages")
-def document_pages(document_id: str) -> list[dict[str, object]]:
-    document = get_translation_document(document_id)
+def document_pages(
+    document_id: str,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+) -> list[dict[str, object]]:
+    workspace = resolve_workspace_id(workspace_id)
+    document = get_translation_document_in_workspace(document_id, workspace)
     if not document:
         raise HTTPException(status_code=404, detail="Translation document not found")
     return list_translation_page_text(document_id)
 
 
 @router.get("/documents/{document_id}/history")
-def document_history(document_id: str) -> list[dict[str, object]]:
-    document = get_translation_document(document_id)
+def document_history(
+    document_id: str,
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
+) -> list[dict[str, object]]:
+    workspace = resolve_workspace_id(workspace_id)
+    document = get_translation_document_in_workspace(document_id, workspace)
     if not document:
         raise HTTPException(status_code=404, detail="Translation document not found")
-    return list_translation_history(document_id)
+    return list_translation_history(document_id, workspace_id=workspace)
 
 
 # Translator-isolated provider config endpoints

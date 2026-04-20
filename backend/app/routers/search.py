@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
 from ..db import DEFAULT_WORKSPACE_ID
-from ..repository import search_documents, workspace_exists
+from ..repository import search_documents
+from ._context import resolve_workspace_id
 
 router = APIRouter()
 
@@ -18,11 +19,7 @@ def search(
     status: str | None = Query(default=None),
     workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
 ) -> list[dict]:
-    workspace = (
-        str(workspace_id or DEFAULT_WORKSPACE_ID).strip() or DEFAULT_WORKSPACE_ID
-    )
-    if not workspace_exists(workspace):
-        raise HTTPException(status_code=404, detail="Workspace not found")
+    workspace = resolve_workspace_id(workspace_id)
     return search_documents(
         q,
         year_from,

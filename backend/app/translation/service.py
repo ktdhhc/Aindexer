@@ -122,6 +122,7 @@ def build_translation_cache_key(request: TranslationProviderRequest) -> str:
     normalized_source = normalize_selection_text(request.source_text)
     normalized_quote = normalize_selection_text(request.anchor_quote or "")
     stable_parts = [
+        request.metadata.get("workspace_id") or "ws_default",
         request.provider,
         request.model,
         request.target_lang,
@@ -185,7 +186,11 @@ def build_translation_prompts(payload: TranslationRequestIn) -> tuple[str, str]:
 def execute_translation_request(
     payload: TranslationRequestIn,
 ) -> TranslationResponseOut:
-    document = translation_repository.get_translation_document(payload.document_id)
+    workspace_id = str(payload.workspace_id or "ws_default").strip() or "ws_default"
+    document = translation_repository.get_translation_document_in_workspace(
+        payload.document_id,
+        workspace_id,
+    )
     if not document:
         raise ValueError("Translation document not found.")
 
@@ -193,14 +198,22 @@ def execute_translation_request(
     system_prompt, user_prompt = build_translation_prompts(payload)
     resolved = resolve_translation_provider(payload.provider, payload.model)
     request = build_translation_provider_request(
-        payload.model_copy(update={"source_text": normalized_source}),
+        payload.model_copy(
+            update={
+                "source_text": normalized_source,
+                "metadata": {**dict(payload.metadata), "workspace_id": workspace_id},
+            }
+        ),
         resolved_model=resolved.model,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
     )
     cache_key = build_translation_cache_key(request)
 
-    cached = translation_repository.find_completed_translation_by_cache_key(cache_key)
+    cached = translation_repository.find_completed_translation_by_cache_key(
+        cache_key,
+        workspace_id=workspace_id,
+    )
     if cached:
         cached_metrics = _extract_cached_metrics(cached.get("result_meta_json"))
         return TranslationResponseOut(
@@ -214,16 +227,17 @@ def execute_translation_request(
             translated_text=str(cached["translated_text"]),
             prompt_version=payload.prompt_version,
             cached=True,
-            input_tokens=cached_metrics.get("input_tokens"),
-            output_tokens=cached_metrics.get("output_tokens"),
-            total_tokens=cached_metrics.get("total_tokens"),
-            first_token_ms=cached_metrics.get("first_token_ms"),
-            total_duration_ms=cached_metrics.get("total_duration_ms"),
+            input_tokens=_as_int(cached_metrics.get("input_tokens")),
+            output_tokens=_as_int(cached_metrics.get("output_tokens")),
+            total_tokens=_as_int(cached_metrics.get("total_tokens")),
+            first_token_ms=_as_float(cached_metrics.get("first_token_ms")),
+            total_duration_ms=_as_float(cached_metrics.get("total_duration_ms")),
             created_at=cached.get("created_at"),
             updated_at=cached.get("updated_at"),
         )
 
     request_id = translation_repository.create_translation_request(
+        workspace_id=workspace_id,
         document_id=payload.document_id,
         provider=payload.provider,
         model=resolved.model,
@@ -341,7 +355,7 @@ def _usage_int(usage: dict | None, key: str) -> int | None:
 
 def _extract_cached_metrics(
     raw_meta: str | dict | None,
-) -> dict[str, int | float | None]:
+) -> dict[str, object]:
     if raw_meta is None:
         return {}
     if isinstance(raw_meta, dict):
@@ -356,3 +370,35 @@ def _extract_cached_metrics(
     if not isinstance(meta, dict):
         return {}
     return meta
+
+
+def _as_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _as_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    return None

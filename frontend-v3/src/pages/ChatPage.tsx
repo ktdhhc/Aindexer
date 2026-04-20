@@ -116,7 +116,7 @@ export function ChatPage() {
     <section className="v3-page">
       <header className="v3-page-header">
         <h1 className="v3-page-title">Chat</h1>
-        <p className="v3-page-subtitle">独立的 LLM 聊天工作区。使用现有 Provider 配置并调用 `/api/chat/ask_v0`。</p>
+        <p className="v3-page-subtitle">高级聊天页（工作台内也有轻量 Chat）。这里用于长会话和独立调试。</p>
         <p className="v3-muted">当前工作区：{workspaceId}</p>
       </header>
 

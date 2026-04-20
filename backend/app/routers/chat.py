@@ -7,9 +7,9 @@ from pydantic import BaseModel
 
 from ..db import DEFAULT_WORKSPACE_ID
 from ..repository import get_provider_config_raw
-from ..repository import workspace_exists
 from ..services.chat_v0 import run_chat_v0
 from ..services.provider_client import ProviderConfig
+from ._context import resolve_workspace_id
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -38,12 +38,7 @@ def ask_chat_v0(payload: ChatV0AskIn) -> dict:
     if not provider_name:
         raise HTTPException(status_code=400, detail="没有可用模型，请先配置接口")
 
-    workspace_id = (
-        str(payload.workspace_id or DEFAULT_WORKSPACE_ID).strip()
-        or DEFAULT_WORKSPACE_ID
-    )
-    if not workspace_exists(workspace_id):
-        raise HTTPException(status_code=404, detail="Workspace not found")
+    workspace_id = resolve_workspace_id(payload.workspace_id)
 
     provider_row = get_provider_config_raw(provider_name)
     if not provider_row:

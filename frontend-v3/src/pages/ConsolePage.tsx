@@ -4,8 +4,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useWorkspaceStore } from "../app/workspaceStore";
 import { askChatV0 } from "../shared/api/chat";
 import { listFieldTemplates } from "../shared/api/fields";
-import { listFiles, uploadFile } from "../shared/api/files";
-import { getIndexMarkdown, runIndex } from "../shared/api/index";
+import { buildOriginalFileUrl, deleteFile, listFiles, uploadFile } from "../shared/api/files";
+import { buildExportMarkdownUrl } from "../shared/api/export";
+import { getIndexDetail, getIndexMarkdown, runAllIndexes, runIndex, updateIndexEditor } from "../shared/api/index";
 import { listProviders } from "../shared/api/providers";
 import { searchDocuments } from "../shared/api/search";
 
@@ -20,6 +21,34 @@ function nextMessageId(): string {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function toDateInputValue(raw: string | null | undefined): string {
+  if (!raw) {
+    return "";
+  }
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) {
+    return "";
+  }
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function compactAuthors(authors: string[] | undefined): string {
+  if (!authors || authors.length === 0) {
+    return "-";
+  }
+  return authors.slice(0, 3).join(" / ");
+}
+
+function compactKeywords(keywords: string[] | undefined): string[] {
+  if (!keywords || keywords.length === 0) {
+    return [];
+  }
+  return keywords.slice(0, 3);
+}
+
 export function ConsolePage() {
   const queryClient = useQueryClient();
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
@@ -29,6 +58,12 @@ export function ConsolePage() {
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPreviewDocId, setSelectedPreviewDocId] = useState("");
+  const [isUploadDragOver, setIsUploadDragOver] = useState(false);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [editorTitle, setEditorTitle] = useState("");
+  const [editorYear, setEditorYear] = useState("");
+  const [editorDate, setEditorDate] = useState("");
+  const [editorContent, setEditorContent] = useState("");
   const [workbenchMessage, setWorkbenchMessage] = useState("");
 
   const [chatProvider, setChatProvider] = useState("");
@@ -54,7 +89,6 @@ export function ConsolePage() {
   const searchResultQuery = useQuery({
     queryKey: ["search", workspaceId, searchQuery],
     queryFn: () => searchDocuments(workspaceId, searchQuery),
-    enabled: searchQuery.trim().length > 0,
   });
 
   const previewQuery = useQuery({
@@ -64,15 +98,15 @@ export function ConsolePage() {
     retry: false,
   });
 
+  const indexDetailQuery = useQuery({
+    queryKey: ["index-detail", workspaceId, selectedPreviewDocId],
+    queryFn: () => getIndexDetail(selectedPreviewDocId, workspaceId),
+    enabled: Boolean(selectedPreviewDocId),
+    retry: false,
+  });
+
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => uploadFile(file, workspaceId),
-    onSuccess: async (result) => {
-      setWorkbenchMessage(result.duplicate ? "检测到重复文档，已定位已有记录。" : "上传成功，文档已加入当前工作区。" );
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
-        queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
-      ]);
-    },
     onError: (error) => {
       setWorkbenchMessage(error instanceof Error ? error.message : "上传失败");
     },
@@ -97,6 +131,78 @@ export function ConsolePage() {
     },
   });
 
+  const runAllMutation = useMutation({
+    mutationFn: async () => {
+      if (!provider) {
+        throw new Error("请先选择 Provider");
+      }
+      if (!fieldTemplateId) {
+        throw new Error("请先选择字段模板");
+      }
+      return runAllIndexes(workspaceId, provider, null, fieldTemplateId);
+    },
+    onSuccess: async (result) => {
+      setWorkbenchMessage(`批量索引已启动：${result.queued} 条，跳过 ${result.skipped} 条`);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
+      ]);
+    },
+    onError: (error) => {
+      setWorkbenchMessage(error instanceof Error ? error.message : "批量索引启动失败");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (docId: string) => deleteFile(docId, workspaceId),
+    onSuccess: async (_, docId) => {
+      setWorkbenchMessage("文档已删除");
+      if (selectedPreviewDocId === docId) {
+        setSelectedPreviewDocId("");
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
+      ]);
+    },
+    onError: (error) => {
+      setWorkbenchMessage(error instanceof Error ? error.message : "删除失败");
+    },
+  });
+
+  const saveEditorMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedPreviewDocId) {
+        throw new Error("未选择文档");
+      }
+      const trimmedYear = editorYear.trim();
+      const nextYear = trimmedYear ? Number.parseInt(trimmedYear, 10) : null;
+      if (trimmedYear && !Number.isFinite(nextYear)) {
+        throw new Error("年份格式不正确");
+      }
+      return updateIndexEditor(selectedPreviewDocId, workspaceId, {
+        title: editorTitle.trim(),
+        display_name: editorTitle.trim(),
+        year: Number.isFinite(nextYear) ? nextYear : null,
+        generated_at: editorDate.trim() || null,
+        markdown: editorContent,
+      });
+    },
+    onSuccess: async () => {
+      setWorkbenchMessage("索引内容已通过编辑窗口保存");
+      setIsEditorOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["index-markdown", workspaceId, selectedPreviewDocId] }),
+        queryClient.invalidateQueries({ queryKey: ["index-detail", workspaceId, selectedPreviewDocId] }),
+        queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
+      ]);
+    },
+    onError: (error) => {
+      setWorkbenchMessage(error instanceof Error ? error.message : "保存失败");
+    },
+  });
+
   const chatMutation = useMutation({
     mutationFn: askChatV0,
     onError: (error) => {
@@ -114,6 +220,10 @@ export function ConsolePage() {
   const providerCount = providersQuery.data?.length ?? 0;
   const searchableRows = searchResultQuery.data ?? [];
   const fileRows = filesQuery.data ?? [];
+  const selectedPreviewDoc = useMemo(
+    () => fileRows.find((item) => item.id === selectedPreviewDocId) ?? null,
+    [fileRows, selectedPreviewDocId],
+  );
 
   const dashboardStats = useMemo(() => {
     let indexed = 0;
@@ -142,6 +252,23 @@ export function ConsolePage() {
       review,
     };
   }, [fileRows]);
+
+  const trendingKeywords = useMemo(() => {
+    const countMap = new Map<string, number>();
+    for (const row of searchableRows) {
+      for (const keyword of row.keywords || []) {
+        const normalized = String(keyword || "").trim();
+        if (!normalized) {
+          continue;
+        }
+        countMap.set(normalized, (countMap.get(normalized) || 0) + 1);
+      }
+    }
+    return [...countMap.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 16)
+      .map(([keyword]) => keyword);
+  }, [searchableRows]);
 
   useEffect(() => {
     const providers = providersQuery.data;
@@ -182,20 +309,72 @@ export function ConsolePage() {
   }, [fieldTemplateId, fieldTemplatesQuery.data]);
 
   useEffect(() => {
-    if (fileRows.length === 0) {
+    if (selectedPreviewDocId && !fileRows.some((item) => item.id === selectedPreviewDocId)) {
       setSelectedPreviewDocId("");
-      return;
-    }
-
-    if (!selectedPreviewDocId || !fileRows.some((item) => item.id === selectedPreviewDocId)) {
-      const firstIndexed = fileRows.find((item) => item.status === "indexed");
-      setSelectedPreviewDocId((firstIndexed || fileRows[0]).id);
     }
   }, [fileRows, selectedPreviewDocId]);
+
+  useEffect(() => {
+    const hasRunningTask = fileRows.some((item) => {
+      const status = String(item.status || "");
+      const stage = String(item.stage || "");
+      return status === "parsing" || stage === "queued" || stage === "llm_request" || stage === "writing" || stage === "cancel_requested";
+    });
+    if (!hasRunningTask) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void queryClient.invalidateQueries({ queryKey: ["files", workspaceId] });
+    }, 2000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [fileRows, queryClient, workspaceId]);
 
   function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSearchQuery(searchInput.trim());
+  }
+
+  async function handleUploadFiles(files: File[]) {
+    if (!files.length) {
+      return;
+    }
+    let uploaded = 0;
+    let duplicated = 0;
+    let failed = 0;
+
+    for (const file of files) {
+      try {
+        const result = await uploadMutation.mutateAsync(file);
+        if (result.duplicate) {
+          duplicated += 1;
+        } else {
+          uploaded += 1;
+        }
+      } catch {
+        failed += 1;
+      }
+    }
+
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
+      queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
+    ]);
+
+    const segments = [`新增 ${uploaded}`];
+    if (duplicated > 0) {
+      segments.push(`重复 ${duplicated}`);
+    }
+    if (failed > 0) {
+      segments.push(`失败 ${failed}`);
+    }
+    setWorkbenchMessage(`上传完成：${segments.join("，")}`);
+  }
+
+  function handleKeywordSearch(keyword: string) {
+    setSearchInput(keyword);
+    setSearchQuery(keyword);
   }
 
   async function handleAskChat(event: FormEvent<HTMLFormElement>) {
@@ -260,40 +439,155 @@ export function ConsolePage() {
     }
   }
 
+  function handleOpenEditor() {
+    if (!selectedPreviewDocId) {
+      return;
+    }
+    const fallbackTitle =
+      indexDetailQuery.data?.title ||
+      searchableRows.find((item) => item.doc_id === selectedPreviewDocId)?.title ||
+      selectedPreviewDoc?.display_name ||
+      "";
+    setEditorTitle(fallbackTitle);
+    setEditorYear(indexDetailQuery.data?.year ? String(indexDetailQuery.data.year) : "");
+    setEditorDate(
+      toDateInputValue(indexDetailQuery.data?.updated_at || selectedPreviewDoc?.updated_at || null),
+    );
+    setEditorContent(previewQuery.data?.markdown || "");
+    setIsEditorOpen(true);
+  }
+
+  async function handleSaveEditor() {
+    await saveEditorMutation.mutateAsync();
+  }
+
+  function handleOpenOriginal() {
+    if (!selectedPreviewDocId) {
+      return;
+    }
+    window.open(buildOriginalFileUrl(selectedPreviewDocId, workspaceId), "_blank", "noopener,noreferrer");
+  }
+
+  function handleExportMarkdown() {
+    if (!selectedPreviewDocId) {
+      return;
+    }
+    window.open(buildExportMarkdownUrl(selectedPreviewDocId, workspaceId), "_blank", "noopener,noreferrer");
+  }
+
+  function handleLoadFromSearch(docId: string, displayName: string, status: string) {
+    if (status !== "indexed") {
+      setWorkbenchMessage("该文档尚未完成索引，暂不可加载预览内容");
+      return;
+    }
+    setSelectedPreviewDocId(docId);
+    setWorkbenchMessage(`已加载到预览区：${displayName}`);
+  }
+
+  async function handleDeleteFromSearch(docId: string) {
+    const confirmed = window.confirm("确认删除该文档吗？删除后不可恢复。");
+    if (!confirmed) {
+      return;
+    }
+    await deleteMutation.mutateAsync(docId);
+  }
+
   return (
     <section className="v3-page v3-workbench-page">
       <header className="v3-page-header">
-        <h1 className="v3-page-title">工作台</h1>
-        <p className="v3-page-subtitle">仪表台、搜索区、预览区和 Chat 区在同一工作面内协同。当前工作区：{workspaceId}</p>
       </header>
 
-      <article className="v3-card v3-workbench-top">
-        <div className="v3-module-header">
-          <h2 className="v3-card-title">仪表台</h2>
-          <p className="v3-muted">上传、索引策略与关键指标</p>
-        </div>
+      <article className="v3-card v3-workbench-hero">
+        <div className="v3-workbench-hero-grid">
+          <div className="v3-workbench-hero-main">
+            <div className="v3-workbench-hero-head">
+              <div>
+                <h2 className="v3-workbench-hero-title">仪表台</h2>
+               
+              </div>
+              <span className="v3-queue-pill">
+                {dashboardStats.running > 0 ? `${dashboardStats.running} 生成中` : `${dashboardStats.pending + dashboardStats.review} 待处理`}
+              </span>
+            </div>
 
-        <div className="v3-kpi-grid">
-          <article className="v3-kpi-card">
-            <span className="v3-kpi-label">总文档</span>
-            <strong className="v3-kpi-value">{dashboardStats.total}</strong>
-          </article>
-          <article className="v3-kpi-card">
-            <span className="v3-kpi-label">已索引</span>
-            <strong className="v3-kpi-value">{dashboardStats.indexed}</strong>
-          </article>
-          <article className="v3-kpi-card">
-            <span className="v3-kpi-label">运行中</span>
-            <strong className="v3-kpi-value">{dashboardStats.running}</strong>
-          </article>
-          <article className="v3-kpi-card">
-            <span className="v3-kpi-label">待处理</span>
-            <strong className="v3-kpi-value">{dashboardStats.pending + dashboardStats.review}</strong>
-          </article>
-        </div>
+            <div className="v3-kpi-grid">
+              <article className="v3-kpi-card">
+                <span className="v3-kpi-label">总文档</span>
+                <strong className="v3-kpi-value">{dashboardStats.total}</strong>
+              </article>
+              <article className="v3-kpi-card">
+                <span className="v3-kpi-label">已索引</span>
+                <strong className="v3-kpi-value">{dashboardStats.indexed}</strong>
+              </article>
+              <article className="v3-kpi-card">
+                <span className="v3-kpi-label">运行中</span>
+                <strong className="v3-kpi-value">{dashboardStats.running}</strong>
+              </article>
+              <article className="v3-kpi-card">
+                <span className="v3-kpi-label">待审核</span>
+                <strong className="v3-kpi-value">{dashboardStats.review}</strong>
+              </article>
+            </div>
 
-        <div className="v3-workbench-top-grid">
-          <article className="v3-subcard">
+            <section className="v3-keyword-cloud">
+              {trendingKeywords.length === 0 ? (
+                <p className="v3-muted">暂无语义分布，先上传并索引文档。</p>
+              ) : (
+                trendingKeywords.map((keyword) => (
+                  <button
+                    key={keyword}
+                    className="v3-keyword-chip"
+                    type="button"
+                    onClick={() => {
+                      handleKeywordSearch(keyword);
+                    }}
+                  >
+                    {keyword}
+                  </button>
+                ))
+              )}
+            </section>
+          </div>
+
+          <aside className="v3-workbench-upload-panel">
+            <div
+              className={`v3-upload-dropzone ${isUploadDragOver ? "is-dragover" : ""}`}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setIsUploadDragOver(true);
+              }}
+              onDragLeave={() => {
+                setIsUploadDragOver(false);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setIsUploadDragOver(false);
+                const dropped = Array.from(event.dataTransfer.files || []);
+                void handleUploadFiles(dropped);
+              }}
+            >
+              <p className="v3-upload-title">拖拽文档到这里</p>
+              <p className="v3-muted">支持 pdf / txt / docx，可一次上传多个文件</p>
+              <label className="v3-button v3-button-primary v3-upload-label" htmlFor="workbenchUploadInput">
+                选择文件
+              </label>
+              <input
+                id="workbenchUploadInput"
+                className="v3-upload-input"
+                type="file"
+                multiple
+                accept=".pdf,.txt,.docx"
+                onChange={(event) => {
+                  const files = Array.from(event.target.files || []);
+                  if (!files.length) {
+                    return;
+                  }
+                  void handleUploadFiles(files);
+                  event.currentTarget.value = "";
+                }}
+              />
+            </div>
+
             <div className="v3-control-grid">
               <label className="v3-control" htmlFor="workbenchProvider">
                 <span className="v3-control-label">Provider</span>
@@ -335,79 +629,57 @@ export function ConsolePage() {
             </div>
 
             <div className="v3-actions-row">
-              <label className="v3-button v3-button-primary v3-upload-label" htmlFor="workbenchUploadInput">
-                上传文档
-              </label>
-              <input
-                id="workbenchUploadInput"
-                className="v3-upload-input"
-                type="file"
-                accept=".pdf,.txt,.docx"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (!file) {
-                    return;
-                  }
-                  void uploadMutation.mutateAsync(file);
-                  event.currentTarget.value = "";
+              <button
+                className="v3-button v3-button-primary"
+                type="button"
+                onClick={() => {
+                  void runAllMutation.mutateAsync();
                 }}
-              />
+                disabled={runAllMutation.isPending || !provider}
+              >
+                {runAllMutation.isPending ? "启动中..." : "全部索引"}
+              </button>
               <button
                 className="v3-button v3-button-secondary"
                 type="button"
                 onClick={() => {
                   void filesQuery.refetch();
+                  void searchResultQuery.refetch();
                 }}
               >
-                刷新文档
+                刷新
               </button>
             </div>
-          </article>
 
-          <article className="v3-subcard">
-            <h3 className="v3-subcard-title">最近文档</h3>
-            <div className="v3-doc-list">
-              {(fileRows.slice(0, 4) || []).map((item) => (
-                <article className="v3-subcard" key={item.id}>
-                  <div className="v3-subcard-head">
-                    <strong>{item.display_name || item.filename}</strong>
-                    <span className="v3-status-pill">{item.status}</span>
-                  </div>
-                  <div className="v3-actions-row">
-                    <button
-                      className="v3-button v3-button-secondary"
-                      type="button"
-                      onClick={() => {
-                        setSelectedPreviewDocId(item.id);
-                      }}
-                    >
-                      预览
-                    </button>
-                    <button
-                      className="v3-button v3-button-secondary"
-                      type="button"
-                      onClick={() => {
-                        void runMutation.mutateAsync(item.id);
-                      }}
-                      disabled={runMutation.isPending || !provider}
-                    >
-                      索引
-                    </button>
-                  </div>
+            <div className="v3-mini-queue">
+              {fileRows.slice(0, 4).map((item) => (
+                <article className="v3-mini-queue-item" key={item.id}>
+                  <strong className="v3-mini-queue-title">{item.display_name || item.filename}</strong>
+                  <span className="v3-status-pill">{item.status}</span>
+                  <button
+                    className="v3-button v3-button-secondary"
+                    type="button"
+                    onClick={() => {
+                      void runMutation.mutateAsync(item.id);
+                    }}
+                    disabled={runMutation.isPending || !provider}
+                  >
+                    索引
+                  </button>
                 </article>
               ))}
               {filesQuery.isLoading ? <p className="v3-muted">正在加载文档...</p> : null}
               {!filesQuery.isLoading && fileRows.length === 0 ? <p className="v3-muted">当前工作区暂无文档</p> : null}
             </div>
-          </article>
+          </aside>
         </div>
       </article>
 
       <div className="v3-workbench-body">
         <article className="v3-card v3-workbench-search-col">
           <div className="v3-module-header">
-            <h2 className="v3-card-title">搜索区</h2>
-            <p className="v3-muted">按关键词过滤当前工作区索引结果</p>
+            <h2 className="v3-card-title">搜索与导出</h2>
+            <p className="v3-muted">默认展示当前工作区全部文档，输入关键词可即时过滤</p>
           </div>
 
           <form className="v3-search-form" onSubmit={handleSearchSubmit}>
@@ -417,7 +689,7 @@ export function ConsolePage() {
               onChange={(event) => {
                 setSearchInput(event.target.value);
               }}
-              placeholder="输入标题、作者、关键词"
+              placeholder="输入关键词"
             />
             <button className="v3-button v3-button-primary" type="submit">
               搜索
@@ -425,57 +697,93 @@ export function ConsolePage() {
           </form>
 
           {searchResultQuery.isFetching ? <p className="v3-muted">正在搜索...</p> : null}
-          {searchQuery && searchResultQuery.isError ? <p className="v3-error">搜索失败</p> : null}
+          {searchResultQuery.isError ? <p className="v3-error">搜索失败，请稍后重试</p> : null}
 
-          <div className="v3-card-stack">
-            {searchQuery && searchableRows.length === 0 && !searchResultQuery.isFetching ? (
-              <p className="v3-muted">当前工作区没有匹配结果</p>
-            ) : null}
-            {searchableRows.map((item) => (
-              <article className="v3-subcard" key={item.doc_id}>
-                <div className="v3-subcard-head">
-                  <strong>{item.title || item.display_name || item.filename}</strong>
-                  <span className="v3-status-pill">{item.status}</span>
-                </div>
-                <p className="v3-muted">年份：{item.year ?? "-"}</p>
-                <div className="v3-actions-row">
-                  <button
-                    className="v3-button v3-button-secondary"
-                    type="button"
-                    onClick={() => {
-                      setSelectedPreviewDocId(item.doc_id);
-                    }}
-                  >
-                    加载到预览区
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
-        </article>
+            <div className="v3-card-stack">
+              {searchableRows.length === 0 && !searchResultQuery.isFetching ? (
+                <p className="v3-muted">{searchQuery ? "当前工作区没有匹配结果" : "当前工作区暂无可展示文档"}</p>
+              ) : null}
+              {searchableRows.map((item) => (
+                <article
+                  className={`v3-search-row ${item.doc_id === selectedPreviewDocId ? "is-active" : ""}`}
+                  key={item.doc_id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    handleLoadFromSearch(
+                      item.doc_id,
+                      item.display_name || item.filename || item.doc_id,
+                      item.status,
+                    );
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      handleLoadFromSearch(
+                        item.doc_id,
+                        item.display_name || item.filename || item.doc_id,
+                        item.status,
+                      );
+                    }
+                  }}
+                >
+                  <div className="v3-search-row-head">
+                    <strong className="v3-search-row-title">{item.display_name || item.filename || item.doc_id}</strong>
+                    <span className="v3-status-pill">{item.status}</span>
+                  </div>
+                  <p className="v3-search-row-meta">年份：{item.year ?? "-"} · 作者：{compactAuthors(item.authors)}</p>
+                  <div className="v3-search-row-keywords">
+                    {compactKeywords(item.keywords).length > 0 ? (
+                      compactKeywords(item.keywords).map((keyword) => (
+                        <span className="v3-search-keyword-chip" key={`${item.doc_id}_${keyword}`}>
+                          {keyword}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="v3-muted">关键词：-</span>
+                    )}
+                  </div>
+                  <div className="v3-search-row-actions">
+                    <button
+                      className="v3-button v3-button-secondary"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        window.open(buildExportMarkdownUrl(item.doc_id, workspaceId), "_blank", "noopener,noreferrer");
+                      }}
+                      disabled={item.status !== "indexed"}
+                    >
+                      导出
+                    </button>
+                    <button
+                      className="v3-button v3-button-secondary"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleDeleteFromSearch(item.doc_id);
+                      }}
+                      disabled={deleteMutation.isPending}
+                    >
+                      删除
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </article>
 
         <div className="v3-workbench-right-col">
           <article className="v3-card v3-workbench-preview-card">
             <div className="v3-module-header">
-              <h2 className="v3-card-title">预览区</h2>
-              <p className="v3-muted">查看文献索引 Markdown 结果</p>
+              <h2 className="v3-card-title">索引预览</h2>
+              <p className="v3-muted">当前文档的 Markdown 索引结果</p>
             </div>
 
             <div className="v3-preview-toolbar">
-              <select
-                className="v3-input"
-                value={selectedPreviewDocId}
-                onChange={(event) => {
-                  setSelectedPreviewDocId(event.target.value);
-                }}
-                disabled={!fileRows.length}
-              >
-                {fileRows.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.display_name || item.filename}
-                  </option>
-                ))}
-              </select>
+              <span className="v3-muted">
+                当前文档：
+                {selectedPreviewDoc ? selectedPreviewDoc.display_name || selectedPreviewDoc.filename : "请先在搜索区点击加载"}
+              </span>
               <button
                 className="v3-button v3-button-secondary"
                 type="button"
@@ -496,20 +804,47 @@ export function ConsolePage() {
               >
                 复制
               </button>
+              <button
+                className="v3-button v3-button-secondary"
+                type="button"
+                onClick={handleOpenOriginal}
+                disabled={!selectedPreviewDocId}
+              >
+                打开原文
+              </button>
+              <button
+                className="v3-button v3-button-secondary"
+                type="button"
+                onClick={handleExportMarkdown}
+                disabled={!selectedPreviewDocId}
+              >
+                导出 Markdown
+              </button>
+              <button
+                className="v3-button v3-button-primary"
+                type="button"
+                onClick={handleOpenEditor}
+                disabled={!selectedPreviewDocId || !previewQuery.data?.markdown}
+              >
+                编辑
+              </button>
             </div>
 
             <div className="v3-preview-panel">
               {!selectedPreviewDocId ? <p className="v3-muted">请选择文档</p> : null}
               {selectedPreviewDocId && previewQuery.isLoading ? <p className="v3-muted">正在加载预览...</p> : null}
               {selectedPreviewDocId && previewQuery.isError ? <p className="v3-error">预览不可用，可能尚未生成索引</p> : null}
+              {selectedPreviewDoc ? (
+                <p className="v3-muted">状态：{selectedPreviewDoc.status} / 阶段：{selectedPreviewDoc.stage || "-"} {selectedPreviewDoc.stage_message ? `- ${selectedPreviewDoc.stage_message}` : ""}</p>
+              ) : null}
               {previewQuery.data?.markdown ? <pre className="v3-preview-content">{previewQuery.data.markdown}</pre> : null}
             </div>
           </article>
 
           <article className="v3-card v3-workbench-chat-card">
             <div className="v3-module-header">
-              <h2 className="v3-card-title">Chat 区</h2>
-              <p className="v3-muted">在当前工作区内调用 LLM 对已索引文献提问</p>
+              <h2 className="v3-card-title">Chat V0</h2>
+              <p className="v3-muted">基于当前工作区已索引文献对话</p>
             </div>
 
             <div className="v3-control-grid">
@@ -589,6 +924,95 @@ export function ConsolePage() {
           </article>
         </div>
       </div>
+
+      {isEditorOpen ? (
+        <div className="v3-modal-backdrop" role="dialog" aria-modal="true">
+          <article className="v3-modal-panel">
+            <header className="v3-modal-header">
+              <h3 className="v3-card-title">编辑索引内容</h3>
+              <p className="v3-muted">可单独调整日期、年份、标题和正文内容。</p>
+            </header>
+
+            <div className="v3-editor-grid">
+              <label className="v3-control" htmlFor="editorDate">
+                <span className="v3-control-label">日期</span>
+                <input
+                  id="editorDate"
+                  type="date"
+                  className="v3-input"
+                  value={editorDate}
+                  onChange={(event) => {
+                    setEditorDate(event.target.value);
+                  }}
+                />
+              </label>
+
+              <label className="v3-control" htmlFor="editorYear">
+                <span className="v3-control-label">年份</span>
+                <input
+                  id="editorYear"
+                  type="number"
+                  className="v3-input"
+                  value={editorYear}
+                  onChange={(event) => {
+                    setEditorYear(event.target.value);
+                  }}
+                  placeholder="例如 2026"
+                />
+              </label>
+
+              <label className="v3-control v3-editor-span-2" htmlFor="editorTitle">
+                <span className="v3-control-label">标题</span>
+                <input
+                  id="editorTitle"
+                  type="text"
+                  className="v3-input"
+                  value={editorTitle}
+                  onChange={(event) => {
+                    setEditorTitle(event.target.value);
+                  }}
+                />
+              </label>
+
+              <label className="v3-control v3-editor-span-2" htmlFor="editorContent">
+                <span className="v3-control-label">具体内容</span>
+                <textarea
+                  id="editorContent"
+                  className="v3-textarea"
+                  value={editorContent}
+                  onChange={(event) => {
+                    setEditorContent(event.target.value);
+                  }}
+                  rows={16}
+                />
+              </label>
+            </div>
+
+            <div className="v3-actions-row">
+              <button
+                className="v3-button v3-button-primary"
+                type="button"
+                onClick={() => {
+                  void handleSaveEditor();
+                }}
+                disabled={saveEditorMutation.isPending}
+              >
+                {saveEditorMutation.isPending ? "保存中..." : "保存"}
+              </button>
+              <button
+                className="v3-button v3-button-secondary"
+                type="button"
+                onClick={() => {
+                  setIsEditorOpen(false);
+                }}
+                disabled={saveEditorMutation.isPending}
+              >
+                取消
+              </button>
+            </div>
+          </article>
+        </div>
+      ) : null}
 
       {workbenchMessage ? <p className="v3-muted">{workbenchMessage}</p> : null}
     </section>
