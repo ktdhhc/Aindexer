@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html class="dark" lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aindexer V2.0 | Crystalline Core</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+    />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+    />
+    <link rel="stylesheet" href="./assets/css/tokens.css?v=20260324-dropdown" />
+    <link rel="stylesheet" href="./assets/css/components.css?v=20260324-dropdown" />
+    <link rel="stylesheet" href="./assets/css/pages/provider-shell.css?v=20260319-shellsplit1" />
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              background: '#0b1326',
+              surface: '#0b1326',
+              'surface-container-lowest': '#060e20',
+              'surface-container-low': '#131b2e',
+              'surface-container': '#171f33',
+              'surface-container-high': '#222a3d',
+              'surface-container-highest': '#2d3449',
+              'surface-variant': '#2d3449',
+              'on-background': '#dae2fd',
+              'on-surface': '#dae2fd',
+              'on-surface-variant': '#bec8d2',
+              primary: '#89ceff',
+              'primary-container': '#0ea5e9',
+              secondary: '#93ccff',
+              tertiary: '#ffb86e',
+              error: '#ffb4ab',
+              outline: '#88929b',
+              'outline-variant': '#3e4850',
+            },
+            fontFamily: {
+              sans: ['Inter', 'Segoe UI', 'PingFang SC', 'sans-serif'],
+            },
+            boxShadow: {
+              glow: '0 24px 80px rgba(11, 19, 38, 0.45)',
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      :root {
+        color-scheme: dark;
+        --page-bg-start: #0b1326;
+        --page-bg-end: #060e20;
+        --page-text: #dae2fd;
+        --panel-bg: rgba(15, 23, 42, 0.44);
+        --panel-border: rgba(255, 255, 255, 0.08);
+        --panel-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.04), 0 30px 80px rgba(5, 10, 22, 0.28);
+        --soft-bg: rgba(6, 14, 32, 0.8);
+        --soft-border: rgba(255, 255, 255, 0.08);
+        --soft-text: #dae2fd;
+        --chrome-bg: rgba(15, 23, 42, 0.72);
+        --chrome-border: rgba(255, 255, 255, 0.08);
+      }
+
+      html.light {
+        color-scheme: light;
+        --page-bg-start: #f0f4f8;
+        --page-bg-end: #e2e8f0;
+        --page-text: #0f172a;
+        --panel-bg: rgba(255, 255, 255, 0.55);
+        --panel-border: rgba(255, 255, 255, 0.6);
+        --panel-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.9), 0 12px 48px rgba(15, 23, 42, 0.05);
+        --soft-bg: rgba(255, 255, 255, 0.45);
+        --soft-border: rgba(255, 255, 255, 0.5);
+        --soft-text: #0f172a;
+        --chrome-bg: rgba(255, 255, 255, 0.65);
+        --chrome-border: rgba(255, 255, 255, 0.5);
+      }
+
+      body {
+        background: radial-gradient(circle at 0% 0%, var(--page-bg-start) 0%, var(--page-bg-end) 100%);
+        color: var(--page-text);
+        font-family: 'Inter', 'Segoe UI', 'PingFang SC', sans-serif;
+        overflow-x: hidden;
+        transition: background 220ms ease, color 220ms ease;
+      }
+
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      }
+
+      .glass-panel {
+        background: var(--panel-bg);
+        backdrop-filter: blur(24px) saturate(150%);
+        -webkit-backdrop-filter: blur(24px) saturate(150%);
+        border: 1px solid var(--panel-border);
+        box-shadow: var(--panel-shadow);
+      }
+
+      html.light .glass-panel {
+        background: var(--panel-bg);
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
+      }
+      .workspace-search-column,
+      .workspace-right-column,
+      .workspace-panel,
+      .workspace-scroll-region {
+        min-height: 0;
+      }
+
+      @media (min-width: 1024px) {
+        .workspace-search-column,
+        .workspace-right-column {
+          height: clamp(1140px, calc(100dvh - 80px), 1460px);
+        }
+
+        .workspace-right-column {
+          display: grid !important;
+          grid-template-rows: minmax(0, 1.15fr) minmax(0, 0.85fr) !important;
+          align-content: stretch;
+        }
+
+        .workspace-panel {
+          height: 100% !important;
+          overflow: hidden !important;
+          min-height: 0 !important;
+        }
+
+        .workspace-panel .code-editor {
+          min-height: 0 !important;
+          resize: none;
+        }
+      }
+
+      .crystalline-bg {
+        position: fixed;
+        inset: 0;
+        z-index: -2;
+        overflow: hidden;
+      }
+
+      .blob {
+        position: absolute;
+        border-radius: 9999px;
+        filter: blur(84px);
+        opacity: 0.18;
+      }
+
+      .thin-scrollbar::-webkit-scrollbar {
+        width: 10px;
+      }
+
+      .thin-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      .thin-scrollbar::-webkit-scrollbar-thumb {
+        background: rgba(136, 146, 155, 0.22);
+        border-radius: 9999px;
+      }
+
+      .brand-signal {
+        position: absolute;
+        right: -2px;
+        bottom: -2px;
+        width: 12px;
+        height: 12px;
+        border-radius: 9999px;
+        border: 2px solid rgba(11, 19, 38, 0.95);
+        background: #ef4444;
+        box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.1);
+      }
+
+      .brand-signal[data-state='ok'] {
+        background: #22c55e;
+        box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.12);
+      }
+
+      .brand-signal[data-state='err'] {
+        background: #ef4444;
+        box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
+      }
+
+      .panel-area {
+        max-height: 23rem;
+        overflow: auto;
+      }
+
+      .code-editor {
+        min-height: 24rem;
+        resize: vertical;
+      }
+
+      .chat-composer {
+        min-height: 56px;
+        max-height: 180px;
+      }
+
+      .instrument-cloud {
+        position: relative;
+        width: 100%;
+        max-width: 100%;
+        aspect-ratio: 2.15 / 1;
+        min-height: 210px;
+      }
+
+      .instrument-cloud::before {
+        content: '';
+        position: absolute;
+        inset: 14% 9%;
+        border-radius: 9999px;
+        background: radial-gradient(circle, rgba(137, 206, 255, 0.08) 0%, rgba(137, 206, 255, 0.02) 48%, transparent 78%);
+        filter: blur(10px);
+      }
+
+      .instrument-cloud-chip {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 34px;
+        padding: 0 14px;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        color: rgba(218, 226, 253, 0.82);
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        backdrop-filter: blur(14px) saturate(140%);
+        transition: 180ms ease;
+        cursor: pointer;
+      }
+
+      .instrument-cloud-chip:hover {
+        color: #f8fbff;
+        background: rgba(137, 206, 255, 0.12);
+        border-color: rgba(137, 206, 255, 0.26);
+        box-shadow: 0 0 0 1px rgba(137, 206, 255, 0.18), 0 12px 24px rgba(14, 165, 233, 0.08) !important;
+        z-index: 2;
+      }
+
+      .preview-render {
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .preview-render mark {
+        background: rgba(255, 184, 110, 0.28);
+        color: #fff7ea;
+        padding: 0 0.15em;
+        border-radius: 0.35em;
+      }
+
+      .edit-field-input,
+      .edit-field-textarea {
+        background: rgba(15, 23, 42, 0.4) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        color: #f8fafc !important;
+        color-scheme: dark !important;
+        transition: all 200ms ease;
+      }
+
+      .edit-field-input:focus,
+      .edit-field-textarea:focus {
+        background: rgba(15, 23, 42, 0.6) !important;
+        border-color: rgba(137, 206, 255, 0.4) !important;
+        box-shadow: 0 0 0 1px rgba(137, 206, 255, 0.1) !important;
+        outline: none;
+      }
+
+      .edit-field-textarea {
+        min-height: 280px;
+        resize: vertical;
+      }
+
+      .edit-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 120;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(2, 6, 23, 0.68);
+        backdrop-filter: blur(20px);
+        color-scheme: dark;
+      }
+
+      .edit-modal.is-open {
+        display: flex;
+      }
+
+      .edit-modal-panel {
+        width: min(1080px, calc(100vw - 40px));
+        max-height: calc(100vh - 40px);
+        overflow: auto;
+      }
+
+
+      html.light body {
+        color: #0f172a;
+      }
+
+      html.light .blob {
+        opacity: 0.25;
+      }
+
+      html.light .preview-render mark {
+        background: rgba(255, 184, 110, 0.45);
+        color: #0f172a;
+      }
+
+      html.light .thin-scrollbar::-webkit-scrollbar-thumb {
+        background: rgba(15, 23, 42, 0.15);
+      }
+
+      html.light #sideNav,
+      html.light #appTopbar {
+        background: rgba(255, 255, 255, 0.6) !important;
+        backdrop-filter: blur(24px) saturate(150%) !important;
+        -webkit-backdrop-filter: blur(24px) saturate(150%) !important;
+        border-color: rgba(15, 23, 42, 0.08) !important;
+      }
+
+      html.light #appTopbar .text-white,
+      html.light #sideNav .text-white,
+      html.light .text-on-surface,
+      html.light .text-on-background,
+      html.light .text-white {
+        color: #0f172a !important;
+      }
+
+      html.light .text-slate-200 {
+        color: #334155 !important;
+      }
+
+      html.light .text-slate-100 {
+        color: #1e293b !important;
+      }
+
+      html.light .text-slate-400,
+      html.light .text-slate-500,
+      html.light .text-slate-600 {
+        color: #475569 !important;
+      }
+
+      html.light .bg-surface-container-lowest,
+      html.light .bg-surface-container-lowest\/80,
+      html.light .bg-surface-container-lowest\/70,
+      html.light .bg-surface-container-lowest\/72,
+      html.light .bg-surface-container-lowest\/45,
+      html.light .bg-surface-container-lowest\/50,
+      html.light .bg-surface-container-low,
+      html.light .bg-surface-container-low\/80,
+      html.light .bg-surface-container-low\/85,
+      html.light .hover\:bg-surface-container-low\/80:hover,
+      html.light .bg-surface-container-high,
+      html.light .bg-surface-container {
+        background-color: rgba(255, 255, 255, 0.45) !important;
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
+      }
+
+      html.light .border-white\/5,
+      html.light .border-white\/10,
+      html.light .border-white\/8 {
+        border-color: rgba(15, 23, 42, 0.08) !important;
+      }
+
+      html.light .bg-white\/5,
+      html.light .bg-white\/10 {
+        background-color: rgba(15, 23, 42, 0.04) !important;
+      }
+
+      html.light .hover\:bg-white\/10:hover,
+      html.light .hover\:bg-white\/5:hover {
+        background-color: rgba(15, 23, 42, 0.08) !important;
+      }
+      
+      html.light .hover\:text-white:hover {
+        color: #0f172a !important;
+      }
+
+      html.light .instrument-dropzone {
+        background: rgba(255, 255, 255, 0.5);
+        border-color: rgba(15, 23, 42, 0.1);
+      }
+
+      html.light .instrument-dropzone.is-dragover {
+        background: rgba(255, 255, 255, 0.8);
+        border-color: rgba(14, 165, 233, 0.4);
+      }
+
+      html.light .edit-modal {
+        background: rgba(248, 250, 252, 0.8);
+      }
+
+      html.light .edit-field-input,
+      html.light .edit-field-textarea {
+        color-scheme: light !important;
+      }
+
+      html.light .edit-field-input::-webkit-calendar-picker-indicator {
+        filter: none;
+      }
+
+      html.light .instrument-cloud-chip {
+        background: rgba(15, 23, 42, 0.04);
+        border-color: rgba(15, 23, 42, 0.06);
+        color: #334155;
+      }
+
+      html.light .instrument-cloud-chip:hover {
+        background: rgba(14, 165, 233, 0.1);
+        border-color: rgba(14, 165, 233, 0.2);
+        color: #0ea5e9;
+      }
+
+      @media (max-width: 1024px) {
+        .app-main {
+          margin-left: 0;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-background text-on-background min-h-screen" data-page="dashboard">
+    <div id="bgFxLayer" class="fixed inset-0 pointer-events-none overflow-hidden transition-opacity duration-1000" style="z-index: -1"></div>
+
+    <div class="crystalline-bg" aria-hidden="true">
+      <div class="blob bg-primary w-[36rem] h-[36rem] -top-40 -left-40"></div>
+      <div class="blob bg-secondary w-[28rem] h-[28rem] top-[40%] -right-24"></div>
+      <div class="blob bg-tertiary w-[24rem] h-[24rem] bottom-[-4rem] left-[18%]"></div>
+    </div>
+
+    <aside id="sideNav" class="hidden lg:flex flex-col border-r border-white/5 bg-slate-950/40 backdrop-blur-2xl w-20 hover:w-64 transition-all duration-500 fixed left-0 top-0 h-screen z-[70] group overflow-hidden pt-[88px]">
+      <nav class="flex-1 flex flex-col gap-2 px-3">
+        <a href="/v2/" data-nav-link="dashboard" class="flex items-center gap-4 px-3 py-4 rounded-xl transition-all duration-300 bg-sky-500/20 text-sky-400 border-r-4 border-sky-500">
+          <span class="material-symbols-outlined">dashboard</span>
+          <span class="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold uppercase tracking-widest whitespace-nowrap">工作台</span>
+        </a>
+        <a href="/v2/provider-config.html" data-nav-link="providers" class="flex items-center gap-4 px-3 py-4 rounded-xl transition-all duration-300 text-slate-500 hover:text-slate-200 hover:bg-slate-800/50">
+          <span class="material-symbols-outlined">tune</span>
+          <span class="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold uppercase tracking-widest whitespace-nowrap">接口配置</span>
+        </a>
+        <a href="/v2/words-config.html" data-nav-link="fields" class="flex items-center gap-4 px-3 py-4 rounded-xl transition-all duration-300 text-slate-500 hover:text-slate-200 hover:bg-slate-800/50">
+          <span class="material-symbols-outlined">list_alt</span>
+          <span class="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold uppercase tracking-widest whitespace-nowrap">字段配置</span>
+        </a>
+      </nav>
+
+      <div class="p-3 mt-auto">
+        <button id="exportAllBtnSide" type="button" class="w-full flex items-center gap-4 px-3 py-4 rounded-xl text-slate-400 hover:text-white transition-all hover:bg-white/5">
+          <span class="material-symbols-outlined">upload</span>
+          <span class="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold uppercase tracking-widest whitespace-nowrap">导出全部</span>
+        </button>
+        <button id="importAllBtnSide" type="button" class="mt-2 w-full flex items-center gap-4 px-3 py-4 rounded-xl text-slate-400 hover:text-white transition-all hover:bg-white/5">
+          <span class="material-symbols-outlined">download</span>
+          <span class="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold uppercase tracking-widest whitespace-nowrap">导入</span>
+        </button>
+        <input id="backupImportInput" type="file" accept=".zip" class="hidden" />
+        <button id="exitAppBtn" type="button" class="mt-2 w-full flex items-center gap-4 px-3 py-4 rounded-xl text-error hover:bg-error/10 transition-all" title="退出应用">
+          <span class="material-symbols-outlined">power_settings_new</span>
+          <span class="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold uppercase tracking-widest whitespace-nowrap">退出</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="app-main flex flex-col min-h-screen">
+      <header id="appTopbar" class="sticky top-0 z-[80] flex justify-between items-center w-full px-4 lg:px-6 py-4 bg-slate-900/60 backdrop-blur-xl shadow-[0_8px_32px_0_rgba(0,0,0,0.36)]" style="height: 72px">
+        <div class="flex items-center gap-4 min-w-0">
+          <div class="relative w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary-container flex items-center justify-center shadow-lg shadow-sky-500/20 shrink-0">
+            <span class="material-symbols-outlined text-slate-950 text-xl">layers</span>
+            <span class="brand-signal" data-backend-indicator data-state="err"></span>
+          </div>
+          <div class="min-w-0">
+            <div class="text-base lg:text-lg font-bold text-white whitespace-nowrap">Aindexer</div>
+            <div class="text-[10px] font-bold uppercase tracking-[0.24em] text-primary whitespace-nowrap">Crystalline Core</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-3 lg:gap-4">
+          <button id="refreshBtn" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-[10px] border-0 bg-transparent text-slate-400 transition-all duration-200 cursor-pointer hover:text-white hover:bg-white/[0.08] active:scale-[0.92]" title="刷新">
+            <span class="material-symbols-outlined">refresh</span>
+          </button>
+          <button id="themeToggleBtn" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-[10px] border-0 bg-transparent text-slate-400 transition-all duration-200 cursor-pointer hover:text-white hover:bg-white/[0.08] active:scale-[0.92]" title="切换暗浅色">
+            <span id="themeToggleIcon" class="material-symbols-outlined">light_mode</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="flex-1 p-4 lg:pl-[104px] lg:pr-8 lg:py-8 grid grid-cols-12 gap-6 lg:gap-8 max-w-[1600px] mx-auto w-full">
+        <section class="col-span-12 glass-panel rounded-3xl p-5 lg:p-6 shadow-glow relative z-30">
+          <div class="grid gap-6 xl:grid-cols-[minmax(0,1.618fr)_minmax(360px,1fr)] xl:items-stretch">
+            <div class="min-w-0 flex flex-col gap-5 justify-between">
+              <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5 lg:gap-8">
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-center gap-3">
+                    <h2 class="text-3xl lg:text-[2.75rem] font-black tracking-tight text-white">仪表台</h2>
+                    <span id="queueSummary" class="px-2.5 py-1 rounded-full text-[10px] font-black bg-primary/10 text-primary border border-primary/20">0 待生成</span>
+                  </div>
+                  <div id="dashTopStatus" class="mt-3 text-[11px] text-slate-400 leading-5 min-h-[20px]">-</div>
+                </div>
+
+                <div class="flex flex-wrap items-start gap-6 lg:gap-8 lg:pt-1 shrink-0">
+                  <section class="instrument-stat">
+                    <div class="text-[9px] font-bold uppercase tracking-[0.22em] text-slate-500">已索引数量</div>
+                    <div class="instrument-stat-value">
+                      <div id="dashIndexedCount" class="text-3xl lg:text-[2rem] font-black tracking-tight text-white">0</div>
+                      <div class="text-[10px] uppercase tracking-[0.22em] text-slate-500 pb-1">docs</div>
+                    </div>
+                  </section>
+
+                  <section class="instrument-stat">
+                    <div class="text-[9px] font-bold uppercase tracking-[0.22em] text-slate-500">可用模型数量</div>
+                    <div class="instrument-stat-value">
+                      <div id="dashModelCount" class="text-3xl lg:text-[2rem] font-black tracking-tight text-white">0</div>
+                      <div class="text-[10px] uppercase tracking-[0.22em] text-slate-500 pb-1">models</div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+
+              <section class="min-w-0 pt-1">
+                <div class="mb-4">
+                  <p class="text-[10px] font-bold uppercase tracking-[0.24em] text-slate-500">索引语义分布</p>
+                </div>
+                <div id="dashboardKeywordCloud" class="instrument-cloud"></div>
+              </section>
+            </div>
+
+            <div class="min-w-0 xl:ml-auto xl:w-full flex flex-col self-stretch">
+              <div class="w-full rounded-[28px] bg-surface-container-lowest/45 border border-white/5 p-6 lg:p-7 flex h-full min-h-[378px] flex-col gap-6 justify-between">
+                <div id="uploadState" class="hidden" aria-hidden="true">待上传</div>
+
+                <div id="uploadDropBox" class="instrument-dropzone relative overflow-hidden border-2 border-dashed border-white/10 rounded-[28px] px-6 py-6 lg:px-7 lg:py-7 bg-surface-container-lowest/50 hover:bg-surface-container-lowest transition-all group min-h-[236px]">
+                  <div id="uploadEmptyState" class="flex h-full min-h-[188px] flex-col items-center justify-center gap-4 text-center cursor-pointer">
+                    <div class="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center group-hover:scale-110 transition-transform duration-500">
+                      <span class="material-symbols-outlined text-[34px] text-slate-500 transition-colors duration-200">upload_file</span>
+                    </div>
+                    <div class="upload-drop-copy">
+                      <p class="text-base font-semibold text-on-surface">拖拽文件到这里</p>
+                      <p class="text-sm text-slate-500 mt-1">或点击此区域选择 pdf / txt / docx 文件</p>
+                    </div>
+                  </div>
+
+                  <div id="queuePanel" class="hidden h-full min-h-[188px] flex-col gap-4">
+                    <div class="flex items-start justify-between gap-3">
+                      <div>
+                        <div class="text-sm text-slate-400">拖拽文件到此可继续追加</div>
+                      </div>
+                    </div>
+                    <div id="queueRows" class="thin-scrollbar space-y-3 pr-1 flex-1 min-h-[128px] max-h-[166px] overflow-y-auto overscroll-contain"></div>
+                  </div>
+
+                  <div id="uploadDragNotice" class="pointer-events-none absolute inset-4 hidden items-center justify-center rounded-[22px] border border-primary/25 bg-surface/70 backdrop-blur-xl">
+                    <div class="px-4 py-2 rounded-full bg-primary/12 text-primary text-xs font-black uppercase tracking-[0.28em]">松手即可上传</div>
+                  </div>
+                  <input id="uploadInput" type="file" accept=".pdf,.txt,.docx" multiple class="hidden" />
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <label class="block min-w-0">
+                    <span class="block text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-2">Provider</span>
+                    <div class="relative">
+                      <button id="dashProvider" type="button" class="sort-trigger w-full min-w-0 justify-between text-[15px] px-4 py-3 rounded-2xl">
+                        <span id="dashProviderLabel" class="sort-trigger-label">选择 Provider</span>
+                        <span class="material-symbols-outlined text-[18px] shrink-0">expand_more</span>
+                      </button>
+                      <div id="dashProviderMenu" class="sort-menu w-full" hidden></div>
+                    </div>
+                  </label>
+                  <label class="block min-w-0">
+                    <span class="block text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-2">Model</span>
+                    <div class="relative">
+                      <button id="dashModel" type="button" class="sort-trigger w-full min-w-0 justify-between text-[15px] px-4 py-3 rounded-2xl">
+                        <span id="dashModelLabel" class="sort-trigger-label">选择 Model</span>
+                        <span class="material-symbols-outlined text-[18px] shrink-0">expand_more</span>
+                      </button>
+                      <div id="dashModelMenu" class="sort-menu w-full" hidden></div>
+                    </div>
+                  </label>
+                </div>
+
+                <button id="runAllBtn" type="button" class="w-full px-5 py-4 rounded-2xl bg-gradient-to-r from-primary to-primary-container text-slate-950 text-[15px] font-bold active:scale-95 transition-all shadow-lg shadow-sky-500/20">全部索引</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div id="searchColumn" class="workspace-search-column col-span-12 lg:col-span-4 min-h-0">
+          <section id="searchPanel" class="workspace-panel glass-panel p-6 rounded-3xl shadow-xl min-h-[420px] md:min-h-0 h-full flex flex-col overflow-hidden">
+            <div class="flex items-center justify-between mb-6 gap-3">
+              <h2 class="text-lg font-bold flex items-center gap-2">
+                <span class="material-symbols-outlined text-secondary">filter_list</span>
+                <span>搜索与导出</span>
+              </h2>
+              <div class="relative inline-block">
+                <button id="searchSortTrigger" type="button" class="sort-trigger">
+                  <span id="searchSortLabel">生成时间</span>
+                  <span id="searchSortDirectionIcon" class="material-symbols-outlined text-[16px]">south</span>
+                </button>
+                <div id="searchSortMenu" class="sort-menu" hidden>
+                  <button type="button" class="sort-menu-item" data-sort-field="created">
+                    <span>生成时间</span>
+                    <span class="material-symbols-outlined text-[16px] active-indicator hidden">check</span>
+                  </button>
+                  <button type="button" class="sort-menu-item" data-sort-field="year">
+                    <span>年份</span>
+                    <span class="material-symbols-outlined text-[16px] active-indicator hidden">check</span>
+                  </button>
+                  <button type="button" class="sort-menu-item" data-sort-field="display">
+                    <span>显示名</span>
+                    <span class="material-symbols-outlined text-[16px] active-indicator hidden">check</span>
+                  </button>
+                  <div class="h-px bg-white/5 my-2 opacity-50"></div>
+                  <button id="searchSortDirectionBtn" type="button" class="sort-menu-item">
+                    <span>反转排序方向</span>
+                    <span class="material-symbols-outlined text-[16px]">swap_vert</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="space-y-4 h-full flex flex-col min-h-0">
+              <div>
+                <label class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2 block">搜索关键词</label>
+                <div class="flex gap-3">
+                    <input id="searchInput" type="text" placeholder="输入关键词" class="flex-1 min-w-0 bg-surface-container-lowest border-none rounded-xl text-sm p-3 focus:ring-1 focus:ring-primary/50 transition-all" />
+                    <button id="searchBtn" type="button" class="px-5 min-w-[90px] rounded-xl bg-gradient-to-r from-primary to-primary-container text-slate-950 font-bold">搜索</button>
+                  </div>
+                </div>
+
+              <div id="searchState" class="text-xs text-slate-400">暂无结果</div>
+              <div id="searchRows" class="workspace-scroll-region thin-scrollbar space-y-3 pr-1 flex-1 min-h-[220px] md:min-h-0 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"></div>
+            </div>
+          </section>
+        </div>
+
+        <div id="workspaceRightColumn" class="workspace-right-column col-span-12 lg:col-span-8 flex flex-col gap-6 lg:grid lg:grid-rows-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-8 min-h-0">
+          <section class="workspace-panel glass-panel rounded-3xl shadow-2xl flex flex-col min-h-[550px] lg:min-h-0">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 border-b border-white/5">
+              <div class="flex items-center gap-4 min-w-0">
+                <div class="w-10 h-10 rounded-xl bg-secondary/10 flex items-center justify-center shrink-0">
+                  <span class="material-symbols-outlined text-secondary">description</span>
+                </div>
+                <h3 class="font-bold text-on-surface">索引预览</h3>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2 md:justify-end">
+                <input id="previewDocId" type="text" placeholder="DocID" class="bg-surface-container-lowest border-none rounded-xl text-sm px-3 py-2.5 focus:ring-1 focus:ring-primary/50 w-full sm:w-52" />
+                <button id="previewLoadBtn" type="button" class="px-4 py-2.5 rounded-xl bg-white/5 text-slate-200 hover:bg-white/10 transition-all">加载</button>
+                <button id="previewCopyBtn" type="button" class="p-2 rounded-lg hover:bg-white/5 text-slate-400 transition-all"><span class="material-symbols-outlined">content_copy</span></button>
+                <button id="previewExportBtn" type="button" class="p-2 rounded-lg hover:bg-white/5 text-slate-400 transition-all"><span class="material-symbols-outlined">download</span></button>
+                <button id="previewOriginalBtn" type="button" class="p-2 rounded-lg hover:bg-white/5 text-slate-400 transition-all"><span class="material-symbols-outlined">open_in_new</span></button>
+                <button id="previewEditBtn" type="button" class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-primary to-primary-container text-slate-950 font-bold">编辑</button>
+              </div>
+            </div>
+            <div class="p-6 pt-4 flex-1 flex flex-col gap-4 min-h-0">
+              <div id="previewState" class="text-xs text-slate-400 truncate">未加载文献</div>
+              <div id="previewMarkdown" class="workspace-scroll-region preview-render thin-scrollbar w-full flex-1 bg-surface-container-lowest/80 border border-white/5 rounded-2xl p-5 font-mono text-sm text-slate-200 leading-7">这里显示 Markdown 索引内容</div>
+            </div>
+          </section>
+
+          <section class="workspace-panel glass-panel rounded-3xl shadow-2xl flex flex-col min-h-[560px] lg:min-h-0">
+            <div class="flex items-center justify-between px-6 py-4 bg-white/5 rounded-t-3xl border-b border-white/5">
+              <div class="flex items-center gap-3">
+                <div class="relative">
+                  <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-secondary to-primary-container flex items-center justify-center">
+                    <span class="material-symbols-outlined text-white text-lg">auto_awesome</span>
+                  </div>
+                  <div class="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 border-2 border-surface-container rounded-full"></div>
+                </div>
+                <span class="text-sm font-bold text-on-surface">Chat V0</span>
+                <select id="chatModelSelector" class="ml-2 bg-white/[0.06] border border-white/10 rounded-lg text-[12px] text-slate-300 px-2 py-1 max-w-[220px] truncate focus:ring-1 focus:ring-primary/40 focus:outline-none" title="选择 Chat 模型"></select>
+              </div>
+              <div id="chatState" class="text-[11px] uppercase tracking-widest text-slate-500">待提问</div>
+            </div>
+
+            <div id="chatMessages" class="workspace-scroll-region flex-1 overflow-y-auto p-6 space-y-6 thin-scrollbar"></div>
+
+            <div class="p-6 pt-0">
+              <div class="relative bg-surface-container-lowest/80 border border-white/10 rounded-2xl p-2 focus-within:border-primary/50 transition-all">
+                <textarea id="chatQuestion" rows="1" placeholder="向智能核心提问..." class="chat-composer thin-scrollbar w-full bg-transparent border-none focus:ring-0 text-sm p-3 resize-none placeholder:text-slate-600"></textarea>
+                <div class="flex items-center justify-between px-3 pb-1 pt-1">
+                  <div class="text-[11px] uppercase tracking-widest text-slate-500">基于已索引文献</div>
+                  <button id="chatAskBtn" type="button" class="w-10 h-10 rounded-xl bg-primary text-slate-950 flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-lg shadow-sky-500/20">
+                    <span class="material-symbols-outlined">send</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <footer class="px-4 lg:pl-[104px] lg:pr-8 pb-8 mt-auto flex flex-col md:flex-row justify-between gap-4 items-start md:items-center text-[10px] font-bold uppercase tracking-[0.2em] text-slate-600">
+        <span id="footerStatus">系统在线</span>
+        <span>Aindexer 2.0</span>
+      </footer>
+    </main>
+
+    <div id="editIndexModal" class="edit-modal" aria-hidden="true">
+      <div class="edit-modal-panel glass-panel rounded-[32px] border border-white/8 p-6 lg:p-8 shadow-glow">
+        <div class="flex items-start justify-between gap-4 mb-6">
+          <div>
+            <p class="text-[11px] uppercase tracking-[0.28em] text-slate-500 font-bold mb-2">Index Editor</p>
+            <h2 class="text-2xl lg:text-3xl font-black tracking-tight text-white">索引编辑</h2>
+            <div id="editModalStatus" class="text-xs text-slate-400 mt-2">修改显示名、索引内容与时间信息</div>
+          </div>
+          <button id="editModalCloseBtn" type="button" class="p-2 rounded-lg text-slate-400 hover:bg-white/10 transition-all" title="关闭">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+          <label class="block">
+            <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">显示名</span>
+            <input id="editDisplayName" type="text" class="edit-field-input w-full rounded-2xl px-4 py-3 focus:ring-1 focus:ring-primary/50" />
+          </label>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label class="block">
+              <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">发表年份</span>
+              <input id="editYear" type="number" min="0" class="edit-field-input w-full rounded-2xl px-4 py-3 focus:ring-1 focus:ring-primary/50" />
+            </label>
+            <label class="block">
+              <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">生成时间</span>
+              <input id="editGeneratedAt" type="datetime-local" class="edit-field-input w-full rounded-2xl px-4 py-3 focus:ring-1 focus:ring-primary/50" />
+            </label>
+          </div>
+        </div>
+
+        <label class="block">
+          <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">索引内容</span>
+          <textarea id="editMarkdown" class="edit-field-textarea w-full rounded-[28px] p-5 font-mono text-sm leading-7 focus:ring-1 focus:ring-primary/50"></textarea>
+        </label>
+
+        <div class="mt-6 flex flex-wrap justify-end gap-3">
+          <button id="editModalCancelBtn" type="button" class="px-5 py-3 rounded-2xl bg-white/5 text-slate-200 font-semibold hover:bg-white/10 transition-all">取消</button>
+          <button id="editModalSaveBtn" type="button" class="px-5 py-3 rounded-2xl bg-gradient-to-r from-primary to-primary-container text-slate-950 font-bold">保存修改</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./assets/js/pages/dashboard.js?v=20260324-dropdown"></script>
+  </body>
+</html>

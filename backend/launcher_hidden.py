@@ -1,0 +1,161 @@
+from __future__ import annotations
+
+import os
+import json
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+
+HOST = os.getenv("APP_HOST", "127.0.0.1")
+PORT = int(os.getenv("APP_PORT", "8000"))
+START_PATH = os.getenv("APP_START_PATH", "/")
+if not START_PATH.startswith("/"):
+    START_PATH = f"/{START_PATH}"
+URL = os.getenv("APP_START_URL", f"http://{HOST}:{PORT}{START_PATH}")
+LAUNCHER_STATE_FILE = "launcher_state.json"
+
+
+def _wait_port_open(host: str, port: int, timeout_sec: int) -> bool:
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=1.0):
+                return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
+def _pick_browser_exe() -> str | None:
+    candidates = [
+        shutil.which("msedge"),
+        shutil.which("chrome"),
+        os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(
+            r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"
+        ),
+        os.path.expandvars(r"%LocalAppData%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+    ]
+    for exe in candidates:
+        if exe and Path(exe).exists():
+            return exe
+    return None
+
+
+def _shutdown_server(server: subprocess.Popen) -> None:
+    if server.poll() is not None:
+        return
+    server.terminate()
+    try:
+        server.wait(timeout=6)
+    except subprocess.TimeoutExpired:
+        server.kill()
+
+
+def _write_launcher_state(root_dir: Path, payload: dict) -> None:
+    runtime_dir = root_dir / "data" / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    (runtime_dir / LAUNCHER_STATE_FILE).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _clear_launcher_state(root_dir: Path) -> None:
+    state_file = root_dir / "data" / "runtime" / LAUNCHER_STATE_FILE
+    try:
+        state_file.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def main() -> int:
+    backend_dir = Path(__file__).resolve().parent
+    root_dir = backend_dir.parent
+    logs_dir = root_dir / "data" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    out_log = logs_dir / "launcher.out.log"
+    err_log = logs_dir / "launcher.err.log"
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    with (
+        out_log.open("a", encoding="utf-8") as out,
+        err_log.open("a", encoding="utf-8") as err,
+    ):
+        _clear_launcher_state(root_dir)
+        server = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "app.main:app",
+                "--host",
+                HOST,
+                "--port",
+                str(PORT),
+            ],
+            cwd=str(backend_dir),
+            stdout=out,
+            stderr=err,
+            creationflags=creationflags,
+        )
+
+        if not _wait_port_open(HOST, PORT, timeout_sec=20):
+            _shutdown_server(server)
+            return 1
+
+        browser_exe = _pick_browser_exe()
+        if not browser_exe:
+            subprocess.Popen(
+                ["cmd", "/c", "start", "", URL], creationflags=creationflags
+            )
+            return 0
+
+        browser_profile = Path(
+            tempfile.mkdtemp(prefix="indexer-browser-", dir=str(root_dir / "data"))
+        )
+        browser = subprocess.Popen(
+            [
+                browser_exe,
+                f"--user-data-dir={browser_profile}",
+                "--no-first-run",
+                f"--app={URL}",
+            ],
+            creationflags=creationflags,
+        )
+        _write_launcher_state(
+            root_dir,
+            {
+                "server_pid": server.pid,
+                "browser_pid": browser.pid,
+                "browser_exe": browser_exe,
+                "browser_profile": str(browser_profile),
+                "url": URL,
+            },
+        )
+
+        try:
+            while True:
+                if server.poll() is not None:
+                    return 1
+                if browser.poll() is not None:
+                    _shutdown_server(server)
+                    return 0
+                time.sleep(1)
+        finally:
+            _clear_launcher_state(root_dir)
+            shutil.rmtree(browser_profile, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

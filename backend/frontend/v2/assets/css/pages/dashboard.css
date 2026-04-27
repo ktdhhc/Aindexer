@@ -1,0 +1,254 @@
+.workspace-controls {
+  padding: 18px 20px;
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-6);
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.workspace-controls .field {
+  margin: 0;
+}
+
+.workspace-controls .actions {
+  grid-column: span 2;
+  display: inline-flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.workspace-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-6);
+}
+
+.workspace-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.panel {
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 220px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.panel-note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.88rem;
+}
+
+.upload-box {
+  border-radius: var(--radius-md);
+  border: 1px dashed rgba(255, 255, 255, 0.22);
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  background: rgba(6, 14, 32, 0.54);
+  flex-wrap: wrap;
+}
+
+.upload-box.is-dragover {
+  border-color: rgba(137, 206, 255, 0.46);
+  background: rgba(137, 206, 255, 0.1);
+}
+
+.upload-file-input {
+  display: none;
+}
+
+.table-wrap {
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: auto;
+  max-height: 340px;
+}
+
+.table-lite {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.table-lite th,
+.table-lite td {
+  padding: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+  vertical-align: middle;
+  font-size: 0.86rem;
+}
+
+.table-lite th {
+  position: sticky;
+  top: 0;
+  background: rgba(19, 27, 46, 0.95);
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  z-index: 1;
+}
+
+.table-lite td .row-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.table-lite .btn {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 12px;
+  font-size: 0.76rem;
+}
+
+.doc-name {
+  display: block;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doc-sub {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-controls {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: var(--space-2);
+}
+
+.preview-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-2);
+}
+
+.preview-meta {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+
+.preview-text {
+  min-height: 360px;
+}
+
+.preview-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.workspace-search-column,
+.workspace-right-column,
+.workspace-panel,
+.workspace-scroll-region {
+  min-height: 0;
+}
+
+@media (min-width: 1024px) {
+  .workspace-search-column,
+  .workspace-right-column {
+    height: clamp(760px, calc(100dvh - 280px), 1040px);
+  }
+
+  .workspace-right-column {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--space-6);
+  }
+
+  .workspace-panel {
+    height: 100%;
+    overflow: hidden;
+  }
+}
+
+.chat-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.chat-answer {
+  min-height: 120px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(6, 14, 32, 0.66);
+  padding: 12px;
+  color: var(--text);
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.state-text {
+  font-size: 0.84rem;
+  color: var(--text-dim);
+}
+
+.state-text.ok {
+  color: var(--success);
+}
+
+.state-text.err {
+  color: var(--error);
+}
+
+@media (max-width: 1200px) {
+  .workspace-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workspace-controls .actions {
+    grid-column: span 2;
+    justify-content: flex-start;
+  }
+
+  .workspace-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .search-controls,
+  .preview-head {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aindexer V2 | Field Config</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+    />
+    <link rel="stylesheet" href="./assets/css/tokens.css?v=20260323-lightmode" />
+    <link rel="stylesheet" href="./assets/css/base.css?v=20260323-lightmode" />
+    <link rel="stylesheet" href="./assets/css/components.css?v=20260323-lightmode" />
+    <link rel="stylesheet" href="./assets/css/pages/provider-shell.css?v=20260323-lightmode" />
+    <link rel="stylesheet" href="./assets/css/pages/words-config.css?v=20260323-lightmode" />
+  </head>
+  <body data-page="fields">
+    <div class="app-bg" aria-hidden="true">
+      <div class="blob blob-primary"></div>
+      <div class="blob blob-secondary"></div>
+      <div class="blob blob-tertiary"></div>
+    </div>
+
+    <aside id="sideNav" class="v2-shell-sidebar group" aria-label="V2 navigation">
+      <nav class="v2-shell-nav">
+        <a href="/v2/" class="v2-shell-nav-link" data-nav-link="dashboard">
+          <span class="material-symbols-outlined">dashboard</span>
+          <span class="v2-shell-nav-label">工作台</span>
+        </a>
+        <a href="/v2/provider-config.html" class="v2-shell-nav-link" data-nav-link="providers">
+          <span class="material-symbols-outlined">tune</span>
+          <span class="v2-shell-nav-label">接口配置</span>
+        </a>
+        <a href="/v2/words-config.html" class="v2-shell-nav-link" data-nav-link="fields">
+          <span class="material-symbols-outlined">list_alt</span>
+          <span class="v2-shell-nav-label">字段配置</span>
+        </a>
+      </nav>
+      <div class="v2-shell-action-stack">
+        <button id="exportAllBtnSide" type="button" title="导出全部" class="v2-shell-action-btn w-full flex items-center gap-4 px-3 py-4 rounded-xl text-slate-400 hover:text-white transition-all hover:bg-white/5">
+          <span class="material-symbols-outlined">upload</span>
+          <span class="v2-shell-nav-label">导出全部</span>
+        </button>
+        <button id="importAllBtnSide" type="button" title="导入" class="v2-shell-action-btn mt-2 w-full flex items-center gap-4 px-3 py-4 rounded-xl text-slate-400 hover:text-white transition-all hover:bg-white/5">
+          <span class="material-symbols-outlined">download</span>
+          <span class="v2-shell-nav-label">导入</span>
+        </button>
+        <input id="backupImportInput" type="file" accept=".zip" class="hidden" />
+        <button id="exitAppBtn" type="button" title="退出应用" class="v2-shell-action-btn mt-2 w-full flex items-center gap-4 px-3 py-4 rounded-xl text-error hover:bg-error/10 transition-all">
+          <span class="material-symbols-outlined">power_settings_new</span>
+          <span class="v2-shell-nav-label">退出</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="v2-shell-main">
+      <header class="v2-shell-topbar">
+        <div class="v2-shell-topbar-brand">
+          <div class="v2-shell-topbar-logo">
+            <span class="material-symbols-outlined text-slate-950 text-xl">layers</span>
+            <span class="brand-signal" data-backend-indicator data-state="err"></span>
+          </div>
+          <div>
+            <span class="v2-shell-topbar-brand-title">Aindexer</span>
+            <span class="v2-shell-topbar-brand-subtitle">Crystalline Core</span>
+          </div>
+        </div>
+        <div class="v2-shell-topbar-actions">
+          <button id="refreshBtn" type="button" class="v2-shell-topbar-btn" title="刷新">
+            <span class="material-symbols-outlined">refresh</span>
+          </button>
+          <button id="themeToggleBtn" type="button" class="v2-shell-topbar-btn" title="切换暗浅色">
+            <span id="themeToggleIcon" class="material-symbols-outlined">light_mode</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="v2-content-wrap">
+        <section class="fields-page-hero">
+          <div>
+            <p class="eyebrow">Index Field Settings</p>
+            <h1>字段配置</h1>
+            <p>Configure how the LLM extracts and categorizes data from your document corpus.</p>
+          </div>
+        </section>
+
+        <section id="fieldsGrid" class="fields-grid" aria-live="polite"></section>
+      </div>
+    </main>
+
+    <footer id="fieldsActionDock" class="action-dock glass-panel">
+      <div class="action-dock__meta">
+        <p class="eyebrow">状态</p>
+        <div id="fieldsPageStatus" class="action-status muted">正在加载字段配置...</div>
+      </div>
+      <div class="action-dock__actions">
+        <button id="fieldsResetBtn" class="btn btn-secondary" type="button">恢复默认</button>
+        <button id="fieldsDiscardBtn" class="btn btn-ghost" type="button">放弃本页修改</button>
+        <button id="fieldsSaveBtn" class="btn btn-primary" type="button">保存全部配置</button>
+      </div>
+    </footer>
+
+    <script type="module" src="./assets/js/pages/words-config.js?v=20260324-dropdown"></script>
+  </body>
+</html>

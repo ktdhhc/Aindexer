@@ -1,0 +1,6 @@
+.env
+frontend-v3/node_modules/
+frontend-v3/.vite/
+frontend-v3/.turbo/
+frontend-v3/.cache/
+backend/frontend/v3/
