@@ -17,7 +17,7 @@
 
 ## 项目一句话说明
 
-本项目是一个本地运行的文献索引与翻译工作台：后端使用 FastAPI，数据落在 SQLite 和本地文件中，前端当前以静态页面为默认入口，并已引入 React V3 骨架用于逐步迁移。
+本项目是一个本地运行的文献索引与翻译工作台：后端使用 FastAPI，数据落在 SQLite 和本地文件中，前端当前以静态页面为默认入口，并已引入 React V3 骨架与 V3.5 Editorial Lab 设计基线用于逐步迁移。
 
 ## 当前阶段
 
@@ -25,6 +25,7 @@
 - 当前主应用默认入口仍是 `backend/frontend/v2/` 和 `backend/frontend/translator/`。
 - `frontend-v3/` 已建立 React + TypeScript + TanStack Router + TanStack Query + Zustand 基础骨架。
 - `/v3` 路由已在后端预留 SPA 入口，后续按功能逐步迁移至统一前端。
+- V3.5 前端设计方向已确定为 Editorial Lab：暖色纸张感、学术编辑台、阅读与修订优先，不再追求 V2 视觉复刻。
 - 已新增 Workspace 数据边界：支持工作区新建、重命名、删除，并将上传/索引/搜索/聊天操作绑定到当前工作区。
 
 ## 范围边界
@@ -37,7 +38,7 @@
 
 ```text
 - 后端：FastAPI
-- 前端：默认仍为静态前端（`backend/frontend/v2` + `backend/frontend/translator`），并新增 `frontend-v3/` 作为 V3 迁移代码入口
+- 前端：默认仍为静态前端（`backend/frontend/v2` + `backend/frontend/translator`），`frontend-v3/` 是 React 迁移代码入口，V3.5 设计基线位于 `docs/FRONTEND_DESIGN.md` 与 `demo/editorial-lab/`
 - 持久化：SQLite + 本地文件（uploads / indexes / exports / logs）
 - 任务执行方式：主应用索引通过进程内线程池异步执行，翻译通过独立 translation 路由域处理
 - 关键外部依赖：LLM Provider、SQLite FTS5、pdf.js（翻译前端预览侧）
@@ -70,15 +71,16 @@
 - `/v2/`：当前新版工作台入口，覆盖控制台、Provider 配置页、字段配置页。
 - `/translator/`：当前独立翻译工作区入口。
 - `/v3/`：React V3 统一前端入口（需先构建 `frontend-v3` 产物），当前已包含 `workbench`、`config`、`chat`、`translator` 路由骨架。
-- 当前 UI 仍未完成统一；V3 正在以单壳路由结构逐步替代 `v2` 与 `translator` 双前端形态。
+- 当前 UI 仍未完成统一；后续迁移目标是以 V3.5 Editorial Lab 统一 `workbench`、配置、Chat 与翻译工作区。
 
 ## 当前前端整体现状
 
 - `backend/frontend/v2/` 采用多页静态 HTML + 原生 JS 模式。
 - `backend/frontend/v2/assets/js/pages/dashboard.js` 体量大，混合了渲染、状态、轮询、API 编排和界面逻辑，是前端主要可维护性热点之一。
 - `backend/frontend/translator/` 是另一套独立静态前端实现，已具备上传 PDF、预览、搜索、划词翻译和 Provider 设置能力。
-- `frontend-v3/` 已具备统一 shell、核心路由骨架和基础 API 访问能力，当前仍为迁移阶段占位实现。
-- `docs/FRONTEND_DESIGN.md` 已确定 V3 的稳定设计方向，但它描述的是未来稳定约束，不等于当前实现状态。
+- `frontend-v3/` 已具备统一 shell、核心路由骨架和基础 API 访问能力，当前仍为迁移阶段实现，不是 V3.5 视觉基线。
+- `demo/editorial-lab/` 是 V3.5 静态视觉示例；`demo/research-os/` 仅作为备选参考。
+- `docs/FRONTEND_DESIGN.md` 已确定 V3.5 的稳定设计方向，但它描述的是未来稳定约束，不等于当前实现状态。
 
 ## 关键文件地图
 
@@ -95,9 +97,11 @@
 - V3 路由配置：`frontend-v3/src/app/router.tsx`
 - V3 配置页：`frontend-v3/src/pages/ConfigPage.tsx`
 - V3 Chat 页：`frontend-v3/src/pages/ChatPage.tsx`
+- V3.5 静态设计示例：`demo/editorial-lab/index.html`
+- V3.5 迁移方案：`docs/plans/frontend-v3-5-migration-plan.md`
 - Workspace 路由：`backend/app/routers/workspaces.py`
 - 字段模板路由：`backend/app/routers/fields.py`
-- 稳定前端设计约束：`docs/FRONTEND_DESIGN.md`
+- V3.5 稳定前端设计约束：`docs/FRONTEND_DESIGN.md`
 
 ## 重要运行事实
 
@@ -136,7 +140,8 @@ V3 前端命令通常应在 frontend-v3/ 下执行
 - `backend/app/routers/index.py` 同时承担路由、任务编排、进度逻辑和失败回退，是后端主要重构热点。
 - `backend/app/repository.py` 较大，混合多个领域的持久化逻辑。
 - `backend/frontend/v2/assets/js/pages/dashboard.js` 是当前前端单体脚本热点。
-- 当前前端分为 `v2` 与 `translator` 两套实现，导航、交互语言和状态管理尚未统一。
+- `frontend-v3/src/pages/ConsolePage.tsx` 已形成新的页级巨石风险，V3.5 迁移应拆成 Library、Document Canvas、Indexing、Notes 等 feature。
+- 当前前端分为 `v2`、`translator` 和迁移中的 `frontend-v3`，导航、交互语言和状态管理尚未统一。
 
 ## 后续会话约束
 
