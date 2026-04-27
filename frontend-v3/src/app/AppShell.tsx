@@ -3,20 +3,17 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-import { useShellStore } from "./shellStore";
 import { DEFAULT_WORKSPACE_ID, useWorkspaceStore } from "./workspaceStore";
 import { listWorkspaces } from "../shared/api/workspaces";
 
 const navItems = [
-  { to: "/workbench", label: "工作台", icon: "WB" },
-  { to: "/config", label: "配置", icon: "CF" },
-  { to: "/chat", label: "高级 Chat", icon: "CH" },
-  { to: "/translator", label: "翻译工作区", icon: "TR" },
+  { to: "/workbench", label: "文库"},
+  { to: "/translator", label: "译文" },
+  { to: "/chat", label: "问答" },
+  { to: "/config", label: "配置" },
 ] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const navExpanded = useShellStore((state) => state.navExpanded);
-  const setNavExpanded = useShellStore((state) => state.setNavExpanded);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const setWorkspaceId = useWorkspaceStore((state) => state.setWorkspaceId);
 
@@ -36,31 +33,19 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   }, [setWorkspaceId, workspaceId, workspacesQuery.data]);
 
-  useEffect(() => {
-    const onKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setNavExpanded(false);
-      }
-    };
-    window.addEventListener("keydown", onKeydown);
-    return () => {
-      window.removeEventListener("keydown", onKeydown);
-    };
-  }, [setNavExpanded]);
-
   return (
-    <div className="v3-shell-root">
-      <header className="v3-topbar">
-        <div className="v3-topbar-brand-wrap">
-          <span className="v3-topbar-brand-dot" />
-          <div className="v3-topbar-brand">Aindexer</div>
-          <span className="v3-topbar-badge">V3</span>
+    <div className="v35-shell-root">
+      <header className="v35-topbar">
+        <div className="v35-topbar-brand-wrap">
+          <div className="v35-topbar-brand">Aindexer</div>
+          <span className="v35-topbar-badge">Editorial Lab</span>
         </div>
-        <div className="v3-topbar-actions">
-          <label className="v3-workspace-select-wrap" htmlFor="workspaceSelect">
+        <div className="v35-topbar-actions">
+          <label className="v35-workspace-select-wrap" htmlFor="workspaceSelect">
+            <span>Workspace</span>
             <select
               id="workspaceSelect"
-              className="v3-input v3-input-compact"
+              className="v35-input v35-input-compact"
               value={workspaceId}
               onChange={(event) => {
                 setWorkspaceId(event.target.value || DEFAULT_WORKSPACE_ID);
@@ -77,38 +62,24 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <div className="v3-shell-frame">
-        <div
-          className="v3-side-hover-zone"
-          onMouseEnter={() => {
-            setNavExpanded(true);
-          }}
-        />
-        <aside
-          className={`v3-sidebar ${navExpanded ? "is-expanded" : ""}`}
-          onMouseEnter={() => {
-            setNavExpanded(true);
-          }}
-          onMouseLeave={() => {
-            setNavExpanded(false);
-          }}
-        >
-          <nav className="v3-nav">
+      <div className="v35-shell-frame">
+        <aside className="v35-sidebar">
+          <nav className="v35-nav">
             {navItems.map((item) => (
               <Link
                 key={item.to}
-                className="v3-nav-link"
-                activeProps={{ className: "v3-nav-link is-active" }}
+                className="v35-nav-link"
+                activeProps={{ className: "v35-nav-link is-active" }}
                 to={item.to}
               >
-                <span className="v3-nav-icon" aria-hidden="true">{item.icon}</span>
-                <span className="v3-nav-label">{item.label}</span>
+
+                <span className="v35-nav-label">{item.label}</span>
               </Link>
             ))}
           </nav>
         </aside>
 
-        <main className="v3-main">{children}</main>
+        <main className="v35-main">{children}</main>
       </div>
     </div>
   );

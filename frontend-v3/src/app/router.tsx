@@ -11,6 +11,7 @@ import { ChatPage } from "../pages/ChatPage";
 import { ConfigPage } from "../pages/ConfigPage";
 import { ConsolePage } from "../pages/ConsolePage";
 import { TranslatorPage } from "../pages/TranslatorPage";
+import { WorkbenchPage } from "../pages/WorkbenchPage";
 
 function RootLayout() {
   return (
@@ -35,15 +36,13 @@ const indexRoute = createRoute({
 const workbenchRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workbench",
-  component: ConsolePage,
+  component: WorkbenchPage,
 });
 
 const legacyConsoleRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/console",
-  beforeLoad: () => {
-    throw redirect({ to: "/workbench" });
-  },
+  component: ConsolePage,
 });
 
 const configRoute = createRoute({

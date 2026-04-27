@@ -5,6 +5,7 @@ import { RouterProvider } from "@tanstack/react-router";
 
 import { router } from "./app/router";
 import "./styles.css";
+import "./shared/styles/v35.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {

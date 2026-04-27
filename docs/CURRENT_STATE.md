@@ -122,6 +122,23 @@ V3 前端命令通常应在 frontend-v3/ 下执行
 当前默认前端仍位于 backend/frontend/；V3 源码位于 frontend-v3/，构建产物输出到 backend/frontend/v3/
 ```
 
+## 启动方式
+
+```text
+首次后端依赖：在 backend/ 下运行 pip install -r requirements.txt
+启动后端与当前静态前端：在 backend/ 下运行 uvicorn app.main:app --reload
+默认访问：http://127.0.0.1:8000/
+V2 入口：http://127.0.0.1:8000/v2/
+翻译入口：http://127.0.0.1:8000/translator/
+
+首次 V3 依赖：在 frontend-v3/ 下运行 npm install
+V3 开发模式：先启动后端，再在 frontend-v3/ 下运行 npm run dev
+V3 开发访问：http://127.0.0.1:5173/v3/workbench
+V3 后端静态访问：在 frontend-v3/ 下运行 npm run build 后，通过 http://127.0.0.1:8000/v3/workbench 访问
+
+V3.5 静态设计示例：直接用浏览器打开 demo/editorial-lab/index.html
+```
+
 ## 默认验证方式
 
 ```text
