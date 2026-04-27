@@ -107,6 +107,16 @@ export function runAllIndexes(
   );
 }
 
+export function cancelIndex(docId: string, workspaceId: string): Promise<{ ok: boolean; status: string }> {
+  const params = new URLSearchParams({ workspace_id: workspaceId });
+  return fetchJson<{ ok: boolean; status: string }>(
+    `/api/index/${encodeURIComponent(docId)}/cancel?${params.toString()}`,
+    {
+      method: "POST",
+    },
+  );
+}
+
 export function getIndexDetail(
   docId: string,
   workspaceId: string,

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useWorkspaceStore } from "../app/workspaceStore";
@@ -6,7 +6,7 @@ import { askChatV0 } from "../shared/api/chat";
 import { listFieldTemplates } from "../shared/api/fields";
 import { buildOriginalFileUrl, deleteFile, listFiles, uploadFile } from "../shared/api/files";
 import { buildExportMarkdownUrl } from "../shared/api/export";
-import { getIndexDetail, getIndexMarkdown, runAllIndexes, runIndex, updateIndexEditor } from "../shared/api/index";
+import { cancelIndex, getIndexDetail, getIndexMarkdown, runAllIndexes, runIndex, updateIndexEditor } from "../shared/api/index";
 import { listProviders } from "../shared/api/providers";
 import { searchDocuments } from "../shared/api/search";
 
@@ -16,6 +16,8 @@ interface ChatMessage {
   content: string;
   meta?: string;
 }
+
+type SearchSortField = "created" | "year" | "display";
 
 function nextMessageId(): string {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -49,6 +51,138 @@ function compactKeywords(keywords: string[] | undefined): string[] {
   return keywords.slice(0, 3);
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderInlineMarkdown(raw: string): string {
+  const escaped = escapeHtml(raw);
+  return escaped
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
+
+function renderMarkdownToHtml(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const html: string[] = [];
+  let inCodeBlock = false;
+  let codeLines: string[] = [];
+  let inUl = false;
+  let inOl = false;
+
+  const closeLists = () => {
+    if (inUl) {
+      html.push("</ul>");
+      inUl = false;
+    }
+    if (inOl) {
+      html.push("</ol>");
+      inOl = false;
+    }
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      if (inCodeBlock) {
+        html.push(`<pre><code>${codeLines.join("\n")}</code></pre>`);
+        inCodeBlock = false;
+        codeLines = [];
+      } else {
+        closeLists();
+        inCodeBlock = true;
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeLines.push(escapeHtml(line));
+      continue;
+    }
+
+    if (!trimmed) {
+      closeLists();
+      continue;
+    }
+
+    const heading = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+    if (heading) {
+      closeLists();
+      const level = heading[1].length;
+      html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+      continue;
+    }
+
+    const ul = /^[-*+]\s+(.+)$/.exec(trimmed);
+    if (ul) {
+      if (!inUl) {
+        if (inOl) {
+          html.push("</ol>");
+          inOl = false;
+        }
+        html.push("<ul>");
+        inUl = true;
+      }
+      html.push(`<li>${renderInlineMarkdown(ul[1])}</li>`);
+      continue;
+    }
+
+    const ol = /^\d+\.\s+(.+)$/.exec(trimmed);
+    if (ol) {
+      if (!inOl) {
+        if (inUl) {
+          html.push("</ul>");
+          inUl = false;
+        }
+        html.push("<ol>");
+        inOl = true;
+      }
+      html.push(`<li>${renderInlineMarkdown(ol[1])}</li>`);
+      continue;
+    }
+
+    closeLists();
+    if (trimmed.startsWith(">")) {
+      html.push(`<blockquote>${renderInlineMarkdown(trimmed.replace(/^>\s?/, ""))}</blockquote>`);
+      continue;
+    }
+
+    html.push(`<p>${renderInlineMarkdown(trimmed)}</p>`);
+  }
+
+  if (inCodeBlock) {
+    html.push(`<pre><code>${codeLines.join("\n")}</code></pre>`);
+  }
+  closeLists();
+  return html.join("");
+}
+
+function formatQueueStatus(status: string, stage: string): { label: string; tone: "ok" | "warn" | "error" | "muted" | "default" } {
+  if (status === "indexed") {
+    return { label: "已索引", tone: "ok" };
+  }
+  if (status === "failed") {
+    return { label: "失败", tone: "error" };
+  }
+  if (status === "needs_review") {
+    return { label: "需审核", tone: "warn" };
+  }
+  if (status === "cancelled") {
+    return { label: "已取消", tone: "muted" };
+  }
+  if (status === "parsing" || stage === "queued" || stage === "llm_request" || stage === "writing" || stage === "cancel_requested") {
+    return { label: "处理中", tone: "warn" };
+  }
+  return { label: "待索引", tone: "default" };
+}
+
 export function ConsolePage() {
   const queryClient = useQueryClient();
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
@@ -57,7 +191,11 @@ export function ConsolePage() {
   const [fieldTemplateId, setFieldTemplateId] = useState("tpl_default");
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchSortField, setSearchSortField] = useState<SearchSortField>("created");
+  const [searchSortDirection, setSearchSortDirection] = useState<"asc" | "desc">("desc");
+  const [searchSortOpen, setSearchSortOpen] = useState(false);
   const [selectedPreviewDocId, setSelectedPreviewDocId] = useState("");
+  const [previewMode, setPreviewMode] = useState<"raw" | "rendered">("raw");
   const [isUploadDragOver, setIsUploadDragOver] = useState(false);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editorTitle, setEditorTitle] = useState("");
@@ -70,6 +208,7 @@ export function ConsolePage() {
   const [chatModel, setChatModel] = useState("");
   const [chatQuestion, setChatQuestion] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const searchSortRef = useRef<HTMLDivElement | null>(null);
 
   const providersQuery = useQuery({
     queryKey: ["providers"],
@@ -153,6 +292,17 @@ export function ConsolePage() {
     },
   });
 
+  const cancelMutation = useMutation({
+    mutationFn: async (docId: string) => cancelIndex(docId, workspaceId),
+    onSuccess: async () => {
+      setWorkbenchMessage("已发送取消请求");
+      await queryClient.invalidateQueries({ queryKey: ["files", workspaceId] });
+    },
+    onError: (error) => {
+      setWorkbenchMessage(error instanceof Error ? error.message : "取消失败");
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (docId: string) => deleteFile(docId, workspaceId),
     onSuccess: async (_, docId) => {
@@ -219,7 +369,37 @@ export function ConsolePage() {
 
   const providerCount = providersQuery.data?.length ?? 0;
   const searchableRows = searchResultQuery.data ?? [];
+  const sortedSearchRows = useMemo(() => {
+    const rows = [...searchableRows];
+    const factor = searchSortDirection === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      if (searchSortField === "year") {
+        return factor * ((a.year || 0) - (b.year || 0));
+      }
+      if (searchSortField === "display") {
+        const left = a.display_name || a.title || a.filename || a.doc_id;
+        const right = b.display_name || b.title || b.filename || b.doc_id;
+        return factor * left.localeCompare(right, "zh-Hans-CN");
+      }
+      return factor * String(a.created_at || "").localeCompare(String(b.created_at || ""));
+    });
+    return rows;
+  }, [searchSortDirection, searchSortField, searchableRows]);
+
   const fileRows = filesQuery.data ?? [];
+  const queueRows = useMemo(() => {
+    return [...fileRows]
+      .filter((item) => item.status !== "indexed")
+      .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  }, [fileRows]);
+
+  const previewRenderedHtml = useMemo(() => {
+    if (!previewQuery.data?.markdown) {
+      return "";
+    }
+    return renderMarkdownToHtml(previewQuery.data.markdown);
+  }, [previewQuery.data?.markdown]);
+
   const selectedPreviewDoc = useMemo(
     () => fileRows.find((item) => item.id === selectedPreviewDocId) ?? null,
     [fileRows, selectedPreviewDocId],
@@ -252,6 +432,16 @@ export function ConsolePage() {
       review,
     };
   }, [fileRows]);
+
+  const searchSortLabel = useMemo(() => {
+    if (searchSortField === "year") {
+      return "年份";
+    }
+    if (searchSortField === "display") {
+      return "索引名";
+    }
+    return "创建时间";
+  }, [searchSortField]);
 
   const trendingKeywords = useMemo(() => {
     const countMap = new Map<string, number>();
@@ -313,6 +503,26 @@ export function ConsolePage() {
       setSelectedPreviewDocId("");
     }
   }, [fileRows, selectedPreviewDocId]);
+
+  useEffect(() => {
+    if (!searchSortOpen) {
+      return;
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) {
+        return;
+      }
+      if (searchSortRef.current?.contains(target)) {
+        return;
+      }
+      setSearchSortOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [searchSortOpen]);
 
   useEffect(() => {
     const hasRunningTask = fileRows.some((item) => {
@@ -492,6 +702,16 @@ export function ConsolePage() {
     await deleteMutation.mutateAsync(docId);
   }
 
+  function isQueueRunning(status: string, stage: string): boolean {
+    return (
+      status === "parsing" ||
+      stage === "queued" ||
+      stage === "llm_request" ||
+      stage === "writing" ||
+      stage === "cancel_requested"
+    );
+  }
+
   return (
     <section className="v3-page v3-workbench-page">
       <header className="v3-page-header">
@@ -512,20 +732,12 @@ export function ConsolePage() {
 
             <div className="v3-kpi-grid">
               <article className="v3-kpi-card">
-                <span className="v3-kpi-label">总文档</span>
-                <strong className="v3-kpi-value">{dashboardStats.total}</strong>
-              </article>
-              <article className="v3-kpi-card">
                 <span className="v3-kpi-label">已索引</span>
                 <strong className="v3-kpi-value">{dashboardStats.indexed}</strong>
               </article>
               <article className="v3-kpi-card">
                 <span className="v3-kpi-label">运行中</span>
                 <strong className="v3-kpi-value">{dashboardStats.running}</strong>
-              </article>
-              <article className="v3-kpi-card">
-                <span className="v3-kpi-label">待审核</span>
-                <strong className="v3-kpi-value">{dashboardStats.review}</strong>
               </article>
             </div>
 
@@ -652,24 +864,67 @@ export function ConsolePage() {
             </div>
 
             <div className="v3-mini-queue">
-              {fileRows.slice(0, 4).map((item) => (
-                <article className="v3-mini-queue-item" key={item.id}>
-                  <strong className="v3-mini-queue-title">{item.display_name || item.filename}</strong>
-                  <span className="v3-status-pill">{item.status}</span>
-                  <button
-                    className="v3-button v3-button-secondary"
-                    type="button"
-                    onClick={() => {
-                      void runMutation.mutateAsync(item.id);
-                    }}
-                    disabled={runMutation.isPending || !provider}
-                  >
-                    索引
-                  </button>
-                </article>
-              ))}
+              {queueRows.map((item) => {
+                const running = isQueueRunning(item.status, item.stage);
+                const statusMeta = formatQueueStatus(item.status, item.stage);
+                const statusClass =
+                  statusMeta.tone === "ok"
+                    ? "v3-status-pill is-ok"
+                    : statusMeta.tone === "warn"
+                      ? "v3-status-pill is-warn"
+                      : statusMeta.tone === "muted"
+                        ? "v3-status-pill is-muted"
+                        : statusMeta.tone === "error"
+                          ? "v3-status-pill is-error"
+                          : "v3-status-pill";
+
+                return (
+                  <article className="v3-mini-queue-item" key={item.id}>
+                    <div className="v3-mini-queue-main">
+                      <strong className="v3-mini-queue-title">{item.display_name || item.filename}</strong>
+                      <p className="v3-mini-queue-sub">{item.stage_message || item.stage || "等待索引"}</p>
+                    </div>
+                    <span className={statusClass}>{statusMeta.label}</span>
+                    <div className="v3-mini-queue-actions">
+                      {running ? (
+                        <button
+                          className="v3-button v3-button-warning"
+                          type="button"
+                          onClick={() => {
+                            void cancelMutation.mutateAsync(item.id);
+                          }}
+                          disabled={cancelMutation.isPending}
+                        >
+                          取消
+                        </button>
+                      ) : (
+                        <button
+                          className="v3-button v3-button-primary"
+                          type="button"
+                          onClick={() => {
+                            void runMutation.mutateAsync(item.id);
+                          }}
+                          disabled={runMutation.isPending || !provider}
+                        >
+                          索引
+                        </button>
+                      )}
+                      <button
+                        className="v3-button v3-button-danger"
+                        type="button"
+                        onClick={() => {
+                          void handleDeleteFromSearch(item.id);
+                        }}
+                        disabled={deleteMutation.isPending}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
               {filesQuery.isLoading ? <p className="v3-muted">正在加载文档...</p> : null}
-              {!filesQuery.isLoading && fileRows.length === 0 ? <p className="v3-muted">当前工作区暂无文档</p> : null}
+              {!filesQuery.isLoading && queueRows.length === 0 ? <p className="v3-muted">当前工作区没有待索引文档</p> : null}
             </div>
           </aside>
         </div>
@@ -682,28 +937,84 @@ export function ConsolePage() {
             <p className="v3-muted">默认展示当前工作区全部文档，输入关键词可即时过滤</p>
           </div>
 
-          <form className="v3-search-form" onSubmit={handleSearchSubmit}>
-            <input
-              className="v3-input"
-              value={searchInput}
-              onChange={(event) => {
-                setSearchInput(event.target.value);
+          <div className="v3-search-controls">
+            <form className="v3-search-form" onSubmit={handleSearchSubmit}>
+              <input
+                className="v3-input"
+                value={searchInput}
+                onChange={(event) => {
+                  setSearchInput(event.target.value);
+                }}
+                placeholder="输入关键词"
+              />
+              <button className="v3-button v3-button-primary" type="submit">
+                搜索
+              </button>
+            </form>
+
+            <div className="v3-sort-wrap" ref={searchSortRef}>
+              <button
+                className="v3-sort-trigger"
+                type="button"
+                onClick={() => {
+                  setSearchSortOpen((current) => !current);
+                }}
+              >
+                排序: {searchSortLabel}
+              </button>
+              <div className="v3-sort-menu" hidden={!searchSortOpen}>
+                <button
+                  className={`v3-sort-menu-item ${searchSortField === "created" ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setSearchSortField("created");
+                    setSearchSortOpen(false);
+                  }}
+                >
+                  创建时间
+                </button>
+                <button
+                  className={`v3-sort-menu-item ${searchSortField === "year" ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setSearchSortField("year");
+                    setSearchSortOpen(false);
+                  }}
+                >
+                  年份
+                </button>
+                <button
+                  className={`v3-sort-menu-item ${searchSortField === "display" ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setSearchSortField("display");
+                    setSearchSortOpen(false);
+                  }}
+                >
+                  索引名
+                </button>
+              </div>
+            </div>
+
+            <button
+              className="v3-button v3-button-secondary"
+              type="button"
+              onClick={() => {
+                setSearchSortDirection((current) => (current === "asc" ? "desc" : "asc"));
               }}
-              placeholder="输入关键词"
-            />
-            <button className="v3-button v3-button-primary" type="submit">
-              搜索
+            >
+              {searchSortDirection === "asc" ? "升序" : "降序"}
             </button>
-          </form>
+          </div>
 
           {searchResultQuery.isFetching ? <p className="v3-muted">正在搜索...</p> : null}
           {searchResultQuery.isError ? <p className="v3-error">搜索失败，请稍后重试</p> : null}
 
             <div className="v3-card-stack">
-              {searchableRows.length === 0 && !searchResultQuery.isFetching ? (
+              {sortedSearchRows.length === 0 && !searchResultQuery.isFetching ? (
                 <p className="v3-muted">{searchQuery ? "当前工作区没有匹配结果" : "当前工作区暂无可展示文档"}</p>
               ) : null}
-              {searchableRows.map((item) => (
+              {sortedSearchRows.map((item) => (
                 <article
                   className={`v3-search-row ${item.doc_id === selectedPreviewDocId ? "is-active" : ""}`}
                   key={item.doc_id}
@@ -756,7 +1067,7 @@ export function ConsolePage() {
                       导出
                     </button>
                     <button
-                      className="v3-button v3-button-secondary"
+                      className="v3-button v3-button-danger"
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
@@ -780,10 +1091,28 @@ export function ConsolePage() {
             </div>
 
             <div className="v3-preview-toolbar">
-              <span className="v3-muted">
-                当前文档：
-                {selectedPreviewDoc ? selectedPreviewDoc.display_name || selectedPreviewDoc.filename : "请先在搜索区点击加载"}
-              </span>
+              <div className="v3-segmented-control">
+                <button
+                  className={`v3-button v3-button-secondary ${previewMode === "raw" ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setPreviewMode("raw");
+                  }}
+                  disabled={!previewQuery.data?.markdown}
+                >
+                  Markdown
+                </button>
+                <button
+                  className={`v3-button v3-button-secondary ${previewMode === "rendered" ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setPreviewMode("rendered");
+                  }}
+                  disabled={!previewQuery.data?.markdown}
+                >
+                  渲染
+                </button>
+              </div>
               <button
                 className="v3-button v3-button-secondary"
                 type="button"
@@ -837,7 +1166,16 @@ export function ConsolePage() {
               {selectedPreviewDoc ? (
                 <p className="v3-muted">状态：{selectedPreviewDoc.status} / 阶段：{selectedPreviewDoc.stage || "-"} {selectedPreviewDoc.stage_message ? `- ${selectedPreviewDoc.stage_message}` : ""}</p>
               ) : null}
-              {previewQuery.data?.markdown ? <pre className="v3-preview-content">{previewQuery.data.markdown}</pre> : null}
+              {previewQuery.data?.markdown ? (
+                previewMode === "raw" ? (
+                  <pre className="v3-preview-content">{previewQuery.data.markdown}</pre>
+                ) : (
+                  <article
+                    className="v3-preview-rendered"
+                    dangerouslySetInnerHTML={{ __html: previewRenderedHtml }}
+                  />
+                )
+              ) : null}
             </div>
           </article>
 
@@ -910,7 +1248,7 @@ export function ConsolePage() {
                   {chatMutation.isPending ? "发送中..." : "发送"}
                 </button>
                 <button
-                  className="v3-button v3-button-secondary"
+                  className="v3-button v3-button-warning"
                   type="button"
                   onClick={() => {
                     setChatMessages([]);
