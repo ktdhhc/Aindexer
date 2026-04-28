@@ -36,6 +36,10 @@ class ProviderConfigOut(BaseModel):
     enabled: bool
 
 
+class ModelRegistryResolveIn(BaseModel):
+    names: list[str] = Field(default_factory=list)
+
+
 class ClaimItem(BaseModel):
     claim_text: str
     evidence_quote: str

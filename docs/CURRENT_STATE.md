@@ -91,6 +91,9 @@
 - 索引路由与任务编排：`backend/app/routers/index.py`
 - Provider 路由：`backend/app/routers/providers.py`
 - 翻译 API 入口：`backend/app/translation/router.py`
+- Provider / 模型注册表：`backend/app/provider_registry/provider_model_registry.json`
+- 模型名注册表：`backend/app/provider_registry/model_name_registry.json`
+- 注册表读取入口：`backend/app/provider_registry/registry.py`
 - 主前端 V2 仪表盘：`backend/frontend/v2/assets/js/pages/dashboard.js`
 - 翻译前端入口：`backend/frontend/translator/assets/js/app.js`
 - V3 前端源码入口：`frontend-v3/src/main.tsx`

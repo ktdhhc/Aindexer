@@ -1,0 +1,564 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-04-28",
+  "description": "Backend-only curated provider/model registry used to improve provider configuration and chat experience. Values are derived from official provider documentation captured during the current maintenance window.",
+  "coverage_notes": [
+    "This registry is intentionally curated rather than exhaustive.",
+    "Null means the current official source snapshot did not clearly expose the field.",
+    "Current backend chat and provider clients are not automatically compatible with every api_style listed here."
+  ],
+  "providers": [
+    {
+      "id": "anthropic",
+      "display_name": "Anthropic",
+      "primary_api_style": "anthropic_messages",
+      "base_urls": [
+        {
+          "label": "default",
+          "url": "https://api.anthropic.com/v1",
+          "api_style": "anthropic_messages"
+        }
+      ],
+      "source_urls": [
+        "https://docs.anthropic.com/en/docs/about-claude/models/overview",
+        "https://docs.anthropic.com/en/api/overview",
+        "https://docs.anthropic.com/en/api/models/list"
+      ],
+      "notes": "Claude uses the native Messages API. The current backend would need an Anthropic adapter instead of an OpenAI-compatible chat/completions client.",
+      "models": [
+        {
+          "id": "claude-opus-4-7",
+          "display_name": "Claude Opus 4.7",
+          "family": "claude-4",
+          "category": "flagship",
+          "input_modalities": ["text", "image"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 1000000,
+          "max_output_tokens": 128000,
+          "notes": "Anthropic lists adaptive thinking support for this model."
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "display_name": "Claude Sonnet 4.6",
+          "family": "claude-4",
+          "category": "balanced",
+          "input_modalities": ["text", "image"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 1000000,
+          "max_output_tokens": 64000,
+          "notes": "Anthropic lists both adaptive and extended thinking support."
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "display_name": "Claude Haiku 4.5",
+          "family": "claude-4",
+          "category": "fast",
+          "input_modalities": ["text", "image"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 200000,
+          "max_output_tokens": 64000,
+          "notes": "Official overview uses API alias claude-haiku-4-5 and snapshot id claude-haiku-4-5-20251001."
+        }
+      ]
+    },
+    {
+      "id": "gemini",
+      "display_name": "Google Gemini API",
+      "primary_api_style": "google_generative_language",
+      "base_urls": [
+        {
+          "label": "v1beta",
+          "url": "https://generativelanguage.googleapis.com/v1beta",
+          "api_style": "google_generative_language"
+        }
+      ],
+      "source_urls": [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "https://ai.google.dev/api/generate-content",
+        "https://ai.google.dev/gemini-api/docs/quickstart",
+        "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-pro",
+        "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash",
+        "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite"
+      ],
+      "notes": "Gemini uses the Google Generative Language API rather than an OpenAI-compatible chat/completions endpoint.",
+      "models": [
+        {
+          "id": "gemini-2.5-pro",
+          "display_name": "Gemini 2.5 Pro",
+          "family": "gemini-2.5",
+          "category": "flagship",
+          "input_modalities": ["text", "image", "audio", "video", "pdf"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": null,
+          "supports_thinking": true,
+          "context_window_tokens": 1048576,
+          "max_output_tokens": 65536,
+          "notes": "Model page explicitly marks audio and image generation as not supported for this text model."
+        },
+        {
+          "id": "gemini-2.5-flash",
+          "display_name": "Gemini 2.5 Flash",
+          "family": "gemini-2.5",
+          "category": "balanced",
+          "input_modalities": ["text", "image", "video", "audio"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": null,
+          "supports_thinking": true,
+          "context_window_tokens": 1048576,
+          "max_output_tokens": 65536,
+          "notes": "The model page describes it as the best price-performance model for reasoning tasks."
+        },
+        {
+          "id": "gemini-2.5-flash-lite",
+          "display_name": "Gemini 2.5 Flash-Lite",
+          "family": "gemini-2.5",
+          "category": "fast",
+          "input_modalities": ["text", "image", "video", "audio", "pdf"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": null,
+          "supports_thinking": null,
+          "context_window_tokens": 1048576,
+          "max_output_tokens": 65536,
+          "notes": "Official page positions it as the fastest and most budget-friendly multimodal model in the 2.5 family."
+        }
+      ]
+    },
+    {
+      "id": "deepseek",
+      "display_name": "DeepSeek API",
+      "primary_api_style": "openai_compatible",
+      "base_urls": [
+        {
+          "label": "openai",
+          "url": "https://api.deepseek.com",
+          "api_style": "openai_compatible"
+        },
+        {
+          "label": "anthropic",
+          "url": "https://api.deepseek.com/anthropic",
+          "api_style": "anthropic_messages"
+        }
+      ],
+      "source_urls": [
+        "https://api-docs.deepseek.com/",
+        "https://api-docs.deepseek.com/quick_start/pricing"
+      ],
+      "notes": "Official docs now document the OpenAI-compatible base_url without a /v1 suffix. The current backend seed still uses a /v1 variant and may require normalization later.",
+      "models": [
+        {
+          "id": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "family": "deepseek-v4",
+          "category": "flagship",
+          "input_modalities": ["text"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": false,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 1000000,
+          "max_output_tokens": 384000,
+          "notes": "Supports both non-thinking and thinking modes."
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "family": "deepseek-v4",
+          "category": "balanced",
+          "input_modalities": ["text"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": false,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 1000000,
+          "max_output_tokens": 384000,
+          "notes": "Supports both non-thinking and thinking modes."
+        },
+        {
+          "id": "deepseek-chat",
+          "display_name": "DeepSeek Chat",
+          "family": "deepseek-compat",
+          "category": "compatibility_alias",
+          "input_modalities": ["text"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": false,
+          "supports_tool_calls": true,
+          "supports_thinking": false,
+          "context_window_tokens": 1000000,
+          "max_output_tokens": 384000,
+          "notes": "Official docs mark this as a compatibility alias for the non-thinking mode of deepseek-v4-flash and note a future deprecation."
+        }
+      ]
+    },
+    {
+      "id": "mistral",
+      "display_name": "Mistral AI",
+      "primary_api_style": "openai_compatible",
+      "base_urls": [
+        {
+          "label": "default",
+          "url": "https://api.mistral.ai/v1",
+          "api_style": "openai_compatible"
+        }
+      ],
+      "source_urls": [
+        "https://docs.mistral.ai/api/",
+        "https://docs.mistral.ai/api/endpoint/chat",
+        "https://docs.mistral.ai/models/overview",
+        "https://docs.mistral.ai/models/model-cards/mistral-large-3-25-12",
+        "https://docs.mistral.ai/models/model-cards/mistral-small-4-0-26-03"
+      ],
+      "notes": "Mistral exposes an OpenAI-shaped /v1/chat/completions endpoint and documents stream support in the Chat Completion API.",
+      "models": [
+        {
+          "id": "mistral-large-2512",
+          "display_name": "Mistral Large 3",
+          "family": "mistral-large",
+          "category": "flagship",
+          "input_modalities": ["text", "image"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": true,
+          "supports_thinking": null,
+          "context_window_tokens": 256000,
+          "max_output_tokens": null,
+          "notes": "Official model card describes it as a general-purpose multimodal model and lists function calling support."
+        },
+        {
+          "id": "mistral-small-2603",
+          "display_name": "Mistral Small 4",
+          "family": "mistral-small",
+          "category": "balanced",
+          "input_modalities": ["text"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": null,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 256000,
+          "max_output_tokens": null,
+          "notes": "Official model card highlights instruct, reasoning, and coding capabilities but does not explicitly enumerate non-text input on that page."
+        }
+      ]
+    },
+    {
+      "id": "cohere",
+      "display_name": "Cohere",
+      "primary_api_style": "cohere_v2",
+      "base_urls": [
+        {
+          "label": "default",
+          "url": "https://api.cohere.com/v2",
+          "api_style": "cohere_v2"
+        }
+      ],
+      "source_urls": [
+        "https://docs.cohere.com/docs/models",
+        "https://docs.cohere.com/reference/chat",
+        "https://docs.cohere.com/reference/chat-stream"
+      ],
+      "notes": "Cohere uses its own v2 Chat API. It is not a drop-in OpenAI-compatible provider in the current backend.",
+      "models": [
+        {
+          "id": "command-a-03-2025",
+          "display_name": "Command A",
+          "family": "command",
+          "category": "flagship",
+          "input_modalities": ["text"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": false,
+          "supports_tool_calls": true,
+          "supports_thinking": null,
+          "context_window_tokens": 256000,
+          "max_output_tokens": 8000,
+          "notes": "Cohere positions Command A for tool use, agents, RAG, and multilingual generation."
+        },
+        {
+          "id": "command-a-vision-07-2025",
+          "display_name": "Command A Vision",
+          "family": "command",
+          "category": "multimodal",
+          "input_modalities": ["text", "image"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": true,
+          "supports_thinking": null,
+          "context_window_tokens": 128000,
+          "max_output_tokens": 8000,
+          "notes": "Official overview describes it as Cohere's first image-capable Command model."
+        },
+        {
+          "id": "command-a-reasoning-08-2025",
+          "display_name": "Command A Reasoning",
+          "family": "command",
+          "category": "reasoning",
+          "input_modalities": ["text"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": false,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 256000,
+          "max_output_tokens": 32000,
+          "notes": "Official overview describes this as Cohere's first reasoning model."
+        }
+      ]
+    },
+    {
+      "id": "qwen",
+      "display_name": "Alibaba Cloud Model Studio (Qwen)",
+      "primary_api_style": "openai_compatible",
+      "base_urls": [
+        {
+          "label": "beijing",
+          "url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "api_style": "openai_compatible"
+        },
+        {
+          "label": "virginia",
+          "url": "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+          "api_style": "openai_compatible"
+        },
+        {
+          "label": "singapore",
+          "url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+          "api_style": "openai_compatible"
+        }
+      ],
+      "source_urls": [
+        "https://help.aliyun.com/zh/model-studio/getting-started/models",
+        "https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope"
+      ],
+      "notes": "Qwen model availability and some capabilities vary by deployment region. The registry records the major documented OpenAI-compatible endpoints for Beijing, Virginia, and Singapore.",
+      "models": [
+        {
+          "id": "qwen3-max",
+          "display_name": "Qwen3 Max",
+          "family": "qwen3",
+          "category": "flagship",
+          "input_modalities": ["text"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": false,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 262144,
+          "max_output_tokens": 65536,
+          "notes": "Thinking mode availability depends on deployment region; official docs explicitly mention built-in tool support for qwen3-max in some regions."
+        },
+        {
+          "id": "qwen3.6-plus",
+          "display_name": "Qwen3.6 Plus",
+          "family": "qwen3.6",
+          "category": "balanced",
+          "input_modalities": ["text", "image", "video"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 1000000,
+          "max_output_tokens": 65536,
+          "notes": "The Qwen Plus family documentation states that Qwen3.5 Plus supports text, image, and video input; Qwen3.6 Plus is the current stable line in that family."
+        },
+        {
+          "id": "qwen-plus",
+          "display_name": "Qwen Plus",
+          "family": "qwen3",
+          "category": "balanced",
+          "input_modalities": ["text", "image", "video"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 1000000,
+          "max_output_tokens": 32768,
+          "notes": "Official docs show qwen-plus stable snapshots with both thinking and non-thinking modes plus OpenAI-compatible streaming examples."
+        }
+      ]
+    },
+    {
+      "id": "glm",
+      "display_name": "Zhipu GLM",
+      "primary_api_style": "openai_compatible",
+      "base_urls": [
+        {
+          "label": "default",
+          "url": "https://open.bigmodel.cn/api/paas/v4/",
+          "api_style": "openai_compatible"
+        }
+      ],
+      "source_urls": [
+        "https://docs.bigmodel.cn/cn/guide/start/model-overview",
+        "https://docs.bigmodel.cn/cn/guide/develop/openai/introduction"
+      ],
+      "notes": "Zhipu documents OpenAI SDK compatibility directly and uses the open.bigmodel.cn base_url with the chat/completions flow demonstrated in examples.",
+      "models": [
+        {
+          "id": "glm-5.1",
+          "display_name": "GLM-5.1",
+          "family": "glm-5",
+          "category": "flagship",
+          "input_modalities": ["text"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": false,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 200000,
+          "max_output_tokens": 128000,
+          "notes": "OpenAI-compatible documentation includes glm-5.1 examples for standard chat and function calling."
+        },
+        {
+          "id": "glm-5v-turbo",
+          "display_name": "GLM-5V-Turbo",
+          "family": "glm-5v",
+          "category": "multimodal",
+          "input_modalities": ["text", "image"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": null,
+          "supports_thinking": null,
+          "context_window_tokens": 200000,
+          "max_output_tokens": 128000,
+          "notes": "Official model overview positions this as the multimodal coding model in the GLM family."
+        },
+        {
+          "id": "glm-4-long",
+          "display_name": "GLM-4-Long",
+          "family": "glm-4",
+          "category": "long_context",
+          "input_modalities": ["text"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": false,
+          "supports_tool_calls": null,
+          "supports_thinking": null,
+          "context_window_tokens": 1000000,
+          "max_output_tokens": 4000,
+          "notes": "Official overview describes this as the GLM model specialized for 1M-token long-context tasks."
+        }
+      ]
+    },
+    {
+      "id": "moonshot",
+      "display_name": "Moonshot AI (Kimi)",
+      "primary_api_style": "openai_compatible",
+      "base_urls": [
+        {
+          "label": "default",
+          "url": "https://api.moonshot.ai/v1",
+          "api_style": "openai_compatible"
+        }
+      ],
+      "source_urls": [
+        "https://platform.kimi.ai/docs/introduction.md",
+        "https://platform.kimi.ai/docs/api/overview.md",
+        "https://platform.kimi.ai/docs/api/chat.md",
+        "https://platform.kimi.ai/docs/models.md"
+      ],
+      "notes": "Moonshot documents an OpenAI-compatible base_url and exposes model-specific request schema in the chat API reference.",
+      "models": [
+        {
+          "id": "kimi-k2.6",
+          "display_name": "Kimi K2.6",
+          "family": "kimi-k2",
+          "category": "flagship",
+          "input_modalities": ["text", "image", "video"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 256000,
+          "max_output_tokens": null,
+          "notes": "Official model list describes native multimodal input plus thinking and non-thinking modes."
+        },
+        {
+          "id": "kimi-k2.5",
+          "display_name": "Kimi K2.5",
+          "family": "kimi-k2",
+          "category": "flagship",
+          "input_modalities": ["text", "image", "video"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": true,
+          "supports_thinking": true,
+          "context_window_tokens": 256000,
+          "max_output_tokens": null,
+          "notes": "Official model list documents the same 256K multimodal and thinking profile as K2.6."
+        },
+        {
+          "id": "moonshot-v1-128k",
+          "display_name": "Moonshot V1 128K",
+          "family": "moonshot-v1",
+          "category": "long_context",
+          "input_modalities": ["text"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": false,
+          "supports_tool_calls": true,
+          "supports_thinking": null,
+          "context_window_tokens": 128000,
+          "max_output_tokens": null,
+          "notes": "Moonshot model list states Moonshot V1 text variants differ primarily by maximum context length."
+        },
+        {
+          "id": "moonshot-v1-128k-vision-preview",
+          "display_name": "Moonshot V1 128K Vision Preview",
+          "family": "moonshot-v1",
+          "category": "multimodal",
+          "input_modalities": ["text", "image"],
+          "output_modalities": ["text"],
+          "supports_streaming": true,
+          "supports_multimodal_input": true,
+          "supports_tool_calls": true,
+          "supports_thinking": null,
+          "context_window_tokens": 128000,
+          "max_output_tokens": null,
+          "notes": "Chat API schema shows Moonshot V1 models share the same OpenAI-compatible request structure, including tool-use fields."
+        }
+      ]
+    }
+  ],
+  "pending_providers": [
+    {
+      "id": "openai",
+      "reason": "Official OpenAI docs pages returned anti-bot challenge responses in the current build environment; add verified data in a follow-up refresh."
+    },
+    {
+      "id": "xai",
+      "reason": "Official xAI pricing page was reachable, but the current environment did not provide a clean per-model capability table suitable for structured registry import."
+    },
+    {
+      "id": "openrouter",
+      "reason": "OpenRouter is an aggregator rather than a single model supplier. Add a separate aggregator-focused entry after defining the exact registry policy for brokered model catalogs."
+    }
+  ]
+}

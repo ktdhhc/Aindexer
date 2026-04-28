@@ -355,7 +355,7 @@ export function ChatPage() {
           <div className="v35-chat-thread" ref={threadRef}>
             {activeMessages.length === 0 ? (
               <div className="v35-chat-empty">
-                <span>Indexed literature</span>
+                <span>Aindexer</span>
                 <h2>向当前工作区提问</h2>
                 <p>选择模型，输入问题。</p>
               </div>

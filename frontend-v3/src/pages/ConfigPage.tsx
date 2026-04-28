@@ -15,8 +15,12 @@ import {
 } from "../shared/api/fields";
 import {
   deleteProvider,
+  type ModelRegistryResolution,
+  type ProviderRegistryModelOption,
+  type ProviderRegistryResolvedModel,
   type ProviderSummary,
   listProviders,
+  resolveModelRegistryEntries,
   resetProviders,
   testProvider,
   updateProvider,
@@ -40,6 +44,39 @@ interface ProviderDraft {
   temperature: number;
   timeout: number;
   enabled: boolean;
+}
+
+function uniqueTrimmed(values: string[]): string[] {
+  return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))];
+}
+
+function normalizeModelLookupKey(value: string): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function compactTokenLabel(value?: number | null): string {
+  if (!value || value <= 0) return "-";
+  if (value >= 1_000_000) {
+    return `${Math.round((value / 1_000_000) * 10) / 10}M`;
+  }
+  if (value >= 1_000) {
+    return `${Math.round(value / 1_000)}K`;
+  }
+  return String(value);
+}
+
+function modelCapabilitySummary(model: Pick<ProviderRegistryModelOption, "supports_streaming" | "supports_multimodal_input" | "supports_tool_calls" | "supports_thinking" | "context_window_tokens" | "max_output_tokens"> | Pick<ProviderRegistryResolvedModel, "supports_streaming" | "supports_multimodal_input" | "supports_tool_calls" | "supports_thinking" | "context_window_tokens" | "max_output_tokens"> | null): string {
+  if (!model) return "";
+  const flags = [
+    model.supports_streaming ? "流式" : null,
+    model.supports_multimodal_input ? "多模态" : null,
+    model.supports_tool_calls ? "工具" : null,
+    model.supports_thinking ? "推理" : null,
+  ].filter(Boolean);
+  const context = compactTokenLabel(model.context_window_tokens);
+  const output = compactTokenLabel(model.max_output_tokens);
+  const meta = [`上下文 ${context}`, output !== "-" ? `输出 ${output}` : null].filter(Boolean);
+  return [...flags, ...meta].join(" · ");
 }
 
 function toBoolean(value: boolean | number): boolean {
@@ -124,9 +161,46 @@ export function ConfigPage() {
     queryFn: listWorkspaces,
   });
 
+  const modelRegistryQuery = useQuery({
+    queryKey: ["provider-model-registry-resolve", providerModels],
+    queryFn: () => resolveModelRegistryEntries(providerModels),
+    enabled: providerModels.length > 0,
+  });
+
   const selectedProviderRow = useMemo(() => {
     return providersQuery.data?.find((item) => item.provider === selectedProvider) ?? null;
   }, [providersQuery.data, selectedProvider]);
+
+  const baseUrlSuggestions = useMemo(() => {
+    return uniqueTrimmed([
+      String(selectedProviderRow?.base_url || ""),
+      String(selectedProviderRow?.registry?.provider.recommended_base_url || ""),
+      ...((selectedProviderRow?.registry?.provider.base_urls ?? []).map((item) => item.url)),
+    ]);
+  }, [selectedProviderRow]);
+
+  const modelSuggestions = useMemo(() => {
+    return uniqueTrimmed([
+      String(selectedProviderRow?.model || ""),
+      ...providerModels,
+      ...((selectedProviderRow?.registry?.provider.models ?? []).map((item) => item.id)),
+    ]);
+  }, [providerModels, selectedProviderRow]);
+
+  const addableModelSuggestions = useMemo(() => {
+    return modelSuggestions.filter((item) => !providerModels.includes(item));
+  }, [modelSuggestions, providerModels]);
+
+  const resolvedModelMap = useMemo(() => {
+    const map = new Map<string, ModelRegistryResolution>();
+    for (const item of modelRegistryQuery.data ?? []) {
+      const key = normalizeModelLookupKey(item.input_name);
+      if (key) {
+        map.set(key, item);
+      }
+    }
+    return map;
+  }, [modelRegistryQuery.data]);
 
   const selectedTemplateRow = useMemo<FieldTemplate | null>(() => {
     return templatesQuery.data?.find((item) => item.id === selectedTemplateId) ?? null;
@@ -248,7 +322,7 @@ export function ConfigPage() {
         throw new Error("Provider 名称不能为空");
       }
       const source = selectedProviderRow ?? providersQuery.data?.[0] ?? null;
-      const baseUrl = String(source?.base_url || "https://api.openai.com/v1").trim();
+      const baseUrl = String(source?.registry?.provider.recommended_base_url || source?.base_url || "https://api.openai.com/v1").trim();
       const model = String(source?.model || "gpt-4o-mini").trim();
       await updateProvider(providerName, {
         base_url: baseUrl,
@@ -507,14 +581,6 @@ export function ConfigPage() {
     setNewModelName("");
   }
 
-  function renameProviderModel(index: number, value: string) {
-    const nextValue = value.trim();
-    setProviderModelRows((rows) => rows.map((item, currentIndex) => (currentIndex === index ? value : item)));
-    if (providerDraft?.model === providerModels[index]) {
-      updateProviderDraft({ model: nextValue });
-    }
-  }
-
   function removeProviderModel(index: number) {
     setProviderModelRows((rows) => {
       const nextRows = rows.filter((_, currentIndex) => currentIndex !== index);
@@ -609,7 +675,7 @@ export function ConfigPage() {
                   >
                     <strong>{item.provider}</strong>
                     <span>{item.model || "未设置模型"}</span>
-                    <em>{item.enabled ? "启用" : "停用"}</em>
+                    <em>{providerStatus(item)}</em>
                   </button>
                 ))}
                 <div className="v35-config-create-row">
@@ -624,64 +690,96 @@ export function ConfigPage() {
                     <p>Provider</p>
                     <h2>{selectedProvider || "未选择"}</h2>
                   </div>
-                  <span className={`v35-status ${selectedProviderRow?.enabled ? "is-ok" : "is-muted"}`}>
-                    {providerStatus(selectedProviderRow)}
-                  </span>
+                  <div className="v35-provider-head-actions">
+                    <span className={`v35-status ${selectedProviderRow?.enabled ? "is-ok" : "is-muted"}`}>{providerStatus(selectedProviderRow)}</span>
+                    <button className="v35-button" type="button" disabled={!providerDraft || testProviderMutation.isPending} onClick={() => void testProviderMutation.mutateAsync()}>测试</button>
+                    <button className="v35-button v35-button-primary" type="button" disabled={!providerDraft || saveProviderMutation.isPending} onClick={() => void saveProviderMutation.mutateAsync()}>保存</button>
+                  </div>
                 </header>
 
                 {providerDraft ? (
-                  <div className="v35-config-form-grid">
-                    <label className="v35-field v35-span-2">
-                      <span>Base URL</span>
-                      <input className="v35-input" value={providerDraft.baseUrl} onChange={(event) => updateProviderDraft({ baseUrl: event.target.value })} />
-                    </label>
-                    <div className="v35-model-editor v35-span-2">
-                      <div className="v35-model-editor-head">
-                        <span>Models</span>
+                  <>
+                    <datalist id="v35-provider-base-urls">
+                      {baseUrlSuggestions.map((url) => {
+                        const match = selectedProviderRow?.registry?.provider.base_urls.find((item) => item.url === url);
+                        return <option key={url} value={url} label={match?.label || url} />;
+                      })}
+                    </datalist>
+                    <datalist id="v35-provider-addable-models">
+                      {addableModelSuggestions.map((modelName) => {
+                        const match = selectedProviderRow?.registry?.provider.models.find((item) => item.id === modelName);
+                        return <option key={modelName} value={modelName} label={match?.display_name || modelName} />;
+                      })}
+                    </datalist>
+
+                    <div className="v35-provider-editor">
+                      <section className="v35-provider-block">
+                        <div className="v35-provider-block-head">
+                          <span>连接</span>
+                          {selectedProviderRow?.registry?.provider.recommended_api_style ? <em>{selectedProviderRow.registry.provider.recommended_api_style}</em> : null}
+                        </div>
+                        <label className="v35-field">
+                          <span>Base URL</span>
+                          <input className="v35-input" list="v35-provider-base-urls" value={providerDraft.baseUrl} placeholder={selectedProviderRow?.registry?.provider.recommended_base_url || "输入 Base URL"} onChange={(event) => updateProviderDraft({ baseUrl: event.target.value })} />
+                        </label>
+                        <label className="v35-field">
+                          <span>API Key</span>
+                          <input className="v35-input" type="password" value={providerDraft.apiKey} placeholder={selectedProviderRow?.api_key_masked || "输入新 API Key"} onChange={(event) => updateProviderDraft({ apiKey: event.target.value, clearApiKey: false })} />
+                        </label>
+                        <div className="v35-provider-flags">
+                          <label className="v35-check-line">
+                            <input type="checkbox" checked={providerDraft.enabled} onChange={(event) => updateProviderDraft({ enabled: event.target.checked })} />
+                            <span>启用</span>
+                          </label>
+                          <label className="v35-check-line">
+                            <input type="checkbox" checked={providerDraft.clearApiKey} onChange={(event) => updateProviderDraft({ apiKey: "", clearApiKey: event.target.checked })} />
+                            <span>清空 Key</span>
+                          </label>
+                        </div>
+                      </section>
+
+                      <section className="v35-provider-block">
+                        <div className="v35-provider-block-head">
+                          <span>模型</span>
+                        </div>
                         <div className="v35-model-add-row">
-                          <input className="v35-input" value={newModelName} onChange={(event) => setNewModelName(event.target.value)} placeholder="新增模型名" />
+                          <input className="v35-input" list="v35-provider-addable-models" value={newModelName} onChange={(event) => setNewModelName(event.target.value)} placeholder="添加模型并设为默认" />
                           <button className="v35-button" type="button" onClick={addProviderModel}>添加</button>
                         </div>
-                      </div>
-                      <div className="v35-model-list">
-                        {providerModels.map((modelName, index) => (
-                          <div className={`v35-model-row ${providerDraft.model === modelName ? "is-active" : ""}`} key={`${modelName}_${index}`}>
-                            <input className="v35-input" value={modelName} onChange={(event) => renameProviderModel(index, event.target.value)} />
-                            <button className="v35-button" type="button" disabled={!modelName.trim()} onClick={() => updateProviderDraft({ model: modelName.trim() })}>设为默认</button>
-                            <button className="v35-button" type="button" onClick={() => removeProviderModel(index)}>删除</button>
-                          </div>
-                        ))}
-                        {providerModels.length === 0 ? <p className="v35-muted">先添加一个模型名。</p> : null}
-                      </div>
+                        <div className="v35-provider-model-list">
+                          {providerModels.map((modelName, index) => {
+                            const resolution = resolvedModelMap.get(normalizeModelLookupKey(modelName));
+                            const summary = modelCapabilitySummary(resolution?.resolved ?? null);
+                            return (
+                              <div className={`v35-provider-model-option ${providerDraft.model === modelName ? "is-active" : ""}`} key={`${modelName}_${index}`}>
+                                <button type="button" onClick={() => updateProviderDraft({ model: modelName.trim() })}>
+                                  <strong>{modelName}</strong>
+                                  {summary ? <span>{summary}</span> : null}
+                                </button>
+                                <button type="button" onClick={() => removeProviderModel(index)}>删除</button>
+                              </div>
+                            );
+                          })}
+                          {providerModels.length === 0 ? <p className="v35-muted">暂无模型。</p> : null}
+                        </div>
+                        <div className="v35-provider-number-row">
+                          <label className="v35-field">
+                            <span>Timeout</span>
+                            <input className="v35-input" type="number" min="10" max="300" value={providerDraft.timeout} onChange={(event) => updateProviderDraft({ timeout: Number(event.target.value) })} />
+                          </label>
+                          <label className="v35-field">
+                            <span>Temperature</span>
+                            <input className="v35-input" type="number" step="0.1" min="0" max="2" value={providerDraft.temperature} onChange={(event) => updateProviderDraft({ temperature: Number(event.target.value) })} />
+                          </label>
+                        </div>
+                      </section>
                     </div>
-                    <label className="v35-field">
-                      <span>Timeout</span>
-                      <input className="v35-input" type="number" min="10" max="300" value={providerDraft.timeout} onChange={(event) => updateProviderDraft({ timeout: Number(event.target.value) })} />
-                    </label>
-                    <label className="v35-field">
-                      <span>Temperature</span>
-                      <input className="v35-input" type="number" step="0.1" min="0" max="2" value={providerDraft.temperature} onChange={(event) => updateProviderDraft({ temperature: Number(event.target.value) })} />
-                    </label>
-                    <label className="v35-field v35-span-2">
-                      <span>API Key</span>
-                      <input className="v35-input" type="password" value={providerDraft.apiKey} placeholder={selectedProviderRow?.api_key_masked || "输入新 API Key"} onChange={(event) => updateProviderDraft({ apiKey: event.target.value, clearApiKey: false })} />
-                    </label>
-                    <label className="v35-check-line">
-                      <input type="checkbox" checked={providerDraft.enabled} onChange={(event) => updateProviderDraft({ enabled: event.target.checked })} />
-                      <span>启用</span>
-                    </label>
-                    <label className="v35-check-line">
-                      <input type="checkbox" checked={providerDraft.clearApiKey} onChange={(event) => updateProviderDraft({ apiKey: "", clearApiKey: event.target.checked })} />
-                      <span>清空 Key</span>
-                    </label>
-                  </div>
+                  </>
                 ) : (
                   <p className="v35-muted">暂无 Provider</p>
                 )}
 
                 <footer className="v35-config-actions">
-                  <button className="v35-button v35-button-primary" type="button" disabled={!providerDraft || saveProviderMutation.isPending} onClick={() => void saveProviderMutation.mutateAsync()}>保存</button>
-                  <button className="v35-button" type="button" disabled={!providerDraft || testProviderMutation.isPending} onClick={() => void testProviderMutation.mutateAsync()}>测试</button>
                   <button className="v35-button" type="button" disabled={!providerDraft || deleteProviderMutation.isPending} onClick={() => void deleteProviderMutation.mutateAsync()}>删除 Provider</button>
                   <button className="v35-button" type="button" disabled={resetProvidersMutation.isPending} onClick={() => void resetProvidersMutation.mutateAsync()}>恢复默认</button>
                 </footer>

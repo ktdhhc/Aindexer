@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-04-28",
+  "description": "Backend-only model-name registry used to normalize user-entered model strings to curated provider model capability records.",
+  "models": [
+    {
+      "name": "claude-opus-4-7",
+      "provider_id": "anthropic",
+      "provider_model_id": "claude-opus-4-7",
+      "aliases": ["Claude Opus 4.7"]
+    },
+    {
+      "name": "claude-sonnet-4-6",
+      "provider_id": "anthropic",
+      "provider_model_id": "claude-sonnet-4-6",
+      "aliases": ["Claude Sonnet 4.6"]
+    },
+    {
+      "name": "claude-haiku-4-5",
+      "provider_id": "anthropic",
+      "provider_model_id": "claude-haiku-4-5",
+      "aliases": ["Claude Haiku 4.5"]
+    },
+    {
+      "name": "claude-haiku-4-5-20251001",
+      "provider_id": "anthropic",
+      "provider_model_id": "claude-haiku-4-5",
+      "notes": "Anthropic snapshot id that currently resolves to the Claude Haiku 4.5 capability record."
+    },
+    {
+      "name": "gemini-2.5-pro",
+      "provider_id": "gemini",
+      "provider_model_id": "gemini-2.5-pro",
+      "aliases": ["Gemini 2.5 Pro"]
+    },
+    {
+      "name": "gemini-2.5-flash",
+      "provider_id": "gemini",
+      "provider_model_id": "gemini-2.5-flash",
+      "aliases": ["Gemini 2.5 Flash"]
+    },
+    {
+      "name": "gemini-2.5-flash-lite",
+      "provider_id": "gemini",
+      "provider_model_id": "gemini-2.5-flash-lite",
+      "aliases": ["Gemini 2.5 Flash-Lite"]
+    },
+    {
+      "name": "deepseek-v4-pro",
+      "provider_id": "deepseek",
+      "provider_model_id": "deepseek-v4-pro",
+      "aliases": ["DeepSeek V4 Pro"]
+    },
+    {
+      "name": "deepseek-v4-flash",
+      "provider_id": "deepseek",
+      "provider_model_id": "deepseek-v4-flash",
+      "aliases": ["DeepSeek V4 Flash"]
+    },
+    {
+      "name": "deepseek-chat",
+      "provider_id": "deepseek",
+      "provider_model_id": "deepseek-chat",
+      "notes": "Compatibility alias for the non-thinking mode of deepseek-v4-flash."
+    },
+    {
+      "name": "deepseek-reasoner",
+      "provider_id": "deepseek",
+      "provider_model_id": "deepseek-v4-flash",
+      "notes": "Compatibility alias for the thinking mode of deepseek-v4-flash."
+    },
+    {
+      "name": "mistral-large-2512",
+      "provider_id": "mistral",
+      "provider_model_id": "mistral-large-2512",
+      "aliases": ["Mistral Large 3"]
+    },
+    {
+      "name": "mistral-large-latest",
+      "provider_id": "mistral",
+      "provider_model_id": "mistral-large-2512",
+      "notes": "Latest alias currently mapped to the curated Mistral Large 3 record."
+    },
+    {
+      "name": "mistral-small-2603",
+      "provider_id": "mistral",
+      "provider_model_id": "mistral-small-2603",
+      "aliases": ["Mistral Small 4"]
+    },
+    {
+      "name": "mistral-small-latest",
+      "provider_id": "mistral",
+      "provider_model_id": "mistral-small-2603",
+      "notes": "Latest alias currently mapped to the curated Mistral Small 4 record."
+    },
+    {
+      "name": "command-a-03-2025",
+      "provider_id": "cohere",
+      "provider_model_id": "command-a-03-2025",
+      "aliases": ["Command A"]
+    },
+    {
+      "name": "command-a-vision-07-2025",
+      "provider_id": "cohere",
+      "provider_model_id": "command-a-vision-07-2025",
+      "aliases": ["Command A Vision"]
+    },
+    {
+      "name": "command-a-reasoning-08-2025",
+      "provider_id": "cohere",
+      "provider_model_id": "command-a-reasoning-08-2025",
+      "aliases": ["Command A Reasoning"]
+    },
+    {
+      "name": "qwen3-max",
+      "provider_id": "qwen",
+      "provider_model_id": "qwen3-max",
+      "aliases": ["Qwen3 Max"]
+    },
+    {
+      "name": "qwen3.6-plus",
+      "provider_id": "qwen",
+      "provider_model_id": "qwen3.6-plus",
+      "aliases": ["Qwen3.6 Plus"]
+    },
+    {
+      "name": "qwen-plus",
+      "provider_id": "qwen",
+      "provider_model_id": "qwen-plus",
+      "aliases": ["Qwen Plus"]
+    },
+    {
+      "name": "glm-5.1",
+      "provider_id": "glm",
+      "provider_model_id": "glm-5.1",
+      "aliases": ["GLM-5.1"]
+    },
+    {
+      "name": "glm-5v-turbo",
+      "provider_id": "glm",
+      "provider_model_id": "glm-5v-turbo",
+      "aliases": ["GLM-5V-Turbo"]
+    },
+    {
+      "name": "glm-4-long",
+      "provider_id": "glm",
+      "provider_model_id": "glm-4-long",
+      "aliases": ["GLM-4-Long"]
+    },
+    {
+      "name": "kimi-k2.6",
+      "provider_id": "moonshot",
+      "provider_model_id": "kimi-k2.6",
+      "aliases": ["Kimi K2.6"]
+    },
+    {
+      "name": "kimi-k2.5",
+      "provider_id": "moonshot",
+      "provider_model_id": "kimi-k2.5",
+      "aliases": ["Kimi K2.5"]
+    },
+    {
+      "name": "moonshot-v1-128k",
+      "provider_id": "moonshot",
+      "provider_model_id": "moonshot-v1-128k"
+    },
+    {
+      "name": "moonshot-v1-128k-vision-preview",
+      "provider_id": "moonshot",
+      "provider_model_id": "moonshot-v1-128k-vision-preview",
+      "aliases": ["Moonshot V1 128K Vision Preview"]
+    }
+  ]
+}
