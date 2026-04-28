@@ -6,44 +6,25 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
-const SCALE = 1.35;
+const DEFAULT_SCALE = 1.35;
 
-interface TextItem {
-  text: string;
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-  fontSize: number;
-}
+export type PdfSelectionMode = "layout" | "text";
 
 interface PdfViewerProps {
   url: string;
   onSelection: (text: string) => void;
   className?: string;
+  selectionMode?: PdfSelectionMode;
+  scale?: number;
 }
 
-interface PdfTextItem {
-  str: string;
-  transform: number[];
-  width: number;
-  height: number;
-}
-
-function multiplyTransform(t1: number[], t2: number[]): number[] {
-  const [a1, b1, c1, d1, e1, f1] = t1;
-  const [a2, b2, c2, d2, e2, f2] = t2;
-  return [
-    a1 * a2 + c1 * b2,
-    b1 * a2 + d1 * b2,
-    a1 * c2 + c1 * d2,
-    b1 * c2 + d1 * d2,
-    a1 * e2 + c1 * f2 + e1,
-    b1 * e2 + d1 * f2 + f1,
-  ];
-}
-
-export function PdfViewer({ url, onSelection, className }: PdfViewerProps) {
+export function PdfViewer({
+  url,
+  onSelection,
+  className,
+  selectionMode = "layout",
+  scale = DEFAULT_SCALE,
+}: PdfViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const renderTokenRef = useRef(0);
   const pdfDocRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
@@ -73,20 +54,7 @@ export function PdfViewer({ url, onSelection, className }: PdfViewerProps) {
           if (token !== renderTokenRef.current) return;
 
           const page = await pdfDocument.getPage(pageNum);
-          const viewport = page.getViewport({ scale: SCALE });
-          const outputScale = window.devicePixelRatio || 1;
-
-          const canvas = document.createElement("canvas");
-          canvas.width = Math.floor(viewport.width * outputScale);
-          canvas.height = Math.floor(viewport.height * outputScale);
-          canvas.style.width = `${viewport.width}px`;
-          canvas.style.height = `${viewport.height}px`;
-          canvas.style.display = "block";
-
-          const ctx = canvas.getContext("2d", { alpha: false });
-          if (!ctx) continue;
-          ctx.setTransform(outputScale, 0, 0, outputScale, 0, 0);
-
+          const viewport = page.getViewport({ scale });
           const pageEl = document.createElement("section");
           pageEl.className = "v35-pdf-page";
           pageEl.dataset.page = String(pageNum);
@@ -99,37 +67,63 @@ export function PdfViewer({ url, onSelection, className }: PdfViewerProps) {
           surface.className = "v35-pdf-surface";
           surface.style.width = `${viewport.width}px`;
           surface.style.height = `${viewport.height}px`;
-
-          const textLayer = document.createElement("div");
-          textLayer.className = "v35-pdf-text-layer";
-
-          surface.appendChild(canvas);
-          surface.appendChild(textLayer);
           pageEl.appendChild(meta);
           pageEl.appendChild(surface);
           container.appendChild(pageEl);
 
-          await page.render({ canvasContext: ctx, viewport }).promise;
+          if (selectionMode === "layout") {
+            const outputScale = window.devicePixelRatio || 1;
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.floor(viewport.width * outputScale);
+            canvas.height = Math.floor(viewport.height * outputScale);
+            canvas.style.width = `${viewport.width}px`;
+            canvas.style.height = `${viewport.height}px`;
+            canvas.style.display = "block";
 
-          const textContent = await page.getTextContent();
-          const items = extractTextItems(
-            textContent.items as PdfTextItem[],
-            viewport.transform,
-          );
+            const ctx = canvas.getContext("2d", { alpha: false });
+            if (!ctx) continue;
+            ctx.setTransform(outputScale, 0, 0, outputScale, 0, 0);
 
-          const fragment = document.createDocumentFragment();
-          for (const item of items) {
-            const span = document.createElement("span");
-            span.className = "v35-pdf-text-span";
-            span.style.left = `${item.left}px`;
-            span.style.top = `${item.top}px`;
-            span.style.width = `${item.width}px`;
-            span.style.height = `${item.height}px`;
-            span.style.fontSize = `${item.fontSize}px`;
-            span.textContent = item.text;
-            fragment.appendChild(span);
+            const textLayer = document.createElement("div");
+            textLayer.className = "v35-pdf-text-layer textLayer";
+            textLayer.style.setProperty("--scale-factor", String(viewport.scale));
+
+            surface.appendChild(canvas);
+            surface.appendChild(textLayer);
+
+            await page.render({ canvasContext: ctx, viewport }).promise;
+
+            const textContent = await page.getTextContent();
+            const layer = new pdfjsLib.TextLayer({
+              textContentSource: textContent,
+              container: textLayer,
+              viewport,
+            });
+            await layer.render();
+          } else {
+            surface.classList.add("v35-pdf-text-surface");
+            const textFlow = document.createElement("div");
+            textFlow.className = "v35-pdf-text-flow";
+            textFlow.style.fontSize = `${Math.round((15 * scale / DEFAULT_SCALE) * 100) / 100}px`;
+            textFlow.style.padding = `${Math.round((20 * scale / DEFAULT_SCALE) * 100) / 100}px ${Math.round((24 * scale / DEFAULT_SCALE) * 100) / 100}px`;
+
+            const textContent = await page.getTextContent();
+            const lines = buildPageTextLines(textContent);
+            if (lines.length === 0) {
+              const empty = document.createElement("p");
+              empty.className = "v35-muted";
+              empty.textContent = "该页暂无可提取文本";
+              textFlow.appendChild(empty);
+            } else {
+              for (const line of lines) {
+                const p = document.createElement("p");
+                p.textContent = line;
+                textFlow.appendChild(p);
+              }
+            }
+
+            surface.appendChild(textFlow);
           }
-          textLayer.appendChild(fragment);
         }
       } catch (err) {
         if (token !== renderTokenRef.current) return;
@@ -139,7 +133,7 @@ export function PdfViewer({ url, onSelection, className }: PdfViewerProps) {
         try { loadingTask.destroy(); } catch { /* ok */ }
       }
     },
-    [url],
+    [url, scale, selectionMode],
   );
 
   useEffect(() => {
@@ -182,38 +176,24 @@ export function PdfViewer({ url, onSelection, className }: PdfViewerProps) {
   return <div ref={containerRef} className={className} />;
 }
 
-function extractTextItems(
-  items: PdfTextItem[],
-  viewportTransform: number[],
-): TextItem[] {
-  const result: TextItem[] = [];
-  const viewportScale = Math.abs(viewportTransform[0]);
+function buildPageTextLines(textContent: pdfjsLib.TextContent): string[] {
+  const items = textContent.items as Array<{ str?: string; transform?: number[] }>;
+  const lines: Array<{ y: number; text: string }> = [];
 
   for (const item of items) {
-    if (!item.str || !item.str.trim()) continue;
-    const tx = multiplyTransform(viewportTransform, item.transform);
+    const value = String(item?.str ?? "");
+    if (!value.trim()) continue;
+    const y = item.transform?.[5] ?? 0;
 
-    const scaleX = Math.sqrt(tx[0] * tx[0] + tx[1] * tx[1]);
-    const fontSize = Math.max(scaleX, 1);
-
-    const scaledItemHeight = Math.max(viewportScale * (item.height || 0), fontSize);
-    const left = tx[4];
-    const top = tx[5] - scaledItemHeight;
-
-    const width = Math.max(
-      (item.width || fontSize * item.str.length * 0.55) * viewportScale + 4,
-      4,
-    );
-
-    result.push({
-      text: item.str,
-      left: Math.round(left * 100) / 100,
-      top: Math.round(top * 100) / 100,
-      width: Math.round(width * 100) / 100,
-      height: Math.round(scaledItemHeight * 100) / 100,
-      fontSize: Math.round(fontSize * 100) / 100,
-    });
+    const last = lines[lines.length - 1];
+    if (!last || Math.abs(last.y - y) > 3) {
+      lines.push({ y, text: value });
+      continue;
+    }
+    last.text += value;
   }
 
-  return result;
+  return lines
+    .map((line) => line.text.replace(/\s+/g, " ").trim())
+    .filter((line) => line.length > 0);
 }

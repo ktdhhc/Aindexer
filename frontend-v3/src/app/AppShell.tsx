@@ -8,7 +8,7 @@ import { listWorkspaces } from "../shared/api/workspaces";
 
 const navItems = [
   { to: "/workbench", label: "文库"},
-  { to: "/translator", label: "译文" },
+  { to: "/translator", label: "翻译" },
   { to: "/chat", label: "问答" },
   { to: "/config", label: "配置" },
 ] as const;

@@ -14,8 +14,13 @@ export interface ChatAnswer {
 }
 
 export function askChatV0(payload: ChatAskPayload): Promise<ChatAnswer> {
+  return askChatV0WithSignal(payload);
+}
+
+export function askChatV0WithSignal(payload: ChatAskPayload, signal?: AbortSignal): Promise<ChatAnswer> {
   return fetchJson<ChatAnswer>("/api/chat/ask_v0", {
     method: "POST",
     body: JSON.stringify(payload),
+    signal,
   });
 }

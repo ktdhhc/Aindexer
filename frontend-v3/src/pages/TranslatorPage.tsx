@@ -15,10 +15,15 @@ import {
   type ProviderModelEntry,
 } from "../shared/lib/providerModels";
 import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
-import { PdfViewer } from "../features/translator/PdfViewer";
+import { PdfViewer, type PdfSelectionMode } from "../features/translator/PdfViewer";
 
 type InspectorTab = "result" | "history";
 type TranslateMode = "full" | "compact";
+
+const PREVIEW_SCALE_MIN = 0.9;
+const PREVIEW_SCALE_MAX = 2.1;
+const PREVIEW_SCALE_STEP = 0.15;
+const DEFAULT_PREVIEW_SCALE = 1.35;
 
 function normalizeText(text: string): string {
   return String(text || "").replace(/\s+/g, " ").trim();
@@ -46,6 +51,9 @@ export function TranslatorPage() {
   const [translateMode, setTranslateMode] = useState<TranslateMode>("full");
   const [latestResult, setLatestResult] = useState<TranslationResult | null>(null);
   const [statusMessage, setStatusMessage] = useState("准备就绪");
+  const [viewerMode, setViewerMode] = useState<PdfSelectionMode>("layout");
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [previewScale, setPreviewScale] = useState(DEFAULT_PREVIEW_SCALE);
 
   const activeControllerRef = useRef<AbortController | null>(null);
   const activeClientRequestIdRef = useRef<string | null>(null);
@@ -137,6 +145,7 @@ export function TranslatorPage() {
       const clientRequestId = crypto.randomUUID?.() || `treq_${Date.now()}`;
       activeControllerRef.current = controller;
       activeClientRequestIdRef.current = clientRequestId;
+      setIsTranslating(true);
       setStatusMessage("正在翻译");
 
       try {
@@ -165,6 +174,7 @@ export function TranslatorPage() {
         if (activeControllerRef.current === controller) {
           activeControllerRef.current = null;
           activeClientRequestIdRef.current = null;
+          setIsTranslating(false);
         }
       }
     },
@@ -185,6 +195,7 @@ export function TranslatorPage() {
       await cancelTranslationRequest(clientRequestId).catch(() => undefined);
     }
     translateMutation.reset();
+    setIsTranslating(false);
     setStatusMessage("已取消");
   }
 
@@ -200,14 +211,21 @@ export function TranslatorPage() {
       lastAutoSourceRef.current = normalized;
       setSourceText(normalized);
 
+      if (translateMode !== "compact") {
+        return;
+      }
+
       autoDebounceRef.current = setTimeout(() => {
         void doTranslate(normalized);
       }, 800);
     },
-    [doTranslate],
+    [doTranslate, translateMode],
   );
 
   const handleTextareaMouseUp = useCallback(() => {
+    if (translateMode !== "compact") {
+      return;
+    }
     if (autoDebounceRef.current) clearTimeout(autoDebounceRef.current);
     autoDebounceRef.current = setTimeout(() => {
       const selection = window.getSelection();
@@ -222,13 +240,22 @@ export function TranslatorPage() {
         void doTranslate(text);
       }, 600);
     }, 200);
-  }, [selectedDocumentId, selectedModelEntry, doTranslate]);
+  }, [selectedDocumentId, selectedModelEntry, doTranslate, translateMode]);
 
   const canStartTranslate = Boolean(
-    selectedDocumentId && selectedModelEntry && sourceStats.chars >= 40 && !translateMutation.isPending,
+    selectedDocumentId && selectedModelEntry && sourceStats.chars >= 40 && !isTranslating,
   );
 
   const pdfFileUrl = selectedDocumentId ? buildOriginalFileUrl(selectedDocumentId, workspaceId) : "";
+  const canZoomOut = previewScale > PREVIEW_SCALE_MIN;
+  const canZoomIn = previewScale < PREVIEW_SCALE_MAX;
+
+  function changePreviewScale(direction: -1 | 1) {
+    setPreviewScale((current) => {
+      const next = current + direction * PREVIEW_SCALE_STEP;
+      return Math.min(PREVIEW_SCALE_MAX, Math.max(PREVIEW_SCALE_MIN, Math.round(next * 100) / 100));
+    });
+  }
 
   return (
     <section className="v35-translator-page">
@@ -287,6 +314,49 @@ export function TranslatorPage() {
               <h2>{selectedDocument?.display_name || selectedDocument?.filename || "选择一篇 PDF"}</h2>
             </div>
             <div className="v35-translation-reader-actions">
+              <div className="v35-preview-zoom" role="group" aria-label="预览缩放">
+                <button
+                  className="v35-icon-button"
+                  type="button"
+                  aria-label="缩小预览"
+                  title="缩小预览"
+                  disabled={!pdfFileUrl || !canZoomOut}
+                  onClick={() => changePreviewScale(-1)}
+                >
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M3 8h10" />
+                  </svg>
+                </button>
+                <span>{Math.round((previewScale / DEFAULT_PREVIEW_SCALE) * 100)}%</span>
+                <button
+                  className="v35-icon-button"
+                  type="button"
+                  aria-label="放大预览"
+                  title="放大预览"
+                  disabled={!pdfFileUrl || !canZoomIn}
+                  onClick={() => changePreviewScale(1)}
+                >
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M8 3v10M3 8h10" />
+                  </svg>
+                </button>
+              </div>
+              <div className="v35-viewer-mode-toggle" role="group" aria-label="预览模式">
+                <button
+                  className={`v35-mode-btn ${viewerMode === "layout" ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => setViewerMode("layout")}
+                >
+                  版面
+                </button>
+                <button
+                  className={`v35-mode-btn ${viewerMode === "text" ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => setViewerMode("text")}
+                >
+                  文本
+                </button>
+              </div>
               {pdfFileUrl ? (
                 <a className="v35-button" href={pdfFileUrl} target="_blank" rel="noreferrer">
                   PDF
@@ -300,6 +370,8 @@ export function TranslatorPage() {
               className="v35-pdf-viewer"
               url={pdfFileUrl}
               onSelection={handlePdfSelection}
+              selectionMode={viewerMode}
+              scale={previewScale}
             />
           ) : (
             <div className="v35-translation-pages">
@@ -371,11 +443,11 @@ export function TranslatorPage() {
 
                   <div className="v35-config-actions">
                     <button className="v35-button v35-button-primary" type="button" disabled={!canStartTranslate} onClick={() => void translateMutation.mutateAsync()}>
-                      翻译选区
+                      翻译
                     </button>
-                    <button className="v35-button" type="button" disabled={!translateMutation.isPending} onClick={() => void cancelActiveTranslation()}>
-                      取消
-                    </button>
+                     <button className="v35-button" type="button" disabled={!isTranslating} onClick={() => void cancelActiveTranslation()}>
+                       取消
+                     </button>
                     <button className="v35-button" type="button" disabled={!sourceText} onClick={() => { setSourceText(""); lastAutoSourceRef.current = ""; }}>
                       清空
                     </button>
@@ -391,28 +463,28 @@ export function TranslatorPage() {
               <article className="v35-translation-result">
                 <header>
                   <span>{latestResult?.cached ? "Cached" : "Result"}</span>
-                  {translateMutation.isPending ? (
-                    <button className="v35-button" type="button" onClick={() => void cancelActiveTranslation()}>
-                      取消
-                    </button>
+                 {isTranslating ? (
+                   <button className="v35-button" type="button" onClick={() => void cancelActiveTranslation()}>
+                     取消
+                   </button>
                   ) : latestResult ? (
                     <button className="v35-button" type="button" onClick={() => void navigator.clipboard?.writeText(latestResult.translated_text)}>
                       复制
                     </button>
                   ) : null}
                 </header>
-                {translateMutation.isPending ? (
-                  <p className="v35-muted"><span className="v35-spinner" aria-label="正在翻译" /> 正在生成译文...</p>
-                ) : null}
-                {latestResult ? (
-                  <p>{latestResult.translated_text}</p>
-                ) : !translateMutation.isPending ? (
-                  <p className="v35-muted">输入原文后翻译</p>
-                ) : null}
-                {latestResult && !translateMutation.isPending ? (
-                  <footer>
-                    {latestResult.provider} · {latestResult.model} ·{" "}
-                    {latestResult.total_duration_ms ? `${Math.round(latestResult.total_duration_ms)}ms` : "-"}
+                 {isTranslating ? (
+                   <p className="v35-muted"><span className="v35-spinner" aria-label="正在翻译" /> 正在生成译文...</p>
+                 ) : null}
+                 {latestResult ? (
+                   <p>{latestResult.translated_text}</p>
+                 ) : !isTranslating ? (
+                   <p className="v35-muted">输入原文后翻译</p>
+                 ) : null}
+                 {latestResult && !isTranslating ? (
+                   <footer>
+                     {latestResult.provider} · {latestResult.model} ·{" "}
+                     {latestResult.total_duration_ms ? `${Math.round(latestResult.total_duration_ms)}ms` : "-"}
                   </footer>
                 ) : null}
               </article>
