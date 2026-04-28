@@ -4,6 +4,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useWorkspaceStore } from "../app/workspaceStore";
 import { askChatV0 } from "../shared/api/chat";
 import { listProviders } from "../shared/api/providers";
+import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
+import { getProviderModels } from "../shared/lib/providerModels";
 
 interface ChatMessage {
   id: string;
@@ -32,6 +34,12 @@ export function ChatPage() {
     return providersQuery.data?.find((item) => item.provider === selectedProvider) ?? null;
   }, [providersQuery.data, selectedProvider]);
 
+  const chatDefault = parseModelDefaultKey(getModelDefault("chat"));
+
+  const modelOptions = useMemo(() => {
+    return getProviderModels(selectedProvider, selectedProviderRow?.model);
+  }, [selectedProvider, selectedProviderRow]);
+
   useEffect(() => {
     const providers = providersQuery.data;
     if (!providers || providers.length === 0) {
@@ -39,17 +47,25 @@ export function ChatPage() {
       return;
     }
     if (!selectedProvider || !providers.some((item) => item.provider === selectedProvider)) {
-      setSelectedProvider(providers[0].provider);
+      const defaultProvider =
+        chatDefault && providers.some((item) => item.enabled && item.provider === chatDefault.provider)
+          ? chatDefault.provider
+          : (providers.find((item) => item.enabled)?.provider ?? providers[0].provider);
+      setSelectedProvider(defaultProvider);
     }
-  }, [providersQuery.data, selectedProvider]);
+  }, [chatDefault, providersQuery.data, selectedProvider]);
 
   useEffect(() => {
     if (!selectedProviderRow) {
       setModel("");
       return;
     }
-    setModel(String(selectedProviderRow.model || ""));
-  }, [selectedProviderRow]);
+    const defaultModel =
+      chatDefault?.provider === selectedProvider && chatDefault.model && modelOptions.includes(chatDefault.model)
+        ? chatDefault.model
+        : (modelOptions[0] || String(selectedProviderRow.model || ""));
+    setModel(defaultModel);
+  }, [chatDefault, modelOptions, selectedProvider, selectedProviderRow]);
 
   const askMutation = useMutation({
     mutationFn: askChatV0,

@@ -9,11 +9,13 @@ import {
   deleteFieldTemplate,
   listFieldTemplates,
   listFields,
-  resetFields as resetFieldsConfig,
+  resetFields,
   updateFieldTemplate,
   updateFields,
 } from "../shared/api/fields";
 import {
+  deleteProvider,
+  type ProviderSummary,
   listProviders,
   resetProviders,
   testProvider,
@@ -23,10 +25,12 @@ import {
   createWorkspace,
   deleteWorkspace,
   listWorkspaces,
-  updateWorkspace as renameWorkspace,
+  updateWorkspace,
 } from "../shared/api/workspaces";
+import { getModelDefaults, setModelDefaults, type ModelDefaults } from "../shared/lib/modelDefaults";
+import { buildAvailableProviderModelEntries, getProviderModels, setProviderModels } from "../shared/lib/providerModels";
 
-type ConfigSection = "providers" | "fields" | "workspaces";
+type ConfigSection = "providers" | "defaults" | "fields" | "workspaces";
 
 interface ProviderDraft {
   baseUrl: string;
@@ -58,6 +62,19 @@ function normalizeFieldRows(items: FieldDefinition[]): FieldDefinition[] {
     }));
 }
 
+function providerStatus(provider: ProviderSummary | null): string {
+  if (!provider) {
+    return "未选择";
+  }
+  if (!provider.enabled) {
+    return "停用";
+  }
+  if (!provider.has_api_key) {
+    return "缺少 Key";
+  }
+  return "可用";
+}
+
 export function ConfigPage() {
   const queryClient = useQueryClient();
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
@@ -65,34 +82,41 @@ export function ConfigPage() {
 
   const [section, setSection] = useState<ConfigSection>("providers");
   const [selectedProvider, setSelectedProvider] = useState("");
+  const [newProviderName, setNewProviderName] = useState("");
   const [providerDraft, setProviderDraft] = useState<ProviderDraft | null>(null);
-  const [providerMessage, setProviderMessage] = useState("");
+  const [providerModels, setProviderModelRows] = useState<string[]>([]);
+  const [newModelName, setNewModelName] = useState("");
+  const [providerMessage, setProviderMessage] = useState("准备就绪");
 
-  const [selectedFieldTemplateId, setSelectedFieldTemplateId] = useState("tpl_default");
-  const [newFieldTemplateName, setNewFieldTemplateName] = useState("");
-  const [fieldTemplateNameDraft, setFieldTemplateNameDraft] = useState("");
-  const [fieldTemplateDescriptionDraft, setFieldTemplateDescriptionDraft] = useState("");
+  const [modelDefaultsDraft, setModelDefaultsDraft] = useState<ModelDefaults>(() => getModelDefaults());
+  const [defaultsMessage, setDefaultsMessage] = useState("准备就绪");
+
+  const [selectedTemplateId, setSelectedTemplateId] = useState("tpl_default");
+  const [newTemplateName, setNewTemplateName] = useState("");
+  const [templateNameDraft, setTemplateNameDraft] = useState("");
+  const [templateDescriptionDraft, setTemplateDescriptionDraft] = useState("");
   const [fieldDrafts, setFieldDrafts] = useState<FieldDefinition[]>([]);
-  const [fieldsMessage, setFieldsMessage] = useState("");
+  const [activeFieldIndex, setActiveFieldIndex] = useState(0);
+  const [fieldsMessage, setFieldsMessage] = useState("准备就绪");
 
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
-  const [workspaceRenameName, setWorkspaceRenameName] = useState("");
-  const [workspaceMessage, setWorkspaceMessage] = useState("");
+  const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
+  const [workspaceMessage, setWorkspaceMessage] = useState("准备就绪");
 
   const providersQuery = useQuery({
     queryKey: ["providers"],
     queryFn: listProviders,
   });
 
-  const fieldTemplatesQuery = useQuery({
+  const templatesQuery = useQuery({
     queryKey: ["field-templates"],
     queryFn: listFieldTemplates,
   });
 
   const fieldsQuery = useQuery({
-    queryKey: ["fields", selectedFieldTemplateId],
-    queryFn: () => listFields(selectedFieldTemplateId),
-    enabled: !!selectedFieldTemplateId,
+    queryKey: ["fields", selectedTemplateId],
+    queryFn: () => listFields(selectedTemplateId),
+    enabled: Boolean(selectedTemplateId),
   });
 
   const workspacesQuery = useQuery({
@@ -104,22 +128,24 @@ export function ConfigPage() {
     return providersQuery.data?.find((item) => item.provider === selectedProvider) ?? null;
   }, [providersQuery.data, selectedProvider]);
 
-  const selectedFieldTemplateRow = useMemo<FieldTemplate | null>(() => {
-    return fieldTemplatesQuery.data?.find((item) => item.id === selectedFieldTemplateId) ?? null;
-  }, [fieldTemplatesQuery.data, selectedFieldTemplateId]);
+  const selectedTemplateRow = useMemo<FieldTemplate | null>(() => {
+    return templatesQuery.data?.find((item) => item.id === selectedTemplateId) ?? null;
+  }, [selectedTemplateId, templatesQuery.data]);
 
   const currentWorkspaceRow = useMemo(() => {
     return workspacesQuery.data?.find((item) => item.id === workspaceId) ?? null;
-  }, [workspacesQuery.data, workspaceId]);
+  }, [workspaceId, workspacesQuery.data]);
+
+  const availableModelEntries = useMemo(() => {
+    return buildAvailableProviderModelEntries(providersQuery.data ?? []);
+  }, [providersQuery.data]);
 
   useEffect(() => {
     const providers = providersQuery.data;
     if (!providers || providers.length === 0) {
       setSelectedProvider("");
-      setProviderDraft(null);
       return;
     }
-
     if (!selectedProvider || !providers.some((item) => item.provider === selectedProvider)) {
       setSelectedProvider(providers[0].provider);
     }
@@ -128,9 +154,10 @@ export function ConfigPage() {
   useEffect(() => {
     if (!selectedProviderRow) {
       setProviderDraft(null);
+      setProviderModelRows([]);
       return;
     }
-
+    const modelRows = getProviderModels(selectedProviderRow.provider, selectedProviderRow.model);
     setProviderDraft({
       baseUrl: String(selectedProviderRow.base_url || ""),
       model: String(selectedProviderRow.model || ""),
@@ -140,117 +167,243 @@ export function ConfigPage() {
       timeout: Number(selectedProviderRow.timeout ?? 120),
       enabled: Boolean(selectedProviderRow.enabled),
     });
+    setProviderModelRows(modelRows);
   }, [selectedProviderRow]);
 
   useEffect(() => {
-    const templates = fieldTemplatesQuery.data;
+    const templates = templatesQuery.data;
     if (!templates || templates.length === 0) {
       return;
     }
-    if (!selectedFieldTemplateId || !templates.some((item) => item.id === selectedFieldTemplateId)) {
-      setSelectedFieldTemplateId(templates[0].id);
+    if (!selectedTemplateId || !templates.some((item) => item.id === selectedTemplateId)) {
+      setSelectedTemplateId(templates[0].id);
     }
-  }, [fieldTemplatesQuery.data, selectedFieldTemplateId]);
+  }, [selectedTemplateId, templatesQuery.data]);
 
   useEffect(() => {
-    if (!selectedFieldTemplateRow) {
-      setFieldTemplateNameDraft("");
-      setFieldTemplateDescriptionDraft("");
+    if (!selectedTemplateRow) {
+      setTemplateNameDraft("");
+      setTemplateDescriptionDraft("");
       return;
     }
-    setFieldTemplateNameDraft(selectedFieldTemplateRow.name);
-    setFieldTemplateDescriptionDraft(selectedFieldTemplateRow.description || "");
-  }, [selectedFieldTemplateRow]);
+    setTemplateNameDraft(selectedTemplateRow.name);
+    setTemplateDescriptionDraft(selectedTemplateRow.description || "");
+  }, [selectedTemplateRow]);
 
   useEffect(() => {
-    if (!fieldsQuery.data) {
-      return;
+    if (fieldsQuery.data) {
+      setFieldDrafts(normalizeFieldRows(fieldsQuery.data));
+      setActiveFieldIndex(0);
     }
-    setFieldDrafts(normalizeFieldRows(fieldsQuery.data));
   }, [fieldsQuery.data]);
 
   useEffect(() => {
-    if (!currentWorkspaceRow) {
-      setWorkspaceRenameName("");
-      return;
+    if (activeFieldIndex >= fieldDrafts.length) {
+      setActiveFieldIndex(Math.max(0, fieldDrafts.length - 1));
     }
-    setWorkspaceRenameName(currentWorkspaceRow.name);
+  }, [activeFieldIndex, fieldDrafts.length]);
+
+  useEffect(() => {
+    setWorkspaceNameDraft(currentWorkspaceRow?.name || "");
   }, [currentWorkspaceRow]);
 
   const saveProviderMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedProvider || !providerDraft) {
-        throw new Error("请先选择 Provider");
+      const providerName = selectedProvider.trim();
+      if (!providerName || !providerDraft) {
+        throw new Error("请选择 Provider");
       }
-
-      const payload = {
+      const selectedModel = providerDraft.model.trim();
+      const cleanedModels = providerModels.map((item) => item.trim()).filter(Boolean);
+      const modelRows = setProviderModels(providerName, selectedModel ? [selectedModel, ...cleanedModels] : cleanedModels);
+      const modelName = selectedModel || modelRows[0] || "";
+      if (!modelName) {
+        throw new Error("至少需要一个模型名");
+      }
+      await updateProvider(providerName, {
         base_url: providerDraft.baseUrl.trim(),
-        model: providerDraft.model.trim(),
+        model: modelName,
         api_key: providerDraft.apiKey.trim() || undefined,
         clear_api_key: providerDraft.clearApiKey,
         temperature: Number(providerDraft.temperature),
         timeout: Number(providerDraft.timeout),
         enabled: providerDraft.enabled,
-      };
-
-      return updateProvider(selectedProvider, payload);
+      });
+      return providerName;
     },
-    onSuccess: async () => {
-      setProviderMessage("Provider 配置已保存");
+    onSuccess: async (providerName) => {
+      setProviderMessage("Provider 已保存");
       await queryClient.invalidateQueries({ queryKey: ["providers"] });
+      setSelectedProvider(providerName);
     },
     onError: (error) => {
-      setProviderMessage(error instanceof Error ? error.message : "保存 Provider 配置失败");
+      setProviderMessage(error instanceof Error ? error.message : "保存失败");
+    },
+  });
+
+  const createProviderMutation = useMutation({
+    mutationFn: async () => {
+      const providerName = newProviderName.trim();
+      if (!providerName) {
+        throw new Error("Provider 名称不能为空");
+      }
+      const source = selectedProviderRow ?? providersQuery.data?.[0] ?? null;
+      const baseUrl = String(source?.base_url || "https://api.openai.com/v1").trim();
+      const model = String(source?.model || "gpt-4o-mini").trim();
+      await updateProvider(providerName, {
+        base_url: baseUrl,
+        model,
+        temperature: Number(source?.temperature ?? 0.1),
+        timeout: Number(source?.timeout ?? 120),
+        enabled: false,
+      });
+      setProviderModels(providerName, [model]);
+      return providerName;
+    },
+    onSuccess: async (providerName) => {
+      setProviderMessage("Provider 已创建");
+      setNewProviderName("");
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+      setSelectedProvider(providerName);
+    },
+    onError: (error) => {
+      setProviderMessage(error instanceof Error ? error.message : "创建失败");
     },
   });
 
   const testProviderMutation = useMutation({
     mutationFn: async () => {
       if (!selectedProvider) {
-        throw new Error("请先选择 Provider");
+        throw new Error("请选择 Provider");
       }
       return testProvider(selectedProvider);
     },
     onSuccess: (result) => {
-      const state = result.success ? "成功" : "失败";
-      setProviderMessage(`连接测试${state}：${result.message}（${result.elapsed_seconds.toFixed(2)}s）`);
+      setProviderMessage(`${result.success ? "连接成功" : "连接失败"} · ${result.elapsed_seconds.toFixed(2)}s · ${result.message}`);
     },
     onError: (error) => {
       setProviderMessage(error instanceof Error ? error.message : "连接测试失败");
     },
   });
 
-  const resetProviderMutation = useMutation({
-    mutationFn: resetProviders,
+  const deleteProviderMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedProvider) {
+        throw new Error("请选择 Provider");
+      }
+      return deleteProvider(selectedProvider);
+    },
     onSuccess: async () => {
-      setProviderMessage("已恢复默认 Provider 配置");
+      setProviderMessage("Provider 已删除");
+      setProviderModels(selectedProvider, []);
+      setSelectedProvider("");
       await queryClient.invalidateQueries({ queryKey: ["providers"] });
     },
     onError: (error) => {
-      setProviderMessage(error instanceof Error ? error.message : "恢复默认 Provider 配置失败");
+      setProviderMessage(error instanceof Error ? error.message : "删除失败");
+    },
+  });
+
+  const resetProvidersMutation = useMutation({
+    mutationFn: resetProviders,
+    onSuccess: async () => {
+      setProviderMessage("已恢复默认 Provider");
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+    },
+    onError: (error) => {
+      setProviderMessage(error instanceof Error ? error.message : "恢复失败");
+    },
+  });
+
+  const saveDefaultsMutation = useMutation({
+    mutationFn: async () => setModelDefaults(modelDefaultsDraft),
+    onSuccess: (defaults) => {
+      setModelDefaultsDraft(defaults);
+      setDefaultsMessage("默认模型已保存");
+    },
+    onError: (error) => {
+      setDefaultsMessage(error instanceof Error ? error.message : "保存失败");
+    },
+  });
+
+  const createTemplateMutation = useMutation({
+    mutationFn: async () => {
+      const name = newTemplateName.trim();
+      if (!name) {
+        throw new Error("模板名称不能为空");
+      }
+      return createFieldTemplate({ name, source_template_id: selectedTemplateId || "tpl_default" });
+    },
+    onSuccess: async (template) => {
+      setFieldsMessage("模板已创建");
+      setNewTemplateName("");
+      await queryClient.invalidateQueries({ queryKey: ["field-templates"] });
+      setSelectedTemplateId(template.id);
+    },
+    onError: (error) => {
+      setFieldsMessage(error instanceof Error ? error.message : "创建失败");
+    },
+  });
+
+  const updateTemplateMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedTemplateId) {
+        throw new Error("请选择模板");
+      }
+      const name = templateNameDraft.trim();
+      if (!name) {
+        throw new Error("模板名称不能为空");
+      }
+      return updateFieldTemplate(selectedTemplateId, {
+        name,
+        description: templateDescriptionDraft.trim(),
+      });
+    },
+    onSuccess: async () => {
+      setFieldsMessage("模板信息已更新");
+      await queryClient.invalidateQueries({ queryKey: ["field-templates"] });
+    },
+    onError: (error) => {
+      setFieldsMessage(error instanceof Error ? error.message : "更新失败");
+    },
+  });
+
+  const deleteTemplateMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedTemplateRow) {
+        throw new Error("请选择模板");
+      }
+      if (selectedTemplateRow.is_default) {
+        throw new Error("默认模板不能删除");
+      }
+      return deleteFieldTemplate(selectedTemplateRow.id);
+    },
+    onSuccess: async () => {
+      setFieldsMessage("模板已删除");
+      setSelectedTemplateId("tpl_default");
+      await queryClient.invalidateQueries({ queryKey: ["field-templates"] });
+    },
+    onError: (error) => {
+      setFieldsMessage(error instanceof Error ? error.message : "删除失败");
     },
   });
 
   const saveFieldsMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedFieldTemplateId) {
-        throw new Error("请先选择字段模板");
-      }
       const seen = new Set<string>();
       const cleaned = fieldDrafts.map((item, index) => {
         const label = String(item.label || "").trim();
         if (!label) {
-          throw new Error(`第 ${index + 1} 行字段名称不能为空`);
+          throw new Error(`第 ${index + 1} 个字段缺少名称`);
         }
         if (seen.has(label)) {
           throw new Error(`字段名称重复：${label}`);
         }
         seen.add(label);
-
         return {
           ...item,
-          field_key: String(item.field_key || label).trim() || label,
           label,
+          field_key: String(item.field_key || label).trim() || label,
           description: String(item.description || "").trim(),
           field_type: String(item.field_type || "text"),
           required: toBoolean(item.required),
@@ -259,99 +412,28 @@ export function ConfigPage() {
           sort_order: index + 1,
         };
       });
-
-      return updateFields(cleaned, selectedFieldTemplateId);
+      return updateFields(cleaned, selectedTemplateId);
     },
     onSuccess: async () => {
-      setFieldsMessage("字段配置已保存");
+      setFieldsMessage("字段已保存");
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["fields", selectedFieldTemplateId] }),
+        queryClient.invalidateQueries({ queryKey: ["fields", selectedTemplateId] }),
         queryClient.invalidateQueries({ queryKey: ["field-templates"] }),
       ]);
     },
     onError: (error) => {
-      setFieldsMessage(error instanceof Error ? error.message : "字段配置保存失败");
+      setFieldsMessage(error instanceof Error ? error.message : "保存字段失败");
     },
   });
 
   const resetFieldsMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedFieldTemplateId) {
-        throw new Error("请先选择字段模板");
-      }
-      return resetFieldsConfig(selectedFieldTemplateId);
-    },
+    mutationFn: async () => resetFields(selectedTemplateId),
     onSuccess: async () => {
-      setFieldsMessage("已恢复默认字段配置");
-      await queryClient.invalidateQueries({ queryKey: ["fields", selectedFieldTemplateId] });
+      setFieldsMessage("字段已恢复默认");
+      await queryClient.invalidateQueries({ queryKey: ["fields", selectedTemplateId] });
     },
     onError: (error) => {
-      setFieldsMessage(error instanceof Error ? error.message : "恢复默认字段失败");
-    },
-  });
-
-  const createFieldTemplateMutation = useMutation({
-    mutationFn: async () => {
-      const name = newFieldTemplateName.trim();
-      if (!name) {
-        throw new Error("模板名称不能为空");
-      }
-      return createFieldTemplate({
-        name,
-        source_template_id: selectedFieldTemplateId || "tpl_default",
-      });
-    },
-    onSuccess: async (template) => {
-      setFieldsMessage("字段模板已创建");
-      setNewFieldTemplateName("");
-      await queryClient.invalidateQueries({ queryKey: ["field-templates"] });
-      setSelectedFieldTemplateId(template.id);
-    },
-    onError: (error) => {
-      setFieldsMessage(error instanceof Error ? error.message : "创建字段模板失败");
-    },
-  });
-
-  const updateFieldTemplateMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedFieldTemplateId) {
-        throw new Error("请先选择字段模板");
-      }
-      const name = fieldTemplateNameDraft.trim();
-      if (!name) {
-        throw new Error("模板名称不能为空");
-      }
-      return updateFieldTemplate(selectedFieldTemplateId, {
-        name,
-        description: fieldTemplateDescriptionDraft.trim(),
-      });
-    },
-    onSuccess: async () => {
-      setFieldsMessage("字段模板信息已更新");
-      await queryClient.invalidateQueries({ queryKey: ["field-templates"] });
-    },
-    onError: (error) => {
-      setFieldsMessage(error instanceof Error ? error.message : "更新字段模板失败");
-    },
-  });
-
-  const deleteFieldTemplateMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedFieldTemplateId) {
-        throw new Error("请先选择字段模板");
-      }
-      return deleteFieldTemplate(selectedFieldTemplateId);
-    },
-    onSuccess: async () => {
-      setFieldsMessage("字段模板已删除");
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["field-templates"] }),
-        queryClient.invalidateQueries({ queryKey: ["fields"] }),
-      ]);
-      setSelectedFieldTemplateId("tpl_default");
-    },
-    onError: (error) => {
-      setFieldsMessage(error instanceof Error ? error.message : "删除字段模板失败");
+      setFieldsMessage(error instanceof Error ? error.message : "恢复字段失败");
     },
   });
 
@@ -364,66 +446,82 @@ export function ConfigPage() {
       return createWorkspace({ name });
     },
     onSuccess: async (workspace) => {
-      setWorkspaceMessage("工作区创建成功");
+      setWorkspaceMessage("工作区已创建");
       setNewWorkspaceName("");
-      await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       setWorkspaceId(workspace.id);
+      await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
     },
     onError: (error) => {
-      setWorkspaceMessage(error instanceof Error ? error.message : "创建工作区失败");
+      setWorkspaceMessage(error instanceof Error ? error.message : "创建失败");
     },
   });
 
   const renameWorkspaceMutation = useMutation({
     mutationFn: async () => {
-      if (!workspaceId) {
-        throw new Error("请先选择工作区");
-      }
-      const name = workspaceRenameName.trim();
-      if (!name) {
+      const name = workspaceNameDraft.trim();
+      if (!workspaceId || !name) {
         throw new Error("工作区名称不能为空");
       }
-      return renameWorkspace(workspaceId, { name });
+      return updateWorkspace(workspaceId, { name });
     },
     onSuccess: async () => {
       setWorkspaceMessage("工作区已更新");
       await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
     },
     onError: (error) => {
-      setWorkspaceMessage(error instanceof Error ? error.message : "更新工作区失败");
+      setWorkspaceMessage(error instanceof Error ? error.message : "更新失败");
     },
   });
 
   const deleteWorkspaceMutation = useMutation({
     mutationFn: async () => {
-      if (!workspaceId) {
-        throw new Error("请先选择工作区");
-      }
       if (workspaceId === DEFAULT_WORKSPACE_ID) {
-        throw new Error("默认工作区不允许删除");
+        throw new Error("默认工作区不能删除");
       }
       return deleteWorkspace(workspaceId);
     },
     onSuccess: async () => {
       setWorkspaceMessage("工作区已删除");
-      await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       setWorkspaceId(DEFAULT_WORKSPACE_ID);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["files"] }),
-        queryClient.invalidateQueries({ queryKey: ["search"] }),
-      ]);
+      await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
     },
     onError: (error) => {
-      setWorkspaceMessage(error instanceof Error ? error.message : "删除工作区失败");
+      setWorkspaceMessage(error instanceof Error ? error.message : "删除失败");
     },
   });
 
   function updateProviderDraft(patch: Partial<ProviderDraft>) {
-    setProviderDraft((current) => {
-      if (!current) {
-        return current;
+    setProviderDraft((current) => (current ? { ...current, ...patch } : current));
+  }
+
+  function addProviderModel() {
+    const name = newModelName.trim();
+    if (!name) {
+      return;
+    }
+    setProviderModelRows((rows) => {
+      const nextRows = rows.includes(name) ? rows : [...rows, name];
+      updateProviderDraft({ model: name });
+      return nextRows;
+    });
+    setNewModelName("");
+  }
+
+  function renameProviderModel(index: number, value: string) {
+    const nextValue = value.trim();
+    setProviderModelRows((rows) => rows.map((item, currentIndex) => (currentIndex === index ? value : item)));
+    if (providerDraft?.model === providerModels[index]) {
+      updateProviderDraft({ model: nextValue });
+    }
+  }
+
+  function removeProviderModel(index: number) {
+    setProviderModelRows((rows) => {
+      const nextRows = rows.filter((_, currentIndex) => currentIndex !== index);
+      if (providerDraft?.model === rows[index]) {
+        updateProviderDraft({ model: nextRows[0] || "" });
       }
-      return { ...current, ...patch };
+      return nextRows;
     });
   }
 
@@ -432,6 +530,7 @@ export function ConfigPage() {
   }
 
   function addField() {
+    const nextIndex = fieldDrafts.length;
     setFieldDrafts((rows) => [
       ...rows,
       {
@@ -445,568 +544,371 @@ export function ConfigPage() {
         is_default: false,
       },
     ]);
+    setActiveFieldIndex(nextIndex);
   }
 
   function removeField(index: number) {
     setFieldDrafts((rows) => rows.filter((_, currentIndex) => currentIndex !== index));
   }
 
+  const currentSectionStatus =
+    section === "providers"
+      ? providerMessage
+      : section === "defaults"
+        ? defaultsMessage
+        : section === "fields"
+          ? fieldsMessage
+          : workspaceMessage;
+  const activeField = fieldDrafts[activeFieldIndex] ?? null;
+
   return (
-    <section className="v3-page">
-      <header className="v3-page-header">
-        <h1 className="v3-page-title">配置</h1>
-        <p className="v3-page-subtitle">统一管理 Provider 与字段配置。此页面将替代原来的两个独立配置入口。</p>
+    <section className="v35-config-page">
+      <header className="v35-config-hero">
+        <div>
+          <p className="v35-banner-kicker">Settings Atelier</p>
+          <h1>配置</h1>
+        </div>
+        <div className="v35-config-hero-meta">
+          <span>{providersQuery.data?.length ?? 0} Providers</span>
+          <span>{templatesQuery.data?.length ?? 0} Templates</span>
+          <span>{workspacesQuery.data?.length ?? 0} Workspaces</span>
+        </div>
       </header>
 
-      <div className="v3-segmented-control" role="tablist" aria-label="配置分组">
-        <button
-          className={`v3-button v3-button-secondary ${section === "providers" ? "is-active" : ""}`}
-          onClick={() => {
-            setSection("providers");
-          }}
-          role="tab"
-          aria-selected={section === "providers"}
-        >
-          Provider
-        </button>
-        <button
-          className={`v3-button v3-button-secondary ${section === "fields" ? "is-active" : ""}`}
-          onClick={() => {
-            setSection("fields");
-          }}
-          role="tab"
-          aria-selected={section === "fields"}
-        >
-          字段
-        </button>
-        <button
-          className={`v3-button v3-button-secondary ${section === "workspaces" ? "is-active" : ""}`}
-          onClick={() => {
-            setSection("workspaces");
-          }}
-          role="tab"
-          aria-selected={section === "workspaces"}
-        >
-          工作区
-        </button>
-      </div>
+      <div className="v35-config-shell">
+        <aside className="v35-config-nav" aria-label="配置分区">
+          <button className={section === "providers" ? "is-active" : ""} type="button" onClick={() => setSection("providers")}>
+            <strong>Provider</strong>
+            <span>{providerStatus(selectedProviderRow)}</span>
+          </button>
+          <button className={section === "defaults" ? "is-active" : ""} type="button" onClick={() => setSection("defaults")}>
+            <strong>默认配置</strong>
+            <span>索引 / 翻译 / 对话</span>
+          </button>
+          <button className={section === "fields" ? "is-active" : ""} type="button" onClick={() => setSection("fields")}>
+            <strong>字段模板</strong>
+            <span>{selectedTemplateRow?.name || "未选择"}</span>
+          </button>
+          <button className={section === "workspaces" ? "is-active" : ""} type="button" onClick={() => setSection("workspaces")}>
+            <strong>工作区</strong>
+            <span>{currentWorkspaceRow?.name || workspaceId}</span>
+          </button>
+          <p className="v35-config-status">{currentSectionStatus}</p>
+        </aside>
 
-      {section === "providers" ? (
-        <article className="v3-card">
-          <h2 className="v3-card-title">Provider 配置</h2>
-
-          {providersQuery.isLoading ? <p className="v3-muted">正在加载 Provider...</p> : null}
-          {providersQuery.isError ? <p className="v3-error">Provider 加载失败</p> : null}
-
-          <div className="v3-provider-card-grid">
-            {(providersQuery.data ?? []).map((item) => (
-              <button
-                key={item.provider}
-                className={`v3-provider-tile ${item.provider === selectedProvider ? "is-selected" : ""}`}
-                onClick={() => {
-                  setSelectedProvider(item.provider);
-                }}
-                type="button"
-              >
-                <div className="v3-subcard-head">
-                  <strong>{item.provider}</strong>
-                  <span className={`v3-status-pill ${item.enabled ? "is-ok" : "is-muted"}`}>
-                    {item.enabled ? "启用" : "停用"}
-                  </span>
-                </div>
-                <p className="v3-muted v3-mono">{item.model || "未设置模型"}</p>
-                <p className="v3-muted">timeout: {item.timeout}s</p>
-              </button>
-            ))}
-          </div>
-
-          {providerDraft && selectedProviderRow ? (
-            <div className="v3-provider-editor-grid">
-              <article className="v3-subcard">
-                <h3 className="v3-subcard-title">接口设置</h3>
-                <div className="v3-control-grid">
-                  <label className="v3-control" htmlFor="providerBaseUrl">
-                    <span className="v3-control-label">Base URL</span>
-                    <input
-                      id="providerBaseUrl"
-                      className="v3-input"
-                      value={providerDraft.baseUrl}
-                      onChange={(event) => {
-                        updateProviderDraft({ baseUrl: event.target.value });
-                      }}
-                      placeholder="https://api.example.com/v1"
-                    />
-                  </label>
-
-                  <label className="v3-control" htmlFor="providerModel">
-                    <span className="v3-control-label">Model</span>
-                    <input
-                      id="providerModel"
-                      className="v3-input"
-                      value={providerDraft.model}
-                      onChange={(event) => {
-                        updateProviderDraft({ model: event.target.value });
-                      }}
-                    />
-                  </label>
-
-                  <label className="v3-control" htmlFor="providerTemperature">
-                    <span className="v3-control-label">Temperature</span>
-                    <input
-                      id="providerTemperature"
-                      className="v3-input"
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="2"
-                      value={providerDraft.temperature}
-                      onChange={(event) => {
-                        updateProviderDraft({ temperature: Number(event.target.value) });
-                      }}
-                    />
-                  </label>
-
-                  <label className="v3-control" htmlFor="providerTimeout">
-                    <span className="v3-control-label">Timeout (秒)</span>
-                    <input
-                      id="providerTimeout"
-                      className="v3-input"
-                      type="number"
-                      step="1"
-                      min="10"
-                      max="300"
-                      value={providerDraft.timeout}
-                      onChange={(event) => {
-                        updateProviderDraft({ timeout: Number(event.target.value) });
-                      }}
-                    />
-                  </label>
-                </div>
-              </article>
-
-              <article className="v3-subcard">
-                <h3 className="v3-subcard-title">认证与状态</h3>
-                <div className="v3-control-grid">
-                  <div className="v3-control v3-control-span-2">
-                    <span className="v3-control-label">API Key</span>
-                    <div className="v3-key-row">
-                      <input
-                        id="providerApiKey"
-                        className="v3-input"
-                        type="password"
-                        value={providerDraft.apiKey}
-                        onChange={(event) => {
-                          updateProviderDraft({ apiKey: event.target.value, clearApiKey: false });
-                        }}
-                        placeholder={selectedProviderRow.api_key_masked || "输入新 API Key"}
-                      />
-                      <button
-                        className="v3-button v3-button-secondary"
-                        onClick={() => {
-                          updateProviderDraft({ apiKey: "", clearApiKey: true });
-                        }}
-                        type="button"
-                      >
-                        清空
-                      </button>
-                    </div>
-                    {selectedProviderRow.api_key_masked ? (
-                      <p className="v3-hint">已存在 Key：{selectedProviderRow.api_key_masked}</p>
-                    ) : null}
-                  </div>
-
-                  <div className="v3-control v3-control-span-2">
-                    <span className="v3-control-label">状态</span>
-                    <label className="v3-checkbox-line" htmlFor="providerEnabled">
-                      <input
-                        id="providerEnabled"
-                        type="checkbox"
-                        checked={providerDraft.enabled}
-                        onChange={(event) => {
-                          updateProviderDraft({ enabled: event.target.checked });
-                        }}
-                      />
-                      <span>启用该 Provider</span>
-                    </label>
-                  </div>
-                </div>
-              </article>
-            </div>
-          ) : null}
-
-          {providerMessage ? <p className="v3-muted">{providerMessage}</p> : null}
-
-          <div className="v3-actions-row">
-            <button
-              className="v3-button v3-button-primary"
-              onClick={() => {
-                void saveProviderMutation.mutateAsync();
-              }}
-              disabled={!providerDraft || saveProviderMutation.isPending}
-            >
-              保存 Provider
-            </button>
-            <button
-              className="v3-button v3-button-secondary"
-              onClick={() => {
-                void testProviderMutation.mutateAsync();
-              }}
-              disabled={!providerDraft || testProviderMutation.isPending}
-            >
-              测试连接
-            </button>
-            <button
-              className="v3-button v3-button-secondary"
-              onClick={() => {
-                void resetProviderMutation.mutateAsync();
-              }}
-              disabled={resetProviderMutation.isPending}
-            >
-              恢复默认 Provider
-            </button>
-          </div>
-        </article>
-      ) : null}
-
-      {section === "fields" ? (
-        <article className="v3-card">
-          <h2 className="v3-card-title">字段配置</h2>
-
-          <div className="v3-template-shell">
-            <article className="v3-subcard">
-              <h3 className="v3-subcard-title">模板库</h3>
-              <div className="v3-template-list">
-                {(fieldTemplatesQuery.data ?? []).map((template) => (
+        <main className="v35-config-stage">
+          {section === "providers" ? (
+            <section className="v35-config-section">
+              <div className="v35-config-list">
+                {(providersQuery.data ?? []).map((item) => (
                   <button
-                    key={template.id}
-                    className={`v3-template-item ${template.id === selectedFieldTemplateId ? "is-selected" : ""}`}
-                    onClick={() => {
-                      setSelectedFieldTemplateId(template.id);
-                    }}
+                    key={item.provider}
+                    className={`v35-config-list-item ${item.provider === selectedProvider ? "is-active" : ""}`}
                     type="button"
+                    onClick={() => setSelectedProvider(item.provider)}
                   >
-                    <div className="v3-subcard-head">
-                      <strong>{template.name}</strong>
-                      {template.is_default ? <span className="v3-status-pill is-ok">默认</span> : null}
-                    </div>
-                    <p className="v3-muted v3-mono">{template.id}</p>
-                    <p className="v3-muted">字段数：{template.field_count}</p>
+                    <strong>{item.provider}</strong>
+                    <span>{item.model || "未设置模型"}</span>
+                    <em>{item.enabled ? "启用" : "停用"}</em>
                   </button>
                 ))}
-              </div>
-
-              <div className="v3-inline-controls">
-                <input
-                  className="v3-input"
-                  value={newFieldTemplateName}
-                  onChange={(event) => {
-                    setNewFieldTemplateName(event.target.value);
-                  }}
-                  placeholder="新建模板名称"
-                />
-                <button
-                  className="v3-button v3-button-primary"
-                  type="button"
-                  onClick={() => {
-                    void createFieldTemplateMutation.mutateAsync();
-                  }}
-                  disabled={createFieldTemplateMutation.isPending}
-                >
-                  新建模板
-                </button>
-              </div>
-            </article>
-
-            <article className="v3-subcard">
-              <h3 className="v3-subcard-title">模板信息</h3>
-              {selectedFieldTemplateRow ? (
-                <div className="v3-control-grid">
-                  <label className="v3-control">
-                    <span className="v3-control-label">模板名称</span>
-                    <input
-                      className="v3-input"
-                      value={fieldTemplateNameDraft}
-                      onChange={(event) => {
-                        setFieldTemplateNameDraft(event.target.value);
-                      }}
-                    />
-                  </label>
-
-                  <label className="v3-control">
-                    <span className="v3-control-label">模板 ID</span>
-                    <p className="v3-muted v3-mono">{selectedFieldTemplateRow.id}</p>
-                  </label>
-
-                  <label className="v3-control v3-control-span-2">
-                    <span className="v3-control-label">描述</span>
-                    <textarea
-                      className="v3-textarea v3-textarea-compact"
-                      value={fieldTemplateDescriptionDraft}
-                      onChange={(event) => {
-                        setFieldTemplateDescriptionDraft(event.target.value);
-                      }}
-                    />
-                  </label>
+                <div className="v35-config-create-row">
+                  <input className="v35-input" value={newProviderName} onChange={(event) => setNewProviderName(event.target.value)} placeholder="新 Provider 名称" />
+                  <button className="v35-button v35-button-primary" type="button" disabled={createProviderMutation.isPending} onClick={() => void createProviderMutation.mutateAsync()}>创建</button>
                 </div>
-              ) : (
-                <p className="v3-muted">暂无可用模板</p>
-              )}
+              </div>
 
-              <div className="v3-actions-row">
-                <button
-                  className="v3-button v3-button-primary"
-                  type="button"
-                  onClick={() => {
-                    void updateFieldTemplateMutation.mutateAsync();
-                  }}
-                  disabled={!selectedFieldTemplateRow || updateFieldTemplateMutation.isPending}
-                >
-                  更新模板信息
-                </button>
-                <button
-                  className="v3-button v3-button-secondary"
-                  type="button"
-                  onClick={() => {
-                    void deleteFieldTemplateMutation.mutateAsync();
-                  }}
-                  disabled={!selectedFieldTemplateRow || selectedFieldTemplateRow.is_default || deleteFieldTemplateMutation.isPending}
-                >
-                  删除模板
+              <article className="v35-config-paper">
+                <header className="v35-config-paper-head">
+                  <div>
+                    <p>Provider</p>
+                    <h2>{selectedProvider || "未选择"}</h2>
+                  </div>
+                  <span className={`v35-status ${selectedProviderRow?.enabled ? "is-ok" : "is-muted"}`}>
+                    {providerStatus(selectedProviderRow)}
+                  </span>
+                </header>
+
+                {providerDraft ? (
+                  <div className="v35-config-form-grid">
+                    <label className="v35-field v35-span-2">
+                      <span>Base URL</span>
+                      <input className="v35-input" value={providerDraft.baseUrl} onChange={(event) => updateProviderDraft({ baseUrl: event.target.value })} />
+                    </label>
+                    <div className="v35-model-editor v35-span-2">
+                      <div className="v35-model-editor-head">
+                        <span>Models</span>
+                        <div className="v35-model-add-row">
+                          <input className="v35-input" value={newModelName} onChange={(event) => setNewModelName(event.target.value)} placeholder="新增模型名" />
+                          <button className="v35-button" type="button" onClick={addProviderModel}>添加</button>
+                        </div>
+                      </div>
+                      <div className="v35-model-list">
+                        {providerModels.map((modelName, index) => (
+                          <div className={`v35-model-row ${providerDraft.model === modelName ? "is-active" : ""}`} key={`${modelName}_${index}`}>
+                            <input className="v35-input" value={modelName} onChange={(event) => renameProviderModel(index, event.target.value)} />
+                            <button className="v35-button" type="button" disabled={!modelName.trim()} onClick={() => updateProviderDraft({ model: modelName.trim() })}>设为默认</button>
+                            <button className="v35-button" type="button" onClick={() => removeProviderModel(index)}>删除</button>
+                          </div>
+                        ))}
+                        {providerModels.length === 0 ? <p className="v35-muted">先添加一个模型名。</p> : null}
+                      </div>
+                    </div>
+                    <label className="v35-field">
+                      <span>Timeout</span>
+                      <input className="v35-input" type="number" min="10" max="300" value={providerDraft.timeout} onChange={(event) => updateProviderDraft({ timeout: Number(event.target.value) })} />
+                    </label>
+                    <label className="v35-field">
+                      <span>Temperature</span>
+                      <input className="v35-input" type="number" step="0.1" min="0" max="2" value={providerDraft.temperature} onChange={(event) => updateProviderDraft({ temperature: Number(event.target.value) })} />
+                    </label>
+                    <label className="v35-field v35-span-2">
+                      <span>API Key</span>
+                      <input className="v35-input" type="password" value={providerDraft.apiKey} placeholder={selectedProviderRow?.api_key_masked || "输入新 API Key"} onChange={(event) => updateProviderDraft({ apiKey: event.target.value, clearApiKey: false })} />
+                    </label>
+                    <label className="v35-check-line">
+                      <input type="checkbox" checked={providerDraft.enabled} onChange={(event) => updateProviderDraft({ enabled: event.target.checked })} />
+                      <span>启用</span>
+                    </label>
+                    <label className="v35-check-line">
+                      <input type="checkbox" checked={providerDraft.clearApiKey} onChange={(event) => updateProviderDraft({ apiKey: "", clearApiKey: event.target.checked })} />
+                      <span>清空 Key</span>
+                    </label>
+                  </div>
+                ) : (
+                  <p className="v35-muted">暂无 Provider</p>
+                )}
+
+                <footer className="v35-config-actions">
+                  <button className="v35-button v35-button-primary" type="button" disabled={!providerDraft || saveProviderMutation.isPending} onClick={() => void saveProviderMutation.mutateAsync()}>保存</button>
+                  <button className="v35-button" type="button" disabled={!providerDraft || testProviderMutation.isPending} onClick={() => void testProviderMutation.mutateAsync()}>测试</button>
+                  <button className="v35-button" type="button" disabled={!providerDraft || deleteProviderMutation.isPending} onClick={() => void deleteProviderMutation.mutateAsync()}>删除 Provider</button>
+                  <button className="v35-button" type="button" disabled={resetProvidersMutation.isPending} onClick={() => void resetProvidersMutation.mutateAsync()}>恢复默认</button>
+                </footer>
+              </article>
+            </section>
+          ) : null}
+
+          {section === "defaults" ? (
+            <section className="v35-config-section">
+              <div className="v35-config-list">
+                <button className="v35-config-list-item is-active" type="button">
+                  <strong>默认模型</strong>
+                  <span>{availableModelEntries.length} available</span>
+                  <em>本地偏好</em>
                 </button>
               </div>
-            </article>
-          </div>
 
-          {fieldsQuery.isLoading ? <p className="v3-muted">正在加载字段配置...</p> : null}
-          {fieldsQuery.isError ? <p className="v3-error">字段配置加载失败</p> : null}
+              <article className="v35-config-paper">
+                <header className="v35-config-paper-head">
+                  <div>
+                    <p>Defaults</p>
+                    <h2>指定三个工作流的默认模型</h2>
+                  </div>
+                </header>
 
-          <div className="v3-field-card-grid">
-            {fieldDrafts.map((item, index) => (
-              <article className="v3-subcard v3-field-card" key={`${item.field_key || "new"}-${index}`}>
-                <div className="v3-subcard-head">
-                  <strong>字段 #{index + 1}</strong>
-                  <button
-                    className="v3-button v3-button-secondary"
-                    onClick={() => {
-                      removeField(index);
-                    }}
-                    type="button"
-                  >
-                    删除
-                  </button>
-                </div>
-
-                <div className="v3-field-form-grid">
-                  <label className="v3-control">
-                    <span className="v3-control-label">Label</span>
-                    <input
-                      className="v3-input"
-                      value={String(item.label)}
-                      onChange={(event) => {
-                        updateField(index, { label: event.target.value });
-                      }}
-                    />
-                  </label>
-
-                  <label className="v3-control">
-                    <span className="v3-control-label">Key</span>
-                    <input
-                      className="v3-input"
-                      value={String(item.field_key)}
-                      onChange={(event) => {
-                        updateField(index, { field_key: event.target.value });
-                      }}
-                    />
-                  </label>
-
-                  <label className="v3-control">
-                    <span className="v3-control-label">Type</span>
-                    <select
-                      className="v3-input"
-                      value={String(item.field_type)}
-                      onChange={(event) => {
-                        updateField(index, { field_type: event.target.value });
-                      }}
-                    >
-                      <option value="text">text</option>
-                      <option value="number">number</option>
-                      <option value="list">list</option>
+                <div className="v35-config-form-grid">
+                  <label className="v35-field v35-span-2">
+                    <span>生成索引</span>
+                    <select className="v35-input" value={modelDefaultsDraft.indexing} onChange={(event) => setModelDefaultsDraft((current) => ({ ...current, indexing: event.target.value }))}>
+                      <option value="">未指定</option>
+                      {availableModelEntries.map((entry) => (
+                        <option key={`indexing_${entry.provider}_${entry.model}`} value={`${entry.provider}::${entry.model}`}>{entry.provider} · {entry.model}</option>
+                      ))}
                     </select>
                   </label>
-
-                  <label className="v3-control">
-                    <span className="v3-control-label">Flags</span>
-                    <div className="v3-inline-checks">
-                      <label className="v3-checkbox-line">
-                        <input
-                          type="checkbox"
-                          checked={toBoolean(item.required)}
-                          onChange={(event) => {
-                            updateField(index, { required: event.target.checked });
-                          }}
-                        />
-                        <span>必填</span>
-                      </label>
-                      <label className="v3-checkbox-line">
-                        <input
-                          type="checkbox"
-                          checked={toBoolean(item.enabled)}
-                          onChange={(event) => {
-                            updateField(index, { enabled: event.target.checked });
-                          }}
-                        />
-                        <span>启用</span>
-                      </label>
-                    </div>
+                  <label className="v35-field v35-span-2">
+                    <span>翻译</span>
+                    <select className="v35-input" value={modelDefaultsDraft.translation} onChange={(event) => setModelDefaultsDraft((current) => ({ ...current, translation: event.target.value }))}>
+                      <option value="">未指定</option>
+                      {availableModelEntries.map((entry) => (
+                        <option key={`translation_${entry.provider}_${entry.model}`} value={`${entry.provider}::${entry.model}`}>{entry.provider} · {entry.model}</option>
+                      ))}
+                    </select>
                   </label>
-
-                  <label className="v3-control v3-control-span-2">
-                    <span className="v3-control-label">Description</span>
-                    <textarea
-                      className="v3-textarea v3-textarea-compact"
-                      value={String(item.description || "")}
-                      onChange={(event) => {
-                        updateField(index, { description: event.target.value });
-                      }}
-                    />
+                  <label className="v35-field v35-span-2">
+                    <span>对话</span>
+                    <select className="v35-input" value={modelDefaultsDraft.chat} onChange={(event) => setModelDefaultsDraft((current) => ({ ...current, chat: event.target.value }))}>
+                      <option value="">未指定</option>
+                      {availableModelEntries.map((entry) => (
+                        <option key={`chat_${entry.provider}_${entry.model}`} value={`${entry.provider}::${entry.model}`}>{entry.provider} · {entry.model}</option>
+                      ))}
+                    </select>
                   </label>
                 </div>
+
+                <footer className="v35-config-actions">
+                  <button className="v35-button v35-button-primary" type="button" disabled={saveDefaultsMutation.isPending} onClick={() => void saveDefaultsMutation.mutateAsync()}>保存默认配置</button>
+                </footer>
               </article>
-            ))}
-            {fieldDrafts.length === 0 && !fieldsQuery.isLoading ? <p className="v3-muted">当前模板暂无字段</p> : null}
-          </div>
+            </section>
+          ) : null}
 
-          {fieldsMessage ? <p className="v3-muted">{fieldsMessage}</p> : null}
-
-          <div className="v3-actions-row">
-            <button className="v3-button v3-button-secondary" onClick={addField} type="button">
-              新增字段
-            </button>
-            <button
-              className="v3-button v3-button-primary"
-              onClick={() => {
-                void saveFieldsMutation.mutateAsync();
-              }}
-              disabled={saveFieldsMutation.isPending || fieldDrafts.length === 0}
-              type="button"
-            >
-              保存字段配置
-            </button>
-            <button
-              className="v3-button v3-button-secondary"
-              onClick={() => {
-                void resetFieldsMutation.mutateAsync();
-              }}
-              disabled={resetFieldsMutation.isPending}
-              type="button"
-            >
-              恢复默认字段
-            </button>
-          </div>
-        </article>
-      ) : null}
-
-      {section === "workspaces" ? (
-        <div className="v3-grid">
-          <article className="v3-card">
-            <h2 className="v3-card-title">当前工作区</h2>
-
-            {workspacesQuery.isLoading ? <p className="v3-muted">正在加载工作区...</p> : null}
-            {workspacesQuery.isError ? <p className="v3-error">工作区加载失败</p> : null}
-
-            {currentWorkspaceRow ? (
-              <div className="v3-form-grid">
-                <label className="v3-form-label">ID</label>
-                <p className="v3-muted v3-mono">{currentWorkspaceRow.id}</p>
-
-                <label className="v3-form-label" htmlFor="workspaceName">名称</label>
-                <input
-                  id="workspaceName"
-                  className="v3-input"
-                  value={workspaceRenameName}
-                  onChange={(event) => {
-                    setWorkspaceRenameName(event.target.value);
-                  }}
-                />
-
-                <label className="v3-form-label">文档数量</label>
-                <p className="v3-muted">{currentWorkspaceRow.document_count}</p>
+          {section === "fields" ? (
+            <section className="v35-config-section">
+              <div className="v35-config-list">
+                {(templatesQuery.data ?? []).map((template) => (
+                  <button
+                    key={template.id}
+                    className={`v35-config-list-item ${template.id === selectedTemplateId ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => setSelectedTemplateId(template.id)}
+                  >
+                    <strong>{template.name}</strong>
+                    <span>{template.field_count} fields</span>
+                    {template.is_default ? <em>默认</em> : null}
+                  </button>
+                ))}
+                <div className="v35-config-create-row">
+                  <input className="v35-input" value={newTemplateName} onChange={(event) => setNewTemplateName(event.target.value)} placeholder="新模板" />
+                  <button className="v35-button v35-button-primary" type="button" disabled={createTemplateMutation.isPending} onClick={() => void createTemplateMutation.mutateAsync()}>创建</button>
+                </div>
               </div>
-            ) : null}
 
-            <div className="v3-actions-row">
-              <button
-                className="v3-button v3-button-primary"
-                onClick={() => {
-                  void renameWorkspaceMutation.mutateAsync();
-                }}
-                disabled={!currentWorkspaceRow || renameWorkspaceMutation.isPending}
-                type="button"
-              >
-                重命名工作区
-              </button>
-              <button
-                className="v3-button v3-button-secondary"
-                onClick={() => {
-                  void deleteWorkspaceMutation.mutateAsync();
-                }}
-                disabled={!currentWorkspaceRow || workspaceId === DEFAULT_WORKSPACE_ID || deleteWorkspaceMutation.isPending}
-                type="button"
-              >
-                删除当前工作区
-              </button>
-            </div>
-          </article>
-
-          <article className="v3-card">
-            <h2 className="v3-card-title">创建与切换</h2>
-
-            <div className="v3-inline-controls">
-              <input
-                className="v3-input"
-                value={newWorkspaceName}
-                onChange={(event) => {
-                  setNewWorkspaceName(event.target.value);
-                }}
-                placeholder="输入新工作区名称"
-              />
-              <button
-                className="v3-button v3-button-primary"
-                onClick={() => {
-                  void createWorkspaceMutation.mutateAsync();
-                }}
-                disabled={createWorkspaceMutation.isPending}
-                type="button"
-              >
-                新建
-              </button>
-            </div>
-
-            <div className="v3-card-stack">
-              {(workspacesQuery.data ?? []).map((item) => (
-                <article className={`v3-subcard ${item.id === workspaceId ? "is-selected" : ""}`} key={item.id}>
-                  <div className="v3-subcard-head">
-                    <strong>{item.name}</strong>
-                    <button
-                      className="v3-button v3-button-secondary"
-                      type="button"
-                      onClick={() => {
-                        setWorkspaceId(item.id);
-                      }}
-                    >
-                      设为当前
-                    </button>
+              <article className="v35-config-paper">
+                <header className="v35-config-paper-head">
+                  <div>
+                    <p>Template</p>
+                    <h2>{selectedTemplateRow?.name || "未选择"}</h2>
                   </div>
-                  <p className="v3-muted v3-mono">{item.id}</p>
-                  <p className="v3-muted">文档数量：{item.document_count}</p>
-                </article>
-              ))}
-            </div>
+                  <button className="v35-button" type="button" onClick={addField}>新增字段</button>
+                </header>
 
-            {workspaceMessage ? <p className="v3-muted">{workspaceMessage}</p> : null}
-          </article>
-        </div>
-      ) : null}
+                <div className="v35-config-form-grid">
+                  <label className="v35-field">
+                    <span>模板名称</span>
+                    <input className="v35-input" value={templateNameDraft} onChange={(event) => setTemplateNameDraft(event.target.value)} />
+                  </label>
+                  <label className="v35-field v35-span-2">
+                    <span>描述</span>
+                    <textarea className="v35-textarea" value={templateDescriptionDraft} onChange={(event) => setTemplateDescriptionDraft(event.target.value)} />
+                  </label>
+                </div>
+
+                <div className="v35-template-designer">
+                  <div className="v35-field-strip" aria-label="字段目录">
+                    {fieldDrafts.map((field, index) => (
+                      <button
+                        className={`v35-field-token ${index === activeFieldIndex ? "is-active" : ""}`}
+                        key={`${field.field_key || "new"}_${index}`}
+                        type="button"
+                        onClick={() => setActiveFieldIndex(index)}
+                      >
+                        <span>{String(index + 1).padStart(2, "0")}</span>
+                        <strong>{String(field.label || "未命名字段")}</strong>
+                        <em>{String(field.field_type || "text")}</em>
+                      </button>
+                    ))}
+                    {fieldDrafts.length === 0 ? <p className="v35-muted">点击“新增字段”开始。</p> : null}
+                  </div>
+
+                  <article className="v35-field-inspector">
+                    {activeField ? (
+                      <>
+                        <header className="v35-field-inspector-head">
+                          <div>
+                            <p>Field #{activeFieldIndex + 1}</p>
+                            <h3>{String(activeField.label || "未命名字段")}</h3>
+                          </div>
+                          <button className="v35-button" type="button" onClick={() => removeField(activeFieldIndex)}>删除</button>
+                        </header>
+                        <div className="v35-config-form-grid">
+                          <label className="v35-field">
+                            <span>显示名称</span>
+                            <input className="v35-input" value={String(activeField.label)} onChange={(event) => updateField(activeFieldIndex, { label: event.target.value })} />
+                          </label>
+                          <label className="v35-field">
+                            <span>字段 Key</span>
+                            <input className="v35-input" value={String(activeField.field_key)} onChange={(event) => updateField(activeFieldIndex, { field_key: event.target.value })} />
+                          </label>
+                          <label className="v35-field">
+                            <span>类型</span>
+                            <select className="v35-input" value={String(activeField.field_type)} onChange={(event) => updateField(activeFieldIndex, { field_type: event.target.value })}>
+                              <option value="text">text</option>
+                              <option value="number">number</option>
+                              <option value="list">list</option>
+                            </select>
+                          </label>
+                          <div className="v35-field-flags">
+                            <label className="v35-check-line"><input type="checkbox" checked={toBoolean(activeField.required)} onChange={(event) => updateField(activeFieldIndex, { required: event.target.checked })} /><span>必填</span></label>
+                            <label className="v35-check-line"><input type="checkbox" checked={toBoolean(activeField.enabled)} onChange={(event) => updateField(activeFieldIndex, { enabled: event.target.checked })} /><span>启用</span></label>
+                          </div>
+                          <label className="v35-field v35-span-2">
+                            <span>提取提示</span>
+                            <textarea className="v35-textarea" value={String(activeField.description || "")} placeholder="一句话说明这个字段应该如何从文献中提取。" onChange={(event) => updateField(activeFieldIndex, { description: event.target.value })} />
+                          </label>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="v35-muted">暂无字段。</p>
+                    )}
+                  </article>
+                </div>
+
+                <footer className="v35-config-actions">
+                  <button className="v35-button v35-button-primary" type="button" disabled={saveFieldsMutation.isPending} onClick={() => void saveFieldsMutation.mutateAsync()}>保存字段</button>
+                  <button className="v35-button" type="button" disabled={updateTemplateMutation.isPending} onClick={() => void updateTemplateMutation.mutateAsync()}>保存模板</button>
+                  <button className="v35-button" type="button" disabled={resetFieldsMutation.isPending} onClick={() => void resetFieldsMutation.mutateAsync()}>恢复字段</button>
+                  <button className="v35-button" type="button" disabled={!selectedTemplateRow || selectedTemplateRow.is_default || deleteTemplateMutation.isPending} onClick={() => void deleteTemplateMutation.mutateAsync()}>删除模板</button>
+                </footer>
+              </article>
+            </section>
+          ) : null}
+
+          {section === "workspaces" ? (
+            <section className="v35-config-section">
+              <div className="v35-config-list">
+                {(workspacesQuery.data ?? []).map((workspace) => (
+                  <button
+                    key={workspace.id}
+                    className={`v35-config-list-item ${workspace.id === workspaceId ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => setWorkspaceId(workspace.id)}
+                  >
+                    <strong>{workspace.name}</strong>
+                    <span>{workspace.document_count} docs</span>
+                    {workspace.id === DEFAULT_WORKSPACE_ID ? <em>默认</em> : null}
+                  </button>
+                ))}
+                <div className="v35-config-create-row">
+                  <input className="v35-input" value={newWorkspaceName} onChange={(event) => setNewWorkspaceName(event.target.value)} placeholder="新工作区" />
+                  <button className="v35-button v35-button-primary" type="button" disabled={createWorkspaceMutation.isPending} onClick={() => void createWorkspaceMutation.mutateAsync()}>创建</button>
+                </div>
+              </div>
+
+              <article className="v35-config-paper">
+                <header className="v35-config-paper-head">
+                  <div>
+                    <p>Workspace</p>
+                    <h2>{currentWorkspaceRow?.name || workspaceId}</h2>
+                  </div>
+                  <span className="v35-status is-ok">{currentWorkspaceRow?.document_count ?? 0} docs</span>
+                </header>
+
+                <div className="v35-config-form-grid">
+                  <label className="v35-field">
+                    <span>名称</span>
+                    <input className="v35-input" value={workspaceNameDraft} onChange={(event) => setWorkspaceNameDraft(event.target.value)} />
+                  </label>
+                  <label className="v35-field">
+                    <span>ID</span>
+                    <input className="v35-input" value={currentWorkspaceRow?.id || ""} readOnly />
+                  </label>
+                  <label className="v35-field">
+                    <span>文档数量</span>
+                    <input className="v35-input" value={currentWorkspaceRow?.document_count ?? 0} readOnly />
+                  </label>
+                </div>
+
+                <footer className="v35-config-actions">
+                  <button className="v35-button v35-button-primary" type="button" disabled={!currentWorkspaceRow || renameWorkspaceMutation.isPending} onClick={() => void renameWorkspaceMutation.mutateAsync()}>保存名称</button>
+                  <button className="v35-button" type="button" disabled={!currentWorkspaceRow || workspaceId === DEFAULT_WORKSPACE_ID || deleteWorkspaceMutation.isPending} onClick={() => void deleteWorkspaceMutation.mutateAsync()}>删除工作区</button>
+                </footer>
+              </article>
+            </section>
+          ) : null}
+        </main>
+      </div>
     </section>
   );
 }

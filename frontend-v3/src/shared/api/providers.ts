@@ -49,3 +49,9 @@ export function resetProviders(): Promise<{ ok: boolean }> {
     method: "POST",
   });
 }
+
+export function deleteProvider(provider: string): Promise<{ ok: boolean }> {
+  return fetchJson<{ ok: boolean }>(`/api/providers/${encodeURIComponent(provider)}`, {
+    method: "DELETE",
+  });
+}

@@ -25,6 +25,8 @@ import { buildExportMarkdownUrl } from "../shared/api/export";
 import { getIndexMarkdown, runAllIndexes, runIndex, cancelIndex } from "../shared/api/index";
 import { listProviders } from "../shared/api/providers";
 import { searchDocuments } from "../shared/api/search";
+import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
+import { getProviderModels } from "../shared/lib/providerModels";
 
 function buildStats(totalRows: FileItem[]): WorkbenchStats {
   let indexed = 0;
@@ -173,19 +175,11 @@ export function WorkbenchPage() {
 
   const fileRows = filesQuery.data ?? [];
   const providerRows = providersQuery.data ?? [];
+  const indexingDefault = parseModelDefaultKey(getModelDefault("indexing"));
 
   const modelOptions = useMemo(() => {
-    const options: string[] = [];
-    for (const row of providerRows) {
-      if (row.provider !== provider) {
-        continue;
-      }
-      const modelName = String(row.model || "").trim();
-      if (modelName && !options.includes(modelName)) {
-        options.push(modelName);
-      }
-    }
-    return options;
+    const row = providerRows.find((item) => item.provider === provider);
+    return getProviderModels(provider, row?.model);
   }, [provider, providerRows]);
 
   const searchRows = useMemo(() => {
@@ -246,9 +240,13 @@ export function WorkbenchPage() {
       return;
     }
     if (!provider || !providerRows.some((item) => item.provider === provider)) {
-      setProvider(providerRows[0].provider);
+      const defaultProvider =
+        indexingDefault && providerRows.some((item) => item.enabled && item.provider === indexingDefault.provider)
+          ? indexingDefault.provider
+          : (providerRows.find((item) => item.enabled)?.provider ?? providerRows[0].provider);
+      setProvider(defaultProvider);
     }
-  }, [provider, providerRows]);
+  }, [indexingDefault, provider, providerRows]);
 
   useEffect(() => {
     if (modelOptions.length === 0) {
@@ -258,9 +256,13 @@ export function WorkbenchPage() {
       return;
     }
     if (!model || !modelOptions.includes(model)) {
-      setModel(modelOptions[0]);
+      const defaultModel =
+        indexingDefault?.provider === provider && indexingDefault.model && modelOptions.includes(indexingDefault.model)
+          ? indexingDefault.model
+          : modelOptions[0];
+      setModel(defaultModel);
     }
-  }, [model, modelOptions]);
+  }, [indexingDefault, model, modelOptions, provider]);
 
   useEffect(() => {
     const templates = templatesQuery.data;

@@ -235,7 +235,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS translation_requests (
                 id TEXT PRIMARY KEY,
                 workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-                document_id TEXT NOT NULL REFERENCES translation_documents(id) ON DELETE CASCADE,
+                document_id TEXT NOT NULL,
                 provider TEXT NOT NULL,
                 model TEXT NOT NULL,
                 source_lang TEXT,
@@ -389,6 +389,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     _migrate_document_hash_scope(conn)
     _migrate_translation_document_hash_scope(conn)
     _migrate_provider_api_keys_to_plain(conn)
+    _migrate_translation_requests_fk(conn)
 
 
 def _migrate_document_hash_scope(conn: sqlite3.Connection) -> None:
@@ -641,6 +642,66 @@ def _seed_default_providers(conn: sqlite3.Connection) -> None:
         """,
         providers,
     )
+
+
+def _migrate_translation_requests_fk(conn: sqlite3.Connection) -> None:
+    """Remove FK from translation_requests.document_id so workspace documents can be referenced."""
+    fkeys = conn.execute("PRAGMA foreign_key_list(translation_requests)").fetchall()
+    has_doc_fk = any(r[2] == "translation_documents" for r in fkeys)
+    if not has_doc_fk:
+        return
+
+    conn.execute(
+        "UPDATE translation_requests SET model = COALESCE(NULLIF(TRIM(model), ''), 'unknown')"
+    )
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+
+    conn.execute("DROP TABLE IF EXISTS translation_requests_new")
+    conn.execute("DROP TABLE IF EXISTS translation_results_new")
+
+    conn.execute(
+        """
+        CREATE TABLE translation_requests_new (
+            id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            source_lang TEXT,
+            target_lang TEXT NOT NULL,
+            source_text TEXT NOT NULL,
+            anchor_json TEXT,
+            cache_key TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error_code TEXT,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute("INSERT INTO translation_requests_new SELECT * FROM translation_requests")
+
+    conn.execute(
+        """
+        CREATE TABLE translation_results_new (
+            request_id TEXT PRIMARY KEY REFERENCES translation_requests_new(id) ON DELETE CASCADE,
+            translated_text TEXT NOT NULL,
+            result_meta_json TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("INSERT INTO translation_results_new SELECT * FROM translation_results")
+
+    conn.execute("DROP TABLE translation_results")
+    conn.execute("DROP TABLE translation_requests")
+    conn.execute("ALTER TABLE translation_results_new RENAME TO translation_results")
+    conn.execute("ALTER TABLE translation_requests_new RENAME TO translation_requests")
+
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 @contextmanager

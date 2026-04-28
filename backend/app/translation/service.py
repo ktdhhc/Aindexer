@@ -192,7 +192,11 @@ def execute_translation_request(
         workspace_id,
     )
     if not document:
-        raise ValueError("Translation document not found.")
+        from ..repository import get_document as get_main_document
+
+        document = get_main_document(payload.document_id, workspace_id=workspace_id)
+    if not document:
+        raise ValueError("Document not found.")
 
     normalized_source = ensure_selection_long_enough(payload.source_text)
     system_prompt, user_prompt = build_translation_prompts(payload)

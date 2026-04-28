@@ -21,6 +21,18 @@ async function readErrorMessage(response: Response): Promise<string> {
     if (typeof payload.detail === "string" && payload.detail.trim()) {
       return payload.detail;
     }
+    if (payload.detail && typeof payload.detail === "object") {
+      const detail = payload.detail as { message?: string; error_message?: string; code?: string };
+      if (typeof detail.message === "string" && detail.message.trim()) {
+        return detail.message;
+      }
+      if (typeof detail.error_message === "string" && detail.error_message.trim()) {
+        return detail.error_message;
+      }
+      if (typeof detail.code === "string" && detail.code.trim()) {
+        return detail.code;
+      }
+    }
     if (typeof payload.message === "string" && payload.message.trim()) {
       return payload.message;
     }

@@ -193,7 +193,11 @@ def document_history(
     workspace = resolve_workspace_id(workspace_id)
     document = get_translation_document_in_workspace(document_id, workspace)
     if not document:
-        raise HTTPException(status_code=404, detail="Translation document not found")
+        from ..repository import get_document as get_main_document
+
+        document = get_main_document(document_id, workspace_id=workspace)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
     return list_translation_history(document_id, workspace_id=workspace)
 
 
