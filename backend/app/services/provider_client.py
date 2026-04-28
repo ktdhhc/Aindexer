@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import httpx
@@ -173,6 +173,39 @@ class ProviderClient:
             raise RuntimeError(_format_url_error(config.base_url, exc)) from exc
         return text.strip()
 
+    @staticmethod
+    def stream_text(
+        config: ProviderConfig,
+        system_prompt: str,
+        user_prompt: str,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Iterator[str]:
+        payload = {
+            "model": config.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": _effective_temperature(config.model, config.temperature),
+            "max_tokens": 1800,
+            "stream": True,
+        }
+        url = config.base_url.rstrip("/") + "/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {config.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            yield from stream_chat_completion_chunks(
+                url=url,
+                headers=headers,
+                payload=payload,
+                timeout=config.timeout,
+                should_cancel=should_cancel,
+            )
+        except UnicodeError as exc:
+            raise RuntimeError(_format_url_error(config.base_url, exc)) from exc
+
 
 def stream_chat_completion_with_metrics(
     url: str,
@@ -303,6 +336,75 @@ def _stream_chat_completion(
         timeout=timeout,
         should_cancel=should_cancel,
     ).text
+
+
+def stream_chat_completion_chunks(
+    url: str,
+    headers: dict[str, str],
+    payload: dict,
+    timeout: int,
+    should_cancel: Callable[[], bool] | None = None,
+) -> Iterator[str]:
+    timeout_cfg = httpx.Timeout(
+        connect=min(timeout, 30), read=None, write=timeout, pool=timeout
+    )
+    with httpx.Client(timeout=timeout_cfg) as client:
+        with client.stream("POST", url, headers=headers, json=payload) as resp:
+            if resp.status_code >= 400:
+                req_id = resp.headers.get("x-request-id") or resp.headers.get("request-id") or ""
+                detail = _truncate_text(_read_stream_response_text(resp), 1200)
+                rid = f" request_id={req_id}" if req_id else ""
+                raise RuntimeError(f"LLM HTTP {resp.status_code}{rid}: {detail}")
+
+            raw_lines: list[str] = []
+            yielded = False
+            for line in resp.iter_lines():
+                if should_cancel and should_cancel():
+                    raise RuntimeError("cancelled by user during stream")
+                text_line = (line or "").strip()
+                if not text_line:
+                    continue
+                raw_lines.append(text_line)
+                if not text_line.startswith("data:"):
+                    continue
+                data = text_line[5:].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    chunk = json.loads(data)
+                except Exception:
+                    continue
+
+                chunk_error = chunk.get("error")
+                if isinstance(chunk_error, dict):
+                    err_msg = chunk_error.get("message") or str(chunk_error)
+                    err_code = chunk_error.get("code", "")
+                    raise RuntimeError(f"LLM stream error code={err_code}: {err_msg}")
+
+                delta_text = _extract_stream_delta_text(chunk)
+                if delta_text:
+                    yielded = True
+                    yield delta_text
+
+            if yielded:
+                return
+
+            if raw_lines:
+                joined = "\n".join(raw_lines)
+                if joined.startswith("{"):
+                    try:
+                        body = json.loads(joined)
+                    except Exception:
+                        body = None
+                    if isinstance(body, dict):
+                        text = _extract_assistant_text(body)
+                        if text:
+                            yield text
+                            return
+
+    raise RuntimeError(
+        f"LLM流式响应为空 (model={payload.get('model', '?')}, max_tokens={payload.get('max_tokens', '?')})"
+    )
 
 
 def _extract_stream_delta_text(chunk: dict) -> str:

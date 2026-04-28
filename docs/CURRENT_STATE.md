@@ -71,6 +71,8 @@
 - `/v2/`：当前新版工作台入口，覆盖控制台、Provider 配置页、字段配置页。
 - `/translator/`：当前独立翻译工作区入口。
 - `/v3/`：React V3 统一前端入口（需先构建 `frontend-v3` 产物），当前已包含 `workbench`、`config`、`chat`、`translator` 路由骨架。
+- V3 Chat 已接入 `POST /api/chat/ask` 三模式第一版与 `POST /api/chat/ask_stream` 流式输出：`wide` 全景、`deep` 精读、`agent` 探索；旧 `POST /api/chat/ask_v0` 保留兼容。
+- Chat 三模式 prompt 已拆分到 `backend/prompts/chat_modes/`；其中 `deep` 模式默认注入用户选择文献的原始文件文本（pdf/txt/docx 解析结果），而不是索引 Markdown。
 - 当前 UI 仍未完成统一；后续迁移目标是以 V3.5 Editorial Lab 统一 `workbench`、配置、Chat 与翻译工作区。
 
 ## 当前前端整体现状
