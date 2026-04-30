@@ -38,7 +38,7 @@ def test_translator_document_load_and_search(server):
 
         # Mock APIs
         page.route(
-            "**/api/translation/documents",
+            "**/api/translation/documents*",
             lambda route: route.fulfill(
                 json=[
                     {
@@ -235,8 +235,7 @@ def test_translator_document_load_and_search(server):
         page.goto(f"{server}/translator/")
 
         # Select and load document
-        page.select_option("#documentSelect", "doc1")
-        page.click("#loadDocBtn")
+        page.click('[data-doc-id="doc1"]')
 
         # Check viewer content
         viewer = page.locator(".translator-viewer")

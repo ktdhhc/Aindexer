@@ -36,6 +36,7 @@ export async function handleSelection() {
   if (!text) return;
 
   const provider = sidepanelEls.providerSelect.value;
+  const targetLang = sidepanelEls.targetLanguageSelect.value || 'zh-CN';
   if (!provider) {
     showError(new Error('No enabled provider is configured for translation.'));
     return;
@@ -64,7 +65,7 @@ export async function handleSelection() {
       document_id: viewerState.currentDocId,
       provider,
       source_text: text,
-      target_lang: 'zh-CN',
+      target_lang: targetLang,
       anchor: {
         page: pageNumber,
         quote: text,

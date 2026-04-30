@@ -1,6 +1,3 @@
-Translate the following selected passage into {target_lang}.
-If the source language differs, detect it automatically.
-Keep technical terms accurate and preserve inline citations.
+请将以下内容翻译为 {target_lang}。只输出译文正文，不要添加任何说明、标题、前缀或标签。
 
-Selected passage:
 {source_text}

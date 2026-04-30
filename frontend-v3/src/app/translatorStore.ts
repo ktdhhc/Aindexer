@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { cancelTranslationRequest, translateSelection, type TranslationResult } from "../shared/api/translation";
+import { cancelTranslationRequest, streamTranslateSelection, translateSelection, type TranslationResult } from "../shared/api/translation";
 import type { PdfSelectionMode } from "../features/translator/PdfViewer";
 
 export type InspectorTab = "result" | "history";
@@ -10,11 +10,16 @@ export const PREVIEW_SCALE_MIN = 0.9;
 export const PREVIEW_SCALE_MAX = 2.1;
 export const PREVIEW_SCALE_STEP = 0.15;
 export const DEFAULT_PREVIEW_SCALE = 1.35;
+export const DEFAULT_INSPECTOR_PANE_WIDTH = 420;
 
 interface TranslatorWorkspaceState {
   selectedDocumentId: string;
   selectedModelKey: string;
+  targetLanguage: string;
+  isLibraryCollapsed: boolean;
+  inspectorPaneWidth: number;
   sourceText: string;
+  streamedTranslationText: string;
   inspectorTab: InspectorTab;
   translateMode: TranslateMode;
   latestResult: TranslationResult | null;
@@ -28,6 +33,8 @@ interface StartTranslationArgs {
   workspaceId: string;
   provider: string;
   model: string | null;
+  targetLanguage: string;
+  preferStreaming?: boolean;
   sourceText?: string;
 }
 
@@ -36,6 +43,9 @@ interface TranslatorState {
   ensureWorkspace: (workspaceId: string) => void;
   setSelectedDocumentId: (workspaceId: string, documentId: string) => void;
   setSelectedModelKey: (workspaceId: string, value: string) => void;
+  setTargetLanguage: (workspaceId: string, value: string) => void;
+  setLibraryCollapsed: (workspaceId: string, value: boolean) => void;
+  setInspectorPaneWidth: (workspaceId: string, value: number) => void;
   setSourceText: (workspaceId: string, value: string) => void;
   setInspectorTab: (workspaceId: string, tab: InspectorTab) => void;
   setTranslateMode: (workspaceId: string, mode: TranslateMode) => void;
@@ -58,7 +68,11 @@ function createDefaultWorkspaceState(): TranslatorWorkspaceState {
   return {
     selectedDocumentId: "",
     selectedModelKey: "",
+    targetLanguage: "zh-CN",
+    isLibraryCollapsed: false,
+    inspectorPaneWidth: DEFAULT_INSPECTOR_PANE_WIDTH,
     sourceText: "",
+    streamedTranslationText: "",
     inspectorTab: "result",
     translateMode: "full",
     latestResult: null,
@@ -71,6 +85,15 @@ function createDefaultWorkspaceState(): TranslatorWorkspaceState {
 
 function workspaceStateFor(state: TranslatorState, workspaceId: string): TranslatorWorkspaceState {
   return state.byWorkspace[workspaceId] ?? createDefaultWorkspaceState();
+}
+
+function clampInspectorPaneWidth(value: number): number {
+  return Math.min(720, Math.max(360, Number.isFinite(value) ? value : DEFAULT_INSPECTOR_PANE_WIDTH));
+}
+
+function isStreamingUnsupportedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return message.includes("未标记为支持流式输出") || message.includes("不支持流式翻译");
 }
 
 function updateWorkspace(
@@ -109,6 +132,24 @@ export const useTranslatorStore = create<TranslatorState>((set, get) => ({
   setSelectedModelKey: (workspaceId, value) => {
     set((state) => updateWorkspace(state, workspaceId, (workspace) => ({ ...workspace, selectedModelKey: value })));
   },
+  setTargetLanguage: (workspaceId, value) => {
+    set((state) => updateWorkspace(state, workspaceId, (workspace) => ({
+      ...workspace,
+      targetLanguage: value || "zh-CN",
+    })));
+  },
+  setLibraryCollapsed: (workspaceId, value) => {
+    set((state) => updateWorkspace(state, workspaceId, (workspace) => ({
+      ...workspace,
+      isLibraryCollapsed: value,
+    })));
+  },
+  setInspectorPaneWidth: (workspaceId, value) => {
+    set((state) => updateWorkspace(state, workspaceId, (workspace) => ({
+      ...workspace,
+      inspectorPaneWidth: clampInspectorPaneWidth(value),
+    })));
+  },
   setSourceText: (workspaceId, value) => {
     set((state) => updateWorkspace(state, workspaceId, (workspace) => ({ ...workspace, sourceText: value })));
   },
@@ -133,7 +174,7 @@ export const useTranslatorStore = create<TranslatorState>((set, get) => ({
   setStatusMessage: (workspaceId, message) => {
     set((state) => updateWorkspace(state, workspaceId, (workspace) => ({ ...workspace, statusMessage: message })));
   },
-  startTranslation: async ({ workspaceId, provider, model, sourceText }) => {
+  startTranslation: async ({ workspaceId, provider, model, targetLanguage, preferStreaming = false, sourceText }) => {
     get().ensureWorkspace(workspaceId);
     const workspace = workspaceStateFor(get(), workspaceId);
     const documentId = workspace.selectedDocumentId.trim();
@@ -151,28 +192,53 @@ export const useTranslatorStore = create<TranslatorState>((set, get) => ({
     set((state) => updateWorkspace(state, workspaceId, (current) => ({
       ...current,
       sourceText: source,
+      streamedTranslationText: "",
+      latestResult: null,
       isTranslating: true,
       statusMessage: "正在翻译",
     })));
 
     try {
-      const result = await translateSelection(
-        {
-          document_id: documentId,
-          workspace_id: workspaceId,
-          provider,
-          model,
-          source_text: source,
-          target_lang: "zh-CN",
-          source_lang: null,
-          anchor: { page: 1, quote: source, version: "v1" },
-          metadata: { client_request_id: clientRequestId },
-        },
-        controller.signal,
-      );
+      const payload = {
+        document_id: documentId,
+        workspace_id: workspaceId,
+        provider,
+        model,
+        source_text: source,
+        target_lang: targetLanguage || workspace.targetLanguage || "zh-CN",
+        source_lang: null,
+        anchor: { page: 1, quote: source, version: "v1" },
+        metadata: { client_request_id: clientRequestId },
+      };
+      let result: TranslationResult;
+      try {
+        if (preferStreaming) {
+          result = await streamTranslateSelection(
+            payload,
+            {
+              onDelta: ({ text }) => {
+                if (!text) return;
+                set((state) => updateWorkspace(state, workspaceId, (current) => ({
+                  ...current,
+                  streamedTranslationText: `${current.streamedTranslationText || ""}${text}`,
+                })));
+              },
+            },
+            controller.signal,
+          );
+        } else {
+          result = await translateSelection(payload, controller.signal);
+        }
+      } catch (error) {
+        if (!preferStreaming || !isStreamingUnsupportedError(error)) {
+          throw error;
+        }
+        result = await translateSelection(payload, controller.signal);
+      }
       set((state) => updateWorkspace(state, workspaceId, (current) => ({
         ...current,
         latestResult: result,
+        streamedTranslationText: result.translated_text,
         inspectorTab: "result",
         statusMessage: result.cached ? "命中缓存" : "翻译完成",
       })));
@@ -180,6 +246,7 @@ export const useTranslatorStore = create<TranslatorState>((set, get) => ({
       if (controller.signal.aborted) return;
       set((state) => updateWorkspace(state, workspaceId, (current) => ({
         ...current,
+        streamedTranslationText: current.streamedTranslationText || "",
         statusMessage: error instanceof Error ? error.message : "翻译失败",
       })));
     } finally {

@@ -69,6 +69,34 @@ export interface TranslationResult {
   updated_at?: string | null;
 }
 
+interface TranslationStreamMetaEvent {
+  type: "meta";
+  cached: boolean;
+  request_id: string;
+}
+
+interface TranslationStreamDeltaEvent {
+  type: "delta";
+  text: string;
+}
+
+interface TranslationStreamDoneEvent extends TranslationResult {
+  type: "done";
+  finish_reason?: string | null;
+}
+
+interface TranslationStreamErrorEvent {
+  type: "error";
+  message: string;
+  code?: string;
+}
+
+type TranslationStreamEvent =
+  | TranslationStreamMetaEvent
+  | TranslationStreamDeltaEvent
+  | TranslationStreamDoneEvent
+  | TranslationStreamErrorEvent;
+
 export function listTranslationDocuments(
   workspaceId: string,
 ): Promise<TranslationDocument[]> {
@@ -142,9 +170,93 @@ export function translateSelection(
   });
 }
 
+export async function streamTranslateSelection(
+  payload: TranslationSelectionPayload,
+  handlers: {
+    onMeta?: (event: TranslationStreamMetaEvent) => void;
+    onDelta?: (event: TranslationStreamDeltaEvent) => void;
+  },
+  signal?: AbortSignal,
+): Promise<TranslationResult> {
+  const response = await fetch("/api/translation/translate-selection-stream", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  if (!response.body) {
+    throw new Error("流式翻译响应为空");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let doneEvent: TranslationResult | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const event = JSON.parse(trimmed) as TranslationStreamEvent;
+      if (event.type === "meta") {
+        handlers.onMeta?.(event);
+        continue;
+      }
+      if (event.type === "delta") {
+        handlers.onDelta?.(event);
+        continue;
+      }
+      if (event.type === "error") {
+        throw new Error(event.message || event.code || "流式翻译失败");
+      }
+      if (event.type === "done") {
+        doneEvent = event;
+      }
+    }
+    if (done) break;
+  }
+
+  if (!doneEvent) {
+    throw new Error("流式翻译未返回完成结果");
+  }
+  return doneEvent;
+}
+
 export function cancelTranslationRequest(clientRequestId: string): Promise<{ ok: boolean; cancelled: boolean }> {
   return fetchJson<{ ok: boolean; cancelled: boolean }>(
     `/api/translation/requests/${encodeURIComponent(clientRequestId)}/cancel`,
     { method: "POST" },
   );
+}
+
+async function readErrorMessage(response: Response): Promise<string> {
+  try {
+    const payload = (await response.json()) as { detail?: string | { message?: string; code?: string }; message?: string };
+    if (typeof payload.detail === "string" && payload.detail.trim()) {
+      return payload.detail;
+    }
+    if (payload.detail && typeof payload.detail === "object") {
+      if (typeof payload.detail.message === "string" && payload.detail.message.trim()) {
+        return payload.detail.message;
+      }
+      if (typeof payload.detail.code === "string" && payload.detail.code.trim()) {
+        return payload.detail.code;
+      }
+    }
+    if (typeof payload.message === "string" && payload.message.trim()) {
+      return payload.message;
+    }
+  } catch {
+    // ignore parse failures
+  }
+  return response.statusText || "请求失败";
 }

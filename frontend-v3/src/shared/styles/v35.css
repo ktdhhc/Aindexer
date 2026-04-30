@@ -38,6 +38,7 @@ body {
 .v35-chat-thread,
 .v35-chat-side,
 .v35-chat-source-list,
+.v35-chat-wide-source-list,
 .v35-chat-mention-popover,
 .v35-chat-composer textarea,
 .v35-translation-doc-list,
@@ -60,6 +61,7 @@ body {
 .v35-chat-thread::-webkit-scrollbar,
 .v35-chat-side::-webkit-scrollbar,
 .v35-chat-source-list::-webkit-scrollbar,
+.v35-chat-wide-source-list::-webkit-scrollbar,
 .v35-chat-mention-popover::-webkit-scrollbar,
 .v35-chat-composer textarea::-webkit-scrollbar,
 .v35-translation-doc-list::-webkit-scrollbar,
@@ -82,6 +84,7 @@ body {
 .v35-chat-thread::-webkit-scrollbar-track,
 .v35-chat-side::-webkit-scrollbar-track,
 .v35-chat-source-list::-webkit-scrollbar-track,
+.v35-chat-wide-source-list::-webkit-scrollbar-track,
 .v35-chat-mention-popover::-webkit-scrollbar-track,
 .v35-chat-composer textarea::-webkit-scrollbar-track,
 .v35-translation-doc-list::-webkit-scrollbar-track,
@@ -104,6 +107,7 @@ body {
 .v35-chat-thread::-webkit-scrollbar-thumb,
 .v35-chat-side::-webkit-scrollbar-thumb,
 .v35-chat-source-list::-webkit-scrollbar-thumb,
+.v35-chat-wide-source-list::-webkit-scrollbar-thumb,
 .v35-chat-mention-popover::-webkit-scrollbar-thumb,
 .v35-chat-composer textarea::-webkit-scrollbar-thumb,
 .v35-translation-doc-list::-webkit-scrollbar-thumb,
@@ -127,6 +131,7 @@ body {
 .v35-chat-thread::-webkit-scrollbar-thumb:hover,
 .v35-chat-side::-webkit-scrollbar-thumb:hover,
 .v35-chat-source-list::-webkit-scrollbar-thumb:hover,
+.v35-chat-wide-source-list::-webkit-scrollbar-thumb:hover,
 .v35-chat-mention-popover::-webkit-scrollbar-thumb:hover,
 .v35-chat-composer textarea::-webkit-scrollbar-thumb:hover,
 .v35-translation-doc-list::-webkit-scrollbar-thumb:hover,
@@ -1514,6 +1519,103 @@ body {
   font-size: 12px;
 }
 
+.v35-chat-wide-scope {
+  display: grid;
+  gap: 12px;
+}
+
+.v35-chat-wide-meter {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid rgba(166, 95, 43, 0.16);
+  border-radius: 16px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 247, 233, 0.9), rgba(255, 253, 248, 0.68));
+}
+
+.v35-chat-wide-meter span {
+  min-width: 0;
+  padding: 12px 10px;
+  display: grid;
+  gap: 4px;
+  border-right: 1px solid rgba(166, 95, 43, 0.12);
+}
+
+.v35-chat-wide-meter span:last-child {
+  border-right: none;
+}
+
+.v35-chat-wide-meter strong {
+  font-family: "Source Serif 4", "Noto Serif SC", Georgia, serif;
+  font-size: 26px;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.v35-chat-wide-meter em {
+  color: var(--v35-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.v35-chat-wide-strip {
+  min-height: 30px;
+  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--v35-text-secondary);
+  font-family: "JetBrains Mono", "SF Mono", monospace;
+  font-size: 11px;
+}
+
+.v35-chat-wide-strip span:first-child {
+  color: var(--v35-accent-hover);
+  font-weight: 800;
+}
+
+.v35-chat-wide-source-list {
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.v35-chat-wide-source-list button {
+  border: 1px solid transparent;
+  border-bottom-color: rgba(36, 28, 22, 0.1);
+  background: transparent;
+  color: var(--v35-text-primary);
+  padding: 8px 2px 10px;
+  display: grid;
+  gap: 3px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.v35-chat-wide-source-list button:hover {
+  color: var(--v35-accent-hover);
+}
+
+.v35-chat-wide-source-list strong,
+.v35-chat-wide-source-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v35-chat-wide-source-list strong {
+  font-size: 13px;
+}
+
+.v35-chat-wide-source-list span {
+  color: var(--v35-text-secondary);
+  font-size: 11px;
+}
+
 .v35-chat-prompt-list button {
   border: 1px solid var(--v35-border);
   border-radius: 14px;
@@ -2108,9 +2210,70 @@ body {
 
 .v35-translator-workspace {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr) 360px;
-  gap: 14px;
+  --v35-translator-gap: 14px;
+  grid-template-columns: 300px minmax(0, 1fr) var(--v35-inspector-width, 420px);
+  gap: var(--v35-translator-gap);
   align-items: start;
+  position: relative;
+}
+
+.v35-translator-workspace.is-library-collapsed {
+  grid-template-columns: minmax(0, 1fr) var(--v35-inspector-width, 420px);
+}
+
+.v35-translator-workspace.is-library-collapsed .v35-translation-library {
+  display: none;
+}
+
+.v35-translation-resizer {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  width: 16px;
+  height: var(--v35-pane-height);
+  align-self: stretch;
+  position: relative;
+  z-index: 5;
+  transform: translateX(calc(var(--v35-translator-gap) / 2));
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.v35-translator-workspace.is-library-collapsed .v35-translation-resizer {
+  grid-column: 1;
+}
+
+.v35-translation-resizer::before,
+.v35-translation-resizer::after {
+  content: none;
+}
+
+.v35-translation-library {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.v35-translation-reader {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.v35-translation-inspector {
+  grid-column: 3;
+  grid-row: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.v35-translator-workspace.is-library-collapsed .v35-translation-reader {
+  grid-column: 1;
+}
+
+.v35-translator-workspace.is-library-collapsed .v35-translation-inspector {
+  grid-column: 2;
 }
 
 .v35-translation-library,
@@ -2181,6 +2344,18 @@ body {
   color: var(--v35-text-secondary);
   font-family: "JetBrains Mono", "SF Mono", monospace;
   font-size: 12px;
+}
+
+.v35-translation-reader-kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.v35-translation-reader-kicker .v35-icon-button {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
 }
 
 .v35-translation-reader-head h2 {
@@ -2565,9 +2740,12 @@ body {
   .v35-editorial-grid,
   .v35-chat-hero,
   .v35-chat-workspace,
-  .v35-translator-header,
-  .v35-translator-workspace {
+  .v35-translator-header {
     grid-template-columns: 1fr;
+  }
+
+  .v35-translation-resizer {
+    display: none;
   }
 
   .v35-banner-aside {
@@ -2636,6 +2814,23 @@ body {
 
   .v35-field-row-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1024px) {
+  .v35-translator-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .v35-translation-library,
+  .v35-translation-reader,
+  .v35-translation-inspector {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .v35-translation-resizer {
+    display: none;
   }
 }
 

@@ -1,6 +1,16 @@
 import { create } from "zustand";
 
-import { askChatWithSignal, streamChatWithSignal, type ChatContextStats, type ChatHistoryMessage, type ChatMode, type ChatSource } from "../shared/api/chat";
+import {
+  askChatWithSignal,
+  normalizeSourceId,
+  resolveAssistantCitedSources,
+  streamChatWithSignal,
+  stripAssistantCitationFooter,
+  type ChatContextStats,
+  type ChatHistoryMessage,
+  type ChatMode,
+  type ChatSource,
+} from "../shared/api/chat";
 import type { FileItem } from "../shared/api/files";
 import type { ProviderModelEntry } from "../shared/lib/providerModels";
 
@@ -119,34 +129,34 @@ function persistWorkspaceSessions(workspaceId: string, sessions: ChatSession[]):
 }
 
 function isValidSourceId(value: string): boolean {
-  return /^S\d{2,}$/i.test(value.trim());
+  return Boolean(normalizeSourceId(value));
 }
 
-function nextSourceIndex(sourceMap: Record<string, string>): number {
+function nextSourceIndex(sourceMap: Record<string, string>, prefix: "I" | "P"): number {
   return Object.values(sourceMap).reduce((highest, value) => {
-    const normalized = value.trim().toUpperCase();
-    if (!isValidSourceId(normalized)) return highest;
-    return Math.max(highest, Number.parseInt(normalized.slice(1), 10) || 0);
+    const normalized = normalizeSourceId(value);
+    if (!isValidSourceId(normalized) || !normalized.startsWith(prefix)) return highest;
+    return Math.max(highest, Number.parseInt(normalized.split("-")[1], 10) || 0);
   }, 0) + 1;
 }
 
 function mergeSourceMap(sourceMap: Record<string, string>, sources?: ChatSource[]): Record<string, string> {
   const next = { ...sourceMap };
   for (const source of sources ?? []) {
-    const sourceId = String(source.source_id || "").trim().toUpperCase();
+    const sourceId = normalizeSourceId(source.source_id);
     if (!source.doc_id || !isValidSourceId(sourceId)) continue;
     next[source.doc_id] = sourceId;
   }
   return next;
 }
 
-function extendSourceMap(sourceMap: Record<string, string>, docIds: string[]): Record<string, string> {
+function extendSourceMap(sourceMap: Record<string, string>, docIds: string[], prefix: "I" | "P"): Record<string, string> {
   const next = { ...sourceMap };
-  let cursor = nextSourceIndex(next);
+  let cursor = nextSourceIndex(next, prefix);
   for (const docId of docIds) {
-    const existing = String(next[docId] || "").trim().toUpperCase();
-    if (isValidSourceId(existing)) continue;
-    next[docId] = `S${String(cursor).padStart(2, "0")}`;
+    const existing = normalizeSourceId(next[docId]);
+    if (isValidSourceId(existing) && existing.startsWith(prefix)) continue;
+    next[docId] = `${prefix}-${String(cursor).padStart(2, "0")}`;
     cursor += 1;
   }
   return next;
@@ -156,7 +166,7 @@ function normalizeSourceMap(rawSourceMap: unknown, messages: ChatMessage[]): Rec
   let next: Record<string, string> = {};
   if (rawSourceMap && typeof rawSourceMap === "object" && !Array.isArray(rawSourceMap)) {
     for (const [docId, sourceId] of Object.entries(rawSourceMap as Record<string, unknown>)) {
-      const normalized = String(sourceId || "").trim().toUpperCase();
+      const normalized = normalizeSourceId(String(sourceId || ""));
       if (docId && isValidSourceId(normalized)) {
         next[docId] = normalized;
       }
@@ -170,7 +180,15 @@ function normalizeSourceMap(rawSourceMap: unknown, messages: ChatMessage[]): Rec
 
 function normalizeSession(raw: ChatSession): ChatSession {
   const mode = raw.mode && ["wide", "deep", "agent"].includes(raw.mode) ? raw.mode : "deep";
-  const messages = Array.isArray(raw.messages) ? raw.messages : [];
+  const messages = Array.isArray(raw.messages)
+    ? raw.messages.map((message) => ({
+        ...message,
+        sources: (message.sources ?? []).map((source) => ({
+          ...source,
+          source_id: normalizeSourceId(source.source_id) || source.source_id,
+        })),
+      }))
+    : [];
   const injectedDocIds = Array.isArray((raw as ChatSession & { injectedDocIds?: string[] }).injectedDocIds)
     ? (raw as ChatSession & { injectedDocIds?: string[] }).injectedDocIds ?? []
     : Array.isArray(raw.selectedDocIds)
@@ -193,6 +211,10 @@ function modeLabel(mode: ChatMode): string {
   return mode === "wide" ? "全景" : mode === "agent" ? "探索" : "精读";
 }
 
+function shouldPersistSourceMap(mode: ChatMode): boolean {
+  return mode === "deep" || mode === "wide";
+}
+
 function buildSessionTitle(question: string): string {
   const normalized = question.replace(/\s+/g, " ").trim();
   if (!normalized) return "新会话";
@@ -204,7 +226,7 @@ function buildSourceSnapshot(docIds: string[], files: FileItem[], sourceMap: Rec
   return docIds.map((docId) => {
     const item = map.get(docId);
     return {
-      source_id: sourceMap[docId],
+      source_id: normalizeSourceId(sourceMap[docId]) || sourceMap[docId],
       doc_id: docId,
       display_name: item?.display_name || item?.filename || docId,
     };
@@ -216,13 +238,21 @@ function buildHistoryPayload(messages: ChatMessage[]): ChatHistoryMessage[] {
     .filter((message): message is ChatMessage & { role: "user" | "assistant" } => message.role === "user" || message.role === "assistant")
     .map((message) => ({
       role: message.role,
-      content: message.content,
-      sources: message.sources,
+      content: message.role === "assistant" ? stripAssistantCitationFooter(message.content) : message.content,
+      sources: message.role === "assistant" ? resolveAssistantCitedSources(message.content, message.sources) : message.sources,
     }));
 }
 
+function sessionSortTimestamp(session: ChatSession): string {
+  const latestMessageAt = [...session.messages]
+    .reverse()
+    .find((message) => message.role === "user" || message.role === "assistant")
+    ?.createdAt;
+  return latestMessageAt || session.createdAt;
+}
+
 function sortSessions(sessions: ChatSession[]): ChatSession[] {
-  return [...sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return [...sessions].sort((a, b) => sessionSortTimestamp(b).localeCompare(sessionSortTimestamp(a)));
 }
 
 function updateSessionsForWorkspace(
@@ -259,7 +289,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
     const store = readSessionStore();
-    const nextSessions = (store[workspaceId] ?? []).map(normalizeSession).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const nextSessions = sortSessions((store[workspaceId] ?? []).map(normalizeSession));
     const initialSessions = nextSessions.length > 0 ? nextSessions : [createEmptySession()];
     if (nextSessions.length === 0) {
       persistWorkspaceSessions(workspaceId, initialSessions);
@@ -433,7 +463,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const injectedDocIds = activeSession?.injectedDocIds ?? [];
     const selectedDocIds = activeSession?.selectedDocIds ?? [];
     const currentDocIds = [...new Set([...injectedDocIds, ...selectedDocIds])];
-    const nextSourceMap = currentMode === "deep" ? extendSourceMap(activeSession?.sourceMap ?? {}, selectedDocIds) : (activeSession?.sourceMap ?? {});
+    const nextSourceMap = currentMode === "deep"
+      ? extendSourceMap(activeSession?.sourceMap ?? {}, selectedDocIds, "P")
+      : (activeSession?.sourceMap ?? {});
     const currentSources = buildSourceSnapshot(selectedDocIds, indexedFiles, nextSourceMap);
     const historyMessages = buildHistoryPayload(activeSession?.messages ?? []);
     if (!trimmedQuestion || state.sendingByWorkspace[workspaceId] || !currentSessionId) return;
@@ -536,7 +568,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   ...session,
                   injectedDocIds: [...new Set([...session.injectedDocIds, ...selectedDocIds])],
                   selectedDocIds: session.id === currentSessionId ? [] : session.selectedDocIds,
-                  sourceMap: currentMode === "deep" ? mergeSourceMap(nextSourceMap, event.sources) : session.sourceMap,
+                  sourceMap: shouldPersistSourceMap(currentMode) ? mergeSourceMap(nextSourceMap, event.sources) : session.sourceMap,
                   updatedAt: new Date().toISOString(),
                   messages: [...session.messages, message],
                 };
@@ -603,7 +635,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 ...session,
                 injectedDocIds: [...new Set([...session.injectedDocIds, ...selectedDocIds])],
                 selectedDocIds: [],
-                sourceMap: currentMode === "deep" ? mergeSourceMap(nextSourceMap, response.sources) : session.sourceMap,
+                sourceMap: shouldPersistSourceMap(currentMode) ? mergeSourceMap(nextSourceMap, response.sources) : session.sourceMap,
                 updatedAt: new Date().toISOString(),
                 messages: [
                   ...session.messages,

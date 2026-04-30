@@ -31,7 +31,7 @@ def test_translator_error_states(server):
         page = context.new_page()
 
         page.route(
-            "**/api/translation/documents",
+            "**/api/translation/documents*",
             lambda route: route.fulfill(
                 json=[
                     {
@@ -161,8 +161,7 @@ def test_translator_error_states(server):
         )
 
         page.goto(f"{server}/translator/")
-        page.select_option("#documentSelect", "doc1")
-        page.click("#loadDocBtn")
+        page.click('[data-doc-id="doc1"]')
         expect(page.locator(".translator-viewer")).to_contain_text(
             "sufficiently long sample passage"
         )

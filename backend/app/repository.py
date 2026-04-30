@@ -646,8 +646,6 @@ def search_documents(
         rows = conn.execute(sql, tuple(params)).fetchall()
     ranked: list[tuple[float, dict[str, Any]]] = []
     q = (query or "").strip()
-    q_lower = q.lower()
-    q_terms = _extract_search_terms(q_lower)
 
     for r in rows:
         authors = json.loads(r["authors_json"] or "[]")
@@ -699,43 +697,15 @@ def search_documents(
                 markdown_text,
             ]
         )
-        corpus_lower = corpus.lower()
-
-        exact_hit = q_lower in corpus_lower
-        filename_exact_hit = (
-            q_lower in filename_text.lower()
-            or q_lower in original_filename_text.lower()
+        score = score_document_search_match(
+            q,
+            display_name_text=display_name_text,
+            original_filename_text=original_filename_text,
+            title_text=title_text,
+            corpus_text=corpus,
         )
-        term_hits = sum(1 for t in q_terms if t in corpus_lower) if q_terms else 0
-        display_ratio = (
-            SequenceMatcher(None, q_lower, display_name_text.lower()).ratio()
-            if display_name_text
-            else 0.0
-        )
-        original_ratio = (
-            SequenceMatcher(None, q_lower, original_filename_text.lower()).ratio()
-            if original_filename_text
-            else 0.0
-        )
-        filename_ratio = max(
-            display_ratio,
-            original_ratio,
-            SequenceMatcher(None, q_lower, filename_text.lower()).ratio(),
-        )
-        title_ratio = SequenceMatcher(None, q_lower, title_text.lower()).ratio()
-        corpus_ratio = SequenceMatcher(None, q_lower, corpus_lower[:5000]).ratio()
-        fuzzy_ratio = max(filename_ratio, title_ratio, corpus_ratio)
-
-        matched = exact_hit or term_hits > 0 or fuzzy_ratio >= 0.42
-        if not matched:
+        if score is None:
             continue
-
-        score = (
-            (1000.0 if exact_hit else 0.0)
-            + (300.0 if filename_exact_hit else 0.0)
-            + float(term_hits) * 12.0
-            + fuzzy_ratio * 10.0
-        )
         ranked.append((score, item))
 
     ranked.sort(key=lambda x: (x[0], x[1]["created_at"] or ""), reverse=True)
@@ -744,6 +714,61 @@ def search_documents(
 
 def _extract_search_terms(text: str) -> list[str]:
     return [t for t in re.findall(r"[\w\u4e00-\u9fff]+", text or "") if t]
+
+
+def score_document_search_match(
+    query: str | None,
+    *,
+    display_name_text: str,
+    original_filename_text: str,
+    title_text: str,
+    corpus_text: str,
+) -> float | None:
+    q_lower = str(query or "").strip().lower()
+    if not q_lower:
+        return 0.0
+
+    q_terms = _extract_search_terms(q_lower)
+    corpus_lower = str(corpus_text or "").lower()
+    display_name_lower = str(display_name_text or "").lower()
+    original_filename_lower = str(original_filename_text or "").lower()
+    title_lower = str(title_text or "").lower()
+    filename_lower = display_name_lower or original_filename_lower
+
+    exact_hit = q_lower in corpus_lower
+    filename_exact_hit = (
+        q_lower in filename_lower or q_lower in original_filename_lower
+    )
+    term_hits = sum(1 for t in q_terms if t in corpus_lower) if q_terms else 0
+    display_ratio = (
+        SequenceMatcher(None, q_lower, display_name_lower).ratio()
+        if display_name_lower
+        else 0.0
+    )
+    original_ratio = (
+        SequenceMatcher(None, q_lower, original_filename_lower).ratio()
+        if original_filename_lower
+        else 0.0
+    )
+    filename_ratio = max(
+        display_ratio,
+        original_ratio,
+        SequenceMatcher(None, q_lower, filename_lower).ratio(),
+    )
+    title_ratio = SequenceMatcher(None, q_lower, title_lower).ratio()
+    corpus_ratio = SequenceMatcher(None, q_lower, corpus_lower[:5000]).ratio()
+    fuzzy_ratio = max(filename_ratio, title_ratio, corpus_ratio)
+
+    matched = exact_hit or term_hits > 0 or fuzzy_ratio >= 0.42
+    if not matched:
+        return None
+
+    return (
+        (1000.0 if exact_hit else 0.0)
+        + (300.0 if filename_exact_hit else 0.0)
+        + float(term_hits) * 12.0
+        + fuzzy_ratio * 10.0
+    )
 
 
 def field_template_exists(template_id: str | None) -> bool:

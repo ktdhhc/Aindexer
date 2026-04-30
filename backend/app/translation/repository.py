@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 
 from ..db import DEFAULT_WORKSPACE_ID, get_conn, utcnow
+from ..repository import score_document_search_match
 
 
 def normalize_workspace_id(workspace_id: str | None) -> str:
@@ -87,14 +88,79 @@ def get_translation_document_by_hash(
 
 def list_translation_documents(
     workspace_id: str = DEFAULT_WORKSPACE_ID,
+    query: str | None = None,
 ) -> list[dict[str, Any]]:
     workspace = normalize_workspace_id(workspace_id)
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM translation_documents WHERE workspace_id = ? ORDER BY created_at DESC",
+            """
+            SELECT td.*, d.id AS source_doc_id, i.title, i.year, i.authors_json,
+                   COALESCE(tp.page_text, '') AS page_text
+            FROM translation_documents td
+            LEFT JOIN documents d
+              ON d.file_hash = td.file_hash AND d.workspace_id = td.workspace_id
+            LEFT JOIN index_records i ON i.doc_id = d.id
+            LEFT JOIN (
+              SELECT document_id, GROUP_CONCAT(text_content, '\n') AS page_text
+              FROM translation_page_text
+              GROUP BY document_id
+            ) tp ON tp.document_id = td.id
+            WHERE td.workspace_id = ?
+            ORDER BY td.created_at DESC
+            """,
             (workspace,),
         ).fetchall()
-        return [dict(row) for row in rows]
+
+    ranked: list[tuple[float, dict[str, Any]]] = []
+    q = str(query or "").strip()
+    for row in rows:
+        authors = json.loads(row["authors_json"] or "[]")
+        item = {
+            "id": row["id"],
+            "workspace_id": row["workspace_id"],
+            "filename": row["filename"],
+            "display_name": row["display_name"],
+            "file_type": row["file_type"],
+            "file_hash": row["file_hash"],
+            "file_path": row["file_path"],
+            "page_count": row["page_count"],
+            "text_layer_status": row["text_layer_status"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "source_doc_id": row["source_doc_id"],
+            "title": row["title"],
+            "authors": authors,
+            "year": row["year"],
+        }
+        if not q:
+            ranked.append((0.0, item))
+            continue
+
+        display_name_text = str(row["display_name"] or "")
+        filename_text = str(row["filename"] or "")
+        title_text = str(row["title"] or "")
+        corpus = "\n".join(
+            [
+                display_name_text,
+                filename_text,
+                title_text,
+                " ".join([str(author) for author in authors]),
+                str(row["year"] or ""),
+            ]
+        )
+        score = score_document_search_match(
+            q,
+            display_name_text=display_name_text,
+            original_filename_text=filename_text,
+            title_text=title_text,
+            corpus_text=corpus,
+        )
+        if score is None:
+            continue
+        ranked.append((score, item))
+
+    ranked.sort(key=lambda x: (x[0], x[1]["created_at"] or ""), reverse=True)
+    return [item for _, item in ranked]
 
 
 def upsert_translation_page_text(

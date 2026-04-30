@@ -48,6 +48,9 @@ class TranslationDocumentOut(BaseModel):
     workspace_id: str = DEFAULT_WORKSPACE_ID
     filename: str
     display_name: str
+    title: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    year: int | None = None
     file_type: str
     file_path: str
     page_count: int | None = None

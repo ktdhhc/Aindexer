@@ -31,6 +31,12 @@ body {
   overflow-y: auto;
   padding: 1.25rem;
 }
+.translator-main {
+  min-height: 0;
+}
+.translator-library-panel {
+  min-width: 18rem;
+}
 .translator-viewer {
   display: flex;
   flex-direction: column;
@@ -224,9 +230,19 @@ body {
 }
 
 @media (max-width: 1024px) {
+  .translator-main {
+    flex-direction: column;
+  }
+  .translator-library-panel {
+    width: 100%;
+    min-width: 0;
+  }
   .translator-sidepanel {
     width: 100%;
     max-width: none;
+  }
+  .translator-viewer-region {
+    min-height: 0;
   }
   .translator-viewer-shell {
     padding: 0.85rem;

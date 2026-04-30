@@ -1,6 +1,6 @@
 import * as pdfjsLib from '../vendor/pdfjs/pdf.mjs';
 
-import { fetchDocuments, fetchDocumentPages } from './api.js';
+import { fetchDocumentPages } from './api.js';
 import { handleSearch } from './search.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -68,31 +68,6 @@ export async function loadDocument(docId) {
     viewerEls.viewerError.classList.add('flex');
     viewerEls.viewerErrorText.textContent =
       err.message || 'Failed to load original PDF preview';
-  }
-}
-
-export async function refreshDocumentList(selectDocId = null) {
-  const docSelect = document.getElementById('documentSelect');
-  try {
-    const docs = await fetchDocuments();
-    docSelect.innerHTML =
-      '<option value="">Select Document...</option>' +
-      docs
-        .map(
-          (doc) =>
-            `<option value="${doc.id}">${escapeHtml(
-              doc.display_name || doc.filename
-            )}</option>`
-        )
-        .join('');
-
-    if (selectDocId && docs.find((doc) => doc.id === selectDocId)) {
-      docSelect.value = selectDocId;
-    }
-    return docs;
-  } catch (err) {
-    console.error('Failed to refresh document list:', err);
-    return [];
   }
 }
 
@@ -343,21 +318,3 @@ function normalizePdfError(error) {
   return new Error('Failed to render PDF preview');
 }
 
-export function escapeHtml(unsafe) {
-  return String(unsafe || '').replace(/[&<>"']/g, (match) => {
-    switch (match) {
-      case '&':
-        return '&amp;';
-      case '<':
-        return '&lt;';
-      case '>':
-        return '&gt;';
-      case '"':
-        return '&quot;';
-      case "'":
-        return '&#039;';
-      default:
-        return match;
-    }
-  });
-}

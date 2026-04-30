@@ -15,8 +15,14 @@ export async function readErrorMessage(response, fallback = '请求失败') {
   return fallback;
 }
 
-export async function fetchDocuments() {
-  const res = await fetch(apiPath('/translation/documents'));
+export async function fetchDocuments(query = '') {
+  const params = new URLSearchParams();
+  const q = String(query || '').trim();
+  if (q) params.set('q', q);
+  const endpoint = params.size
+    ? apiPath(`/translation/documents?${params.toString()}`)
+    : apiPath('/translation/documents');
+  const res = await fetch(endpoint);
   if (!res.ok) throw new Error(await readErrorMessage(res));
   return res.json();
 }

@@ -1,5 +1,6 @@
 import pytest
 import importlib
+from urllib.parse import parse_qs, urlparse
 
 ui_test_server = importlib.import_module("tests.translation.ui_test_server")
 
@@ -23,13 +24,16 @@ def test_translator_shell_load(server):
 
         # Mock documents API
         page.route(
-            "**/api/translation/documents",
+            "**/api/translation/documents*",
             lambda route: route.fulfill(
                 json=[
                     {
                         "id": "doc1",
                         "filename": "test.pdf",
                         "display_name": "Test Document",
+                        "title": "Test Document",
+                        "authors": ["Ada Lovelace"],
+                        "year": 1843,
                     }
                 ]
             ),
@@ -69,8 +73,10 @@ def test_translator_shell_load(server):
         expect(page.locator(".translator-sidepanel")).to_be_visible()
         expect(page.locator(".translator-empty-state").first).to_be_visible()
 
-        # Check document loaded in select
-        expect(page.locator("#documentSelect")).to_contain_text("Test Document")
+        # Check document loaded in left library panel
+        expect(page.locator("#documentSearchInput")).to_be_visible()
+        expect(page.locator("#documentList")).to_contain_text("Test Document")
+        expect(page.locator("#documentList")).to_contain_text("Ada Lovelace")
 
         # Check upload controls are visible (independent entry requirement)
         expect(page.locator("#uploadBtn")).to_be_visible()
@@ -87,10 +93,57 @@ def test_translator_shell_load(server):
         # Check provider selectors are populated from shared provider config
         expect(page.locator("#configProviderSelect option")).to_have_count(2)
         expect(page.locator("#providerSelect option")).to_have_count(2)
+        expect(page.locator("#targetLanguageSelect")).to_be_visible()
 
         # Check refresh button is visible
         expect(page.locator("#refreshDocsBtn")).to_be_visible()
         expect(page.locator("#cancelTranslationBtn")).to_be_visible()
         expect(page.locator("#cancelTranslationBtn")).to_be_disabled()
+
+        browser.close()
+
+
+def test_translator_library_search_refreshes_results(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        context = browser.new_context(viewport={"width": 1280, "height": 720})
+        page = context.new_page()
+
+        def handle_documents(route):
+            query = parse_qs(urlparse(route.request.url).query).get("q", [""])[0]
+            docs = [
+                {
+                    "id": "doc1",
+                    "filename": "attention.pdf",
+                    "display_name": "Attention Paper",
+                    "title": "Attention Is All You Need",
+                    "authors": ["Ashish Vaswani"],
+                    "year": 2017,
+                },
+                {
+                    "id": "doc2",
+                    "filename": "gnn.pdf",
+                    "display_name": "Graph Networks",
+                    "title": "Graph Neural Networks",
+                    "authors": ["Zonghan Wu"],
+                    "year": 2020,
+                },
+            ]
+            if query == "vaswani":
+                docs = [docs[0]]
+            route.fulfill(json=docs)
+
+        page.route("**/api/translation/documents*", handle_documents)
+        page.route("**/api/providers", lambda route: route.fulfill(json=[]))
+
+        page.goto(f"{server}/translator/")
+
+        expect(page.locator("#documentList")).to_contain_text("Attention Paper")
+        expect(page.locator("#documentList")).to_contain_text("Graph Networks")
+
+        page.fill("#documentSearchInput", "vaswani")
+
+        expect(page.locator("#documentList")).to_contain_text("Attention Paper")
+        expect(page.locator("#documentList")).not_to_contain_text("Graph Networks")
 
         browser.close()

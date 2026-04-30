@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
   DEFAULT_PREVIEW_SCALE,
+  DEFAULT_INSPECTOR_PANE_WIDTH,
   PREVIEW_SCALE_MAX,
   PREVIEW_SCALE_MIN,
   PREVIEW_SCALE_STEP,
@@ -14,6 +15,7 @@ import {
   listTranslationHistory,
 } from "../shared/api/translation";
 import { listProviders } from "../shared/api/providers";
+import { searchDocuments, type SearchItem } from "../shared/api/search";
 import {
   buildAvailableProviderModelEntries,
   type ProviderModelEntry,
@@ -36,12 +38,46 @@ function formatTime(value?: string | null): string {
   return date.toLocaleString();
 }
 
+function normalizeSearchText(value: string | number | null | undefined): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function matchesTranslatorMetadata(item: SearchItem, query: string): boolean {
+  const q = normalizeSearchText(query);
+  if (!q) return true;
+  const metadata = [
+    item.title,
+    item.display_name,
+    item.filename,
+    item.year ? String(item.year) : "",
+    ...(item.authors || []),
+  ]
+    .map((part) => normalizeSearchText(part))
+    .filter(Boolean);
+  return metadata.some((part) => part.includes(q));
+}
+
+const TARGET_LANGUAGE_OPTIONS = [
+  { value: "zh-CN", label: "简体中文" },
+  { value: "en", label: "English" },
+  { value: "ja", label: "日本語" },
+  { value: "ko", label: "한국어" },
+  { value: "fr", label: "Français" },
+  { value: "de", label: "Deutsch" },
+];
+
 export function TranslatorPage() {
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
+  const [documentQuery, setDocumentQuery] = useState("");
+  const deferredDocumentQuery = useDeferredValue(documentQuery.trim());
   const ensureWorkspace = useTranslatorStore((state) => state.ensureWorkspace);
   const selectedDocumentId = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.selectedDocumentId ?? "");
   const selectedModelKey = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.selectedModelKey ?? "");
+  const targetLanguage = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.targetLanguage ?? "zh-CN");
+  const isLibraryCollapsed = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.isLibraryCollapsed ?? false);
+  const inspectorPaneWidth = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.inspectorPaneWidth ?? DEFAULT_INSPECTOR_PANE_WIDTH);
   const sourceText = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.sourceText ?? "");
+  const streamedTranslationText = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.streamedTranslationText ?? "");
   const inspectorTab = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.inspectorTab ?? "result");
   const translateMode = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.translateMode ?? "full");
   const latestResult = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.latestResult ?? null);
@@ -51,6 +87,9 @@ export function TranslatorPage() {
   const previewScale = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.previewScale ?? DEFAULT_PREVIEW_SCALE);
   const setSelectedDocumentId = useTranslatorStore((state) => state.setSelectedDocumentId);
   const setSelectedModelKey = useTranslatorStore((state) => state.setSelectedModelKey);
+  const setTargetLanguage = useTranslatorStore((state) => state.setTargetLanguage);
+  const setLibraryCollapsed = useTranslatorStore((state) => state.setLibraryCollapsed);
+  const setInspectorPaneWidth = useTranslatorStore((state) => state.setInspectorPaneWidth);
   const setSourceText = useTranslatorStore((state) => state.setSourceText);
   const setInspectorTab = useTranslatorStore((state) => state.setInspectorTab);
   const setTranslateMode = useTranslatorStore((state) => state.setTranslateMode);
@@ -62,10 +101,18 @@ export function TranslatorPage() {
 
   const autoDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAutoSourceRef = useRef("");
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const readerPaneRef = useRef<HTMLElement | null>(null);
+  const inspectorPaneRef = useRef<HTMLElement | null>(null);
 
   const filesQuery = useQuery({
     queryKey: ["workspace-files", workspaceId],
     queryFn: () => listFiles(workspaceId),
+  });
+
+  const librarySearchQuery = useQuery({
+    queryKey: ["translator-library-search", workspaceId, deferredDocumentQuery],
+    queryFn: () => searchDocuments(workspaceId, deferredDocumentQuery),
   });
 
   const providersQuery = useQuery({
@@ -83,6 +130,40 @@ export function TranslatorPage() {
     return (filesQuery.data ?? []).filter((item) => item.file_type === "pdf");
   }, [filesQuery.data]);
 
+  const pdfDocumentMap = useMemo(() => {
+    return new Map(pdfDocuments.map((item) => [item.id, item]));
+  }, [pdfDocuments]);
+
+  const visiblePdfDocuments = useMemo(() => {
+    const rows = librarySearchQuery.data ?? [];
+    const filteredRows = deferredDocumentQuery
+      ? rows.filter((item) => matchesTranslatorMetadata(item, deferredDocumentQuery))
+      : rows;
+    const merged = filteredRows
+      .map((item) => {
+        const file = pdfDocumentMap.get(item.doc_id);
+        if (!file) return null;
+        return {
+          ...file,
+          title: item.title || null,
+          year: item.year ?? null,
+          authors: item.authors || [],
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+    if (merged.length > 0 || deferredDocumentQuery) {
+      return merged;
+    }
+
+    return pdfDocuments.map((item) => ({
+      ...item,
+      title: null,
+      year: null,
+      authors: [],
+    }));
+  }, [deferredDocumentQuery, librarySearchQuery.data, pdfDocumentMap, pdfDocuments]);
+
   const selectedDocument = useMemo(() => {
     return pdfDocuments.find((item) => item.id === selectedDocumentId) ?? null;
   }, [pdfDocuments, selectedDocumentId]);
@@ -99,6 +180,14 @@ export function TranslatorPage() {
     const model = modelParts.join("::");
     return { provider, model };
   }, [selectedModelKey]);
+
+  const selectedModelSupportsStreaming = useMemo(() => {
+    if (!selectedModelEntry) return true;
+    const provider = (providersQuery.data ?? []).find((item) => item.provider === selectedModelEntry.provider);
+    const registryModel = provider?.registry?.provider.models?.find((item) => item.id === selectedModelEntry.model);
+    if (!registryModel) return true;
+    return registryModel.supports_streaming !== false;
+  }, [providersQuery.data, selectedModelEntry]);
 
   const sourceStats = useMemo(() => {
     const normalized = normalizeText(sourceText);
@@ -148,10 +237,12 @@ export function TranslatorPage() {
         workspaceId,
         provider: entry.provider,
         model: entry.model || null,
+        targetLanguage,
+        preferStreaming: selectedModelSupportsStreaming,
         sourceText: source,
       });
     },
-    [selectedDocumentId, selectedModelEntry, startTranslation, workspaceId],
+    [selectedDocumentId, selectedModelEntry, selectedModelSupportsStreaming, startTranslation, targetLanguage, workspaceId],
   );
 
   const translateMutation = useMutation({
@@ -231,6 +322,13 @@ export function TranslatorPage() {
   const canStartTranslate = Boolean(
     selectedDocumentId && selectedModelEntry && !isTranslating,
   );
+  const visibleTranslationText = latestResult?.translated_text || streamedTranslationText;
+  const workspaceStyle = useMemo(
+    () => ({
+      "--v35-inspector-width": `${inspectorPaneWidth}px`,
+    }) as CSSProperties,
+    [inspectorPaneWidth],
+  );
 
   const pdfFileUrl = selectedDocumentId ? buildOriginalFileUrl(selectedDocumentId, workspaceId) : "";
   const canZoomOut = previewScale > PREVIEW_SCALE_MIN;
@@ -242,6 +340,42 @@ export function TranslatorPage() {
       return Math.min(PREVIEW_SCALE_MAX, Math.max(PREVIEW_SCALE_MIN, Math.round(next * 100) / 100));
     });
   }
+
+  const handleInspectorResizeStart = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (window.innerWidth <= 1024) return;
+    event.preventDefault();
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    const layoutGap = 14;
+    const libraryWidth = isLibraryCollapsed ? 0 : 300;
+    const gapCount = isLibraryCollapsed ? 1 : 2;
+    const minInspectorWidth = 360;
+    const minReaderWidth = 420;
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      const workspaceRect = workspaceRef.current?.getBoundingClientRect();
+      if (!workspaceRect) return;
+      const maxInspectorWidth = Math.max(
+        minInspectorWidth,
+        workspaceRect.width - libraryWidth - layoutGap * gapCount - minReaderWidth,
+      );
+      const nextInspectorWidth = workspaceRect.right - moveEvent.clientX - layoutGap / 2;
+      const clampedWidth = Math.min(maxInspectorWidth, Math.max(minInspectorWidth, nextInspectorWidth));
+      setInspectorPaneWidth(workspaceId, clampedWidth);
+    };
+
+    const handleUp = () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  }, [isLibraryCollapsed, setInspectorPaneWidth, workspaceId]);
 
   return (
     <section className="v35-translator-page">
@@ -256,24 +390,50 @@ export function TranslatorPage() {
         </div>
       </header>
 
-      <div className="v35-translator-workspace">
+      <div ref={workspaceRef} className={`v35-translator-workspace ${isLibraryCollapsed ? "is-library-collapsed" : ""}`} style={workspaceStyle}>
         <aside className="v35-translation-library v35-paper-panel">
           <header className="v35-column-header">
             <div>
               <h2 className="v35-section-title">Documents</h2>
               <p className="v35-muted">{workspaceId}</p>
             </div>
+            <button
+              className="v35-icon-button"
+              type="button"
+              aria-label="收起文档栏"
+              title="收起文档栏"
+              onClick={() => setLibraryCollapsed(workspaceId, true)}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M10.5 3.5 6 8l4.5 4.5" />
+              </svg>
+            </button>
           </header>
 
+          <div className="v35-search-box">
+            <input
+              className="v35-input"
+              type="search"
+              value={documentQuery}
+              onChange={(event) => setDocumentQuery(event.target.value)}
+              placeholder="搜索标题、文件名、作者或年份"
+            />
+          </div>
+
           <div className="v35-translation-doc-list">
-            {filesQuery.isLoading ? (
+            {filesQuery.isLoading || librarySearchQuery.isLoading ? (
               <p className="v35-muted">正在加载...</p>
             ) : (
-              pdfDocuments.map((doc) => (
+              visiblePdfDocuments.map((doc) => (
                 <button
                   className={`v35-translation-doc ${doc.id === selectedDocumentId ? "is-active" : ""}`}
                   key={doc.id}
                   type="button"
+                  title={[
+                    doc.title || "",
+                    (doc.authors || []).join(", "),
+                    doc.year ? String(doc.year) : "",
+                  ].filter(Boolean).join(" · ")}
                   onClick={() => {
                     setSelectedDocumentId(workspaceId, doc.id);
                     setSourceText(workspaceId, "");
@@ -287,16 +447,34 @@ export function TranslatorPage() {
                 </button>
               ))
             )}
-            {!filesQuery.isLoading && pdfDocuments.length === 0 ? (
+            {!filesQuery.isLoading && !librarySearchQuery.isLoading && visiblePdfDocuments.length === 0 && deferredDocumentQuery ? (
+              <p className="v35-muted">没有匹配的 PDF 文档。</p>
+            ) : null}
+            {!filesQuery.isLoading && !librarySearchQuery.isLoading && pdfDocuments.length === 0 && !deferredDocumentQuery ? (
               <p className="v35-muted">当前工作区没有 PDF 文档。请先在文库页上传。</p>
             ) : null}
           </div>
         </aside>
 
-        <main className="v35-translation-reader v35-paper-panel">
+        <main ref={readerPaneRef} className="v35-translation-reader v35-paper-panel">
           <header className="v35-translation-reader-head">
             <div>
-              <p>{selectedDocument ? shortId(selectedDocument.id) : "No Document"}</p>
+              <p className="v35-translation-reader-kicker">
+                {isLibraryCollapsed ? (
+                  <button
+                    className="v35-icon-button"
+                    type="button"
+                    aria-label="展开文档栏"
+                    title="展开文档栏"
+                    onClick={() => setLibraryCollapsed(workspaceId, false)}
+                  >
+                    <svg viewBox="0 0 16 16" aria-hidden="true">
+                      <path d="M5.5 3.5 10 8l-4.5 4.5" />
+                    </svg>
+                  </button>
+                ) : null}
+                <span>{selectedDocument ? shortId(selectedDocument.id) : "No Document"}</span>
+              </p>
               <h2>{selectedDocument?.display_name || selectedDocument?.filename || "选择一篇 PDF"}</h2>
             </div>
             <div className="v35-translation-reader-actions">
@@ -366,7 +544,15 @@ export function TranslatorPage() {
           )}
         </main>
 
-        <aside className="v35-translation-inspector v35-paper-panel">
+        <div
+          className="v35-translation-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整原文与译文面板宽度"
+          onMouseDown={handleInspectorResizeStart}
+        />
+
+        <aside ref={inspectorPaneRef} className="v35-translation-inspector v35-paper-panel">
           <div className="v35-inspector-tabs" role="tablist" aria-label="翻译面板">
             <button className={inspectorTab === "result" ? "is-active" : ""} type="button" onClick={() => setInspectorTab(workspaceId, "result")}>
               译文
@@ -384,6 +570,17 @@ export function TranslatorPage() {
                   {modelOptions.map((entry) => (
                     <option key={`${entry.provider}::${entry.model}`} value={`${entry.provider}::${entry.model}`}>
                       {entry.provider} · {entry.model}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="v35-field">
+                <span>Target Language</span>
+                <select className="v35-input" value={targetLanguage} onChange={(event) => setTargetLanguage(workspaceId, event.target.value)}>
+                  {TARGET_LANGUAGE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
                     </option>
                   ))}
                 </select>
@@ -452,26 +649,26 @@ export function TranslatorPage() {
                    <button className="v35-button" type="button" onClick={() => void cancelActiveTranslation()}>
                      取消
                    </button>
-                  ) : latestResult ? (
-                    <button className="v35-button" type="button" onClick={() => void navigator.clipboard?.writeText(latestResult.translated_text)}>
+                  ) : visibleTranslationText ? (
+                    <button className="v35-button" type="button" onClick={() => void navigator.clipboard?.writeText(visibleTranslationText)}>
                       复制
                     </button>
                   ) : null}
                 </header>
-                 {isTranslating ? (
-                   <p className="v35-muted"><span className="v35-spinner" aria-label="正在翻译" /> 正在生成译文...</p>
-                 ) : null}
-                 {latestResult ? (
-                   <p>{latestResult.translated_text}</p>
-                 ) : !isTranslating ? (
-                   <p className="v35-muted">输入原文后翻译</p>
-                 ) : null}
+                  {isTranslating ? (
+                    <p className="v35-muted"><span className="v35-spinner" aria-label="正在翻译" /> 正在生成译文...</p>
+                  ) : null}
+                  {visibleTranslationText ? (
+                    <p>{visibleTranslationText}</p>
+                  ) : !isTranslating ? (
+                    <p className="v35-muted">输入原文后翻译</p>
+                  ) : null}
                  {latestResult && !isTranslating ? (
                    <footer>
-                     {latestResult.provider} · {latestResult.model} ·{" "}
-                     {latestResult.total_duration_ms ? `${Math.round(latestResult.total_duration_ms)}ms` : "-"}
-                  </footer>
-                ) : null}
+                      {latestResult.provider} · {latestResult.model} · {latestResult.target_lang} ·{" "}
+                      {latestResult.total_duration_ms ? `${Math.round(latestResult.total_duration_ms)}ms` : "-"}
+                   </footer>
+                 ) : null}
               </article>
             </div>
           ) : null}
@@ -488,6 +685,7 @@ export function TranslatorPage() {
                         type="button"
                         onClick={() => {
                           setSourceText(workspaceId, item.source_text);
+                          setTargetLanguage(workspaceId, item.target_lang || "zh-CN");
                           setLatestResult(workspaceId, {
                             request_id: item.request_id,
                             document_id: selectedDocumentId,

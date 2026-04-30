@@ -30,13 +30,16 @@ def test_translator_selection_and_translation(server):
 
         # Mock APIs
         page.route(
-            "**/api/translation/documents",
+            "**/api/translation/documents*",
             lambda route: route.fulfill(
                 json=[
                     {
                         "id": "doc1",
                         "filename": "test.pdf",
                         "display_name": "Test Document",
+                        "title": "Test Document",
+                        "authors": ["Grace Hopper"],
+                        "year": 1952,
                     }
                 ]
             ),
@@ -104,6 +107,7 @@ def test_translator_selection_and_translation(server):
             post_data = route.request.post_data_json
             assert post_data["source_text"] == "Translate this specific sentence."
             assert post_data["document_id"] == "doc1"
+            assert post_data["target_lang"] == "en"
 
             route.fulfill(
                 json={
@@ -127,8 +131,8 @@ def test_translator_selection_and_translation(server):
         page.goto(f"{server}/translator/")
 
         # Load document
-        page.select_option("#documentSelect", "doc1")
-        page.click("#loadDocBtn")
+        page.click('[data-doc-id="doc1"]')
+        page.select_option("#targetLanguageSelect", "en")
 
         # Wait for content
         expect(page.locator(".translator-viewer")).to_contain_text(
@@ -251,7 +255,7 @@ def test_translator_upload_refreshes_document_list(server):
             else:
                 route.fulfill(json=[])
 
-        page.route("**/api/translation/documents", handle_documents)
+        page.route("**/api/translation/documents*", handle_documents)
 
         # Mock upload endpoint
         def handle_upload(route):
@@ -320,7 +324,7 @@ def test_translator_upload_refreshes_document_list(server):
         page.goto(f"{server}/translator/")
 
         # Initially no documents
-        expect(page.locator("#documentSelect")).to_have_value("")
+        expect(page.locator("#documentList")).to_contain_text("No documents yet")
 
         # Simulate file upload using JS (since file chooser requires user interaction)
         page.evaluate("""() => {
@@ -337,8 +341,8 @@ def test_translator_upload_refreshes_document_list(server):
         expect(page.locator("#uploadStatus")).to_have_text("Upload successful!")
 
         # Check that document list is refreshed and new doc is selected
-        expect(page.locator("#documentSelect")).to_have_value("doc_uploaded_123")
-        expect(page.locator("#documentSelect")).to_contain_text("uploaded.pdf")
+        expect(page.locator('[data-doc-id="doc_uploaded_123"]')).to_be_visible()
+        expect(page.locator("#documentList")).to_contain_text("uploaded.pdf")
 
         # Check that viewer loaded the document
         expect(page.locator(".translator-viewer")).to_contain_text(

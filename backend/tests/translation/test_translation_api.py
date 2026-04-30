@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import json
 
 from fastapi.testclient import TestClient
 
@@ -58,7 +59,11 @@ def test_translate_selection_returns_success_and_cache_hit(
             provider=resolved.provider,
             model=resolved.model,
             source_text=request.source_text,
-            translated_text="翻译结果",
+            translated_text=(
+                "如果源语言有所不同，请自动进行判断。"
+                "请确保技术用语的准确性，并保留内嵌的引用和公式。\n\n"
+                "**所选段落：**\n\n翻译结果"
+            ),
             target_lang=request.target_lang,
             source_lang=request.source_lang,
             prompt_version=request.prompt_version,
@@ -120,10 +125,15 @@ def test_translate_selection_returns_success_and_cache_hit(
     assert first.json()["total_duration_ms"] == 450.0
     assert second.status_code == 200
     assert second.json()["cached"] is True
+    assert second.json()["translated_text"] == "翻译结果"
     assert second.json()["input_tokens"] == 11
     assert second.json()["output_tokens"] == 22
     history = list_translation_history(document_id)
+    history_response = client.get(f"/api/translation/documents/{document_id}/history")
     assert len(history) == 1
+    assert history[0]["translated_text"] == "翻译结果"
+    assert history_response.status_code == 200
+    assert history_response.json()[0]["translated_text"] == "翻译结果"
     request_row = get_translation_request(first.json()["request_id"])
     assert request_row is not None
     assert request_row["status"] == "completed"
@@ -321,3 +331,68 @@ def test_translate_selection_can_be_cancelled_via_client_request_id(
     assert cancel_res.json()["cancelled"] is True
     assert response_holder["response"].status_code == 400
     assert response_holder["response"].json()["detail"]["code"] == "stale_request"
+
+
+def test_translate_selection_stream_returns_clean_progress_and_persists_result(
+    tmp_path, monkeypatch
+) -> None:
+    _patch_data_paths(tmp_path, monkeypatch)
+
+    def fake_stream_text(*, config, system_prompt, user_prompt, should_cancel=None, on_finish=None):
+        assert "简体中文" in user_prompt
+        yield "如果源语言有所不同，请自动进行判断。"
+        yield "请确保技术用语的准确性，并保留内嵌的引用和公式。\n\n"
+        yield "**所选段落：**\n\n"
+        yield "流式"
+        yield "结果"
+        if on_finish:
+            on_finish("stop")
+
+    monkeypatch.setattr(
+        translation_service.ProviderClient,
+        "stream_text",
+        staticmethod(fake_stream_text),
+    )
+
+    client = TestClient(create_app())
+    save_provider_config(
+        provider="deepseek",
+        base_url="https://api.deepseek.com/v1",
+        model="deepseek-chat",
+        api_key_enc="secret-key",
+        temperature=0.1,
+        timeout=120,
+        enabled=True,
+    )
+    document_id = create_translation_document(
+        filename="paper.pdf",
+        display_name="paper.pdf",
+        file_type="pdf",
+        file_hash="hash-stream",
+        file_path=str(tmp_path / "paper.pdf"),
+        page_count=1,
+        text_layer_status="ready",
+    )
+
+    response = client.post(
+        "/api/translation/translate-selection-stream",
+        json={
+            "document_id": document_id,
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "source_text": "This is a sufficiently long sample passage for translation streaming verification.",
+            "target_lang": "zh-CN",
+        },
+    )
+
+    assert response.status_code == 200
+    events = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+    assert events[0]["type"] == "meta"
+    assert [event["text"] for event in events if event["type"] == "delta"] == ["流式", "结果"]
+    done_event = next(event for event in events if event["type"] == "done")
+    assert done_event["translated_text"] == "流式结果"
+    assert done_event["cached"] is False
+
+    history = client.get(f"/api/translation/documents/{document_id}/history")
+    assert history.status_code == 200
+    assert history.json()[0]["translated_text"] == "流式结果"

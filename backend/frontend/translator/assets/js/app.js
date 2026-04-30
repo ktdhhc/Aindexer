@@ -5,13 +5,14 @@ import {
   updateProviderConfig,
   testProviderConfig
 } from './api.js';
-import { loadDocument, refreshDocumentList } from './viewer.js';
+import { loadDocument } from './viewer.js';
 import { initSearch } from './search.js';
 import { initSelection } from './selection.js';
 
 const els = {
-  docSelect: document.getElementById('documentSelect'),
-  loadBtn: document.getElementById('loadDocBtn'),
+  documentList: document.getElementById('documentList'),
+  documentSearchInput: document.getElementById('documentSearchInput'),
+  documentSearchMeta: document.getElementById('documentSearchMeta'),
   refreshBtn: document.getElementById('refreshDocsBtn'),
   uploadInput: document.getElementById('uploadFileInput'),
   uploadBtn: document.getElementById('uploadBtn'),
@@ -30,19 +31,33 @@ const els = {
 // Provider config state
 let providerConfigs = {};
 
-async function loadDocumentList() {
+const appState = {
+  documents: [],
+  selectedDocId: '',
+  searchToken: 0,
+  searchDebounceTimer: null,
+};
+
+async function loadDocumentList(query = '', options = {}) {
+  const searchToken = ++appState.searchToken;
+  showDocumentSearchMeta(query ? 'Searching...' : 'Loading documents...');
   try {
-    const docs = await fetchDocuments();
-    const currentValue = els.docSelect.value;
-    els.docSelect.innerHTML = '<option value="">Select Document...</option>' + 
-      docs.map(d => `<option value="${d.id}">${d.display_name || d.filename}</option>`).join('');
-    // Restore selection if still exists
-    if (currentValue && docs.find(d => d.id === currentValue)) {
-      els.docSelect.value = currentValue;
+    const docs = await fetchDocuments(query);
+    if (searchToken !== appState.searchToken) {
+      return appState.documents;
     }
+    appState.documents = Array.isArray(docs) ? docs : [];
+    if (options.selectDocId) {
+      appState.selectedDocId = options.selectDocId;
+    }
+    renderDocumentList(query);
     return docs;
   } catch (err) {
     console.error('Failed to load documents:', err);
+    if (searchToken === appState.searchToken) {
+      appState.documents = [];
+      renderDocumentList(query, err);
+    }
     return [];
   }
 }
@@ -123,15 +138,15 @@ async function handleUpload() {
     els.uploadStatus.classList.add('success');
     els.uploadStatus.classList.remove('hidden');
     
-    // Refresh document list and select the uploaded doc
-    await refreshDocumentList(result.document_id);
+    els.documentSearchInput.value = '';
+    await loadDocumentList('', { selectDocId: result.document_id });
     
     // Clear input
     els.uploadInput.value = '';
     
     // Auto-load the document
     if (result.document_id) {
-      await loadDocument(result.document_id);
+      await selectDocument(result.document_id);
     }
   } catch (err) {
     els.uploadStatus.textContent = err.message || 'Upload failed';
@@ -211,8 +226,9 @@ async function init() {
   await loadProviderConfigs();
   
   // Event listeners
-  els.loadBtn.addEventListener('click', () => loadDocument(els.docSelect.value));
-  els.refreshBtn.addEventListener('click', loadDocumentList);
+  els.refreshBtn.addEventListener('click', () => loadDocumentList(els.documentSearchInput.value.trim()));
+  els.documentSearchInput.addEventListener('input', scheduleDocumentSearch);
+  els.documentList.addEventListener('click', handleDocumentListClick);
   
   els.uploadBtn.addEventListener('click', () => els.uploadInput.click());
   els.uploadInput.addEventListener('change', handleUpload);
@@ -228,3 +244,95 @@ async function init() {
 document.addEventListener('DOMContentLoaded', init);
 
 export { loadDocumentList };
+
+function scheduleDocumentSearch() {
+  if (appState.searchDebounceTimer) {
+    window.clearTimeout(appState.searchDebounceTimer);
+  }
+  appState.searchDebounceTimer = window.setTimeout(() => {
+    loadDocumentList(els.documentSearchInput.value.trim());
+  }, 220);
+}
+
+function handleDocumentListClick(event) {
+  const button = event.target.closest('[data-doc-id]');
+  if (!button) return;
+  selectDocument(button.dataset.docId);
+}
+
+async function selectDocument(docId) {
+  if (!docId) return;
+  appState.selectedDocId = docId;
+  renderDocumentList(els.documentSearchInput.value.trim());
+  await loadDocument(docId);
+}
+
+function renderDocumentList(query = '', error = null) {
+  const docs = appState.documents;
+  if (error) {
+    showDocumentSearchMeta(error.message || 'Failed to load documents');
+    els.documentList.innerHTML = '<div class="rounded-xl border border-error/20 bg-error/10 px-3 py-4 text-sm text-error">Failed to load documents.</div>';
+    return;
+  }
+
+  showDocumentSearchMeta(buildDocumentSearchMeta(docs.length, query));
+  if (!docs.length) {
+    els.documentList.innerHTML = `<div class="rounded-xl border border-white/6 bg-white/[0.03] px-3 py-6 text-center text-sm text-slate-500">${query ? 'No matching documents' : 'No documents yet. Upload a PDF to start.'}</div>`;
+    return;
+  }
+
+  els.documentList.innerHTML = docs.map((doc) => renderDocumentCard(doc)).join('');
+}
+
+function renderDocumentCard(doc) {
+  const isActive = doc.id === appState.selectedDocId;
+  const primary = escapeHtml(doc.title || doc.display_name || doc.filename || 'Untitled document');
+  const displayName = doc.title && doc.display_name && doc.display_name !== doc.title
+    ? `<div class="text-[11px] text-slate-500 truncate">${escapeHtml(doc.display_name)}</div>`
+    : '';
+  const authors = Array.isArray(doc.authors) ? doc.authors.filter(Boolean).slice(0, 3).join(', ') : '';
+  const year = doc.year ? ` · ${escapeHtml(String(doc.year))}` : '';
+  const meta = authors ? `${escapeHtml(authors)}${year}` : doc.year ? escapeHtml(String(doc.year)) : 'Translation document';
+  const pageCount = Number.isFinite(doc.page_count) ? `${doc.page_count} pages` : 'PDF';
+  const textLayer = doc.text_layer_status === 'ready' ? 'Text selectable' : doc.text_layer_status || 'Pending';
+
+  return `<button type="button" data-doc-id="${escapeHtml(doc.id)}" class="w-full text-left rounded-xl border px-3 py-3 transition-colors ${isActive ? 'bg-primary/10 border-primary/30' : 'bg-white/[0.03] border-white/[0.06] hover:border-white/[0.14] hover:bg-white/[0.05]'}">
+    <div class="text-sm font-medium text-slate-200 leading-5">${primary}</div>
+    ${displayName}
+    <div class="mt-1 text-[11px] text-slate-500 leading-4">${meta}</div>
+    <div class="mt-2 flex items-center justify-between text-[10px] uppercase tracking-wide text-slate-500">
+      <span>${escapeHtml(pageCount)}</span>
+      <span>${escapeHtml(textLayer)}</span>
+    </div>
+  </button>`;
+}
+
+function buildDocumentSearchMeta(count, query) {
+  if (query) {
+    return `${count} result${count === 1 ? '' : 's'} for \"${query}\"`;
+  }
+  return `${count} document${count === 1 ? '' : 's'}`;
+}
+
+function showDocumentSearchMeta(message) {
+  els.documentSearchMeta.textContent = message || '';
+}
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, (match) => {
+    switch (match) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      case "'":
+        return '&#039;';
+      default:
+        return match;
+    }
+  });
+}

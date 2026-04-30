@@ -5,6 +5,7 @@ from importlib import import_module
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from fastapi.responses import FileResponse
 
 from ..db import DEFAULT_WORKSPACE_ID
@@ -21,7 +22,12 @@ from .repository import (
     upsert_translation_page_text,
 )
 from .schemas import TranslationRequestIn
-from .service import build_translation_error, execute_translation_request
+from .service import (
+    build_translation_error,
+    execute_translation_request,
+    sanitize_translated_text,
+    stream_translation_request,
+)
 
 router = APIRouter()
 
@@ -102,10 +108,11 @@ async def upload_translation_document(
 
 @router.get("/documents")
 def list_documents(
+    q: str | None = Query(default=None),
     workspace_id: str = Query(default=DEFAULT_WORKSPACE_ID),
 ) -> list[dict[str, object]]:
     workspace = resolve_workspace_id(workspace_id)
-    return list_translation_documents(workspace_id=workspace)
+    return list_translation_documents(workspace_id=workspace, query=q)
 
 
 @router.get("/documents/{document_id}")
@@ -154,6 +161,17 @@ def translate_selection(payload: TranslationRequestIn):
         raise HTTPException(status_code=400, detail=error.model_dump()) from exc
 
 
+@router.post("/translate-selection-stream")
+def translate_selection_stream(payload: TranslationRequestIn):
+    payload.workspace_id = resolve_workspace_id(payload.workspace_id)
+    try:
+        stream = stream_translation_request(payload)
+    except Exception as exc:
+        error = build_translation_error(exc)
+        raise HTTPException(status_code=400, detail=error.model_dump()) from exc
+    return StreamingResponse(stream, media_type="application/x-ndjson")
+
+
 @router.post("/requests/{client_request_id}/cancel")
 def cancel_translation(client_request_id: str) -> dict[str, object]:
     if not client_request_id.strip():
@@ -187,4 +205,9 @@ def document_history(
         document = get_main_document(document_id, workspace_id=workspace)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    return list_translation_history(document_id, workspace_id=workspace)
+    history = list_translation_history(document_id, workspace_id=workspace)
+    for item in history:
+        translated_text = item.get("translated_text")
+        if isinstance(translated_text, str) and translated_text.strip():
+            item["translated_text"] = sanitize_translated_text(translated_text)
+    return history

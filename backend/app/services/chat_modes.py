@@ -105,9 +105,9 @@ def build_chat_context(
 ) -> ContextBuildResult:
     budget = _build_budget(model_name)
     if mode == "wide":
-        result = _build_wide_context(workspace_id, question, budget)
+        result = _build_wide_context(workspace_id, question, budget, source_map or {})
     elif mode == "agent":
-        result = _build_agent_context(workspace_id, question, budget)
+        result = _build_agent_context(workspace_id, question, budget, source_map or {})
     else:
         result = _build_deep_context(workspace_id, doc_ids, budget, source_map or {})
 
@@ -191,24 +191,39 @@ def _build_budget(model_name: str) -> dict[str, int]:
     }
 
 
-def _build_wide_context(workspace_id: str, question: str, budget: dict[str, int]) -> ContextBuildResult:
+def _build_wide_context(
+    workspace_id: str,
+    question: str,
+    budget: dict[str, int],
+    source_map: dict[str, str],
+) -> ContextBuildResult:
     docs = [item for item in list_documents(workspace_id=workspace_id) if item.get("status") == "indexed"]
     if not docs:
         raise RuntimeError("当前工作区暂无可用索引")
 
     full_items = [_load_document_context(str(doc["id"]), workspace_id, variant="index_full") for doc in docs]
-    full_context = _join_context_items(full_items)
+    full_context = _join_context_items(full_items, stable_source_ids=source_map, source_prefix="I")
     full_tokens = estimate_tokens(full_context)
     if full_tokens <= int(budget["model_context_window"] * FULL_INDEX_RATIO):
         return ContextBuildResult(
             context=full_context,
             sources=[item["source"] for item in full_items],
-            stats={"wide_strategy": "full_index", "total_index_tokens": full_tokens},
+            stats={
+                "wide_strategy": "full_index",
+                "total_indexed_count": len(docs),
+                "included_source_count": len(full_items),
+                "omitted_source_count": 0,
+                "total_index_tokens": full_tokens,
+                "wide_ranked_fallback": False,
+            },
         )
 
     summary_items = [_load_document_context(str(doc["id"]), workspace_id, variant="summary") for doc in docs]
-    summary_context = _join_context_items(summary_items)
-    if estimate_tokens(summary_context) > budget["auto_compress_threshold"]:
+    summary_context = _join_context_items(summary_items, stable_source_ids=source_map, source_prefix="I")
+    all_summary_tokens = estimate_tokens(summary_context)
+    ranked_candidate_count = 0
+    wide_ranked_fallback = False
+    if all_summary_tokens > budget["auto_compress_threshold"]:
         ranked = search_documents(
             question,
             year_from=None,
@@ -218,17 +233,26 @@ def _build_wide_context(workspace_id: str, question: str, budget: dict[str, int]
             status="indexed",
             workspace_id=workspace_id,
         )
+        ranked_candidate_count = len(ranked)
         keep_ids = {str(item["doc_id"]) for item in ranked[: min(12, len(ranked))]}
         if keep_ids:
             summary_items = [item for item in summary_items if item["source"].doc_id in keep_ids]
-            summary_context = _join_context_items(summary_items)
+            summary_context = _join_context_items(summary_items, stable_source_ids=source_map, source_prefix="I")
+            wide_ranked_fallback = True
 
     return ContextBuildResult(
         context=summary_context,
         sources=[item["source"] for item in summary_items],
         stats={
             "wide_strategy": "structured_summary",
+            "total_indexed_count": len(docs),
+            "included_source_count": len(summary_items),
+            "omitted_source_count": max(0, len(docs) - len(summary_items)),
             "total_index_tokens": full_tokens,
+            "all_summary_tokens": all_summary_tokens,
+            "summary_tokens": estimate_tokens(summary_context),
+            "ranked_candidate_count": ranked_candidate_count,
+            "wide_ranked_fallback": wide_ranked_fallback,
             "structured_fallback": True,
         },
     )
@@ -250,13 +274,18 @@ def _build_deep_context(
 
     items = [_load_document_context(doc_id, workspace_id, variant="original_full") for doc_id in unique_ids]
     return ContextBuildResult(
-        context=_join_context_items(items, stable_source_ids=source_map),
+        context=_join_context_items(items, stable_source_ids=source_map, source_prefix="P"),
         sources=[item["source"] for item in items],
         stats={"deep_doc_ids": unique_ids},
     )
 
 
-def _build_agent_context(workspace_id: str, question: str, budget: dict[str, int]) -> ContextBuildResult:
+def _build_agent_context(
+    workspace_id: str,
+    question: str,
+    budget: dict[str, int],
+    source_map: dict[str, str],
+) -> ContextBuildResult:
     ranked = search_documents(
         question,
         year_from=None,
@@ -273,7 +302,7 @@ def _build_agent_context(workspace_id: str, question: str, budget: dict[str, int
 
     items = [_load_document_context(str(item.get("doc_id") or item.get("id")), workspace_id, variant="summary") for item in ranked[:8]]
     return ContextBuildResult(
-        context=_join_context_items(items),
+        context=_join_context_items(items, stable_source_ids=source_map, source_prefix="I"),
         sources=[item["source"] for item in items],
         stats={"agent_strategy": "ranked_structured_read", "agent_steps": ["search", "read_structured", "answer"]},
     )
@@ -333,18 +362,25 @@ def _render_structured_summary(record: Any) -> str:
     return "\n".join(parts)
 
 
-def _join_context_items(items: list[dict[str, Any]], stable_source_ids: dict[str, str] | None = None) -> str:
+def _join_context_items(
+    items: list[dict[str, Any]],
+    stable_source_ids: dict[str, str] | None = None,
+    source_prefix: Literal["I", "P"] = "I",
+) -> str:
     if not items:
         return ""
     manifest_lines = ["可用文献顺序："]
     blocks: list[str] = []
     used_ids: set[str] = set()
-    next_index = _next_source_index(stable_source_ids or {})
+    next_index = _next_source_index(stable_source_ids or {}, source_prefix)
     for item in items:
         source: ChatSource = item["source"]
-        candidate = str((stable_source_ids or {}).get(source.doc_id) or "").strip().upper()
-        if not _is_valid_source_id(candidate) or candidate in used_ids:
-            candidate = f"S{next_index:02d}"
+        candidate = _normalize_source_id(
+            (stable_source_ids or {}).get(source.doc_id),
+            source_prefix,
+        )
+        if not candidate or candidate in used_ids:
+            candidate = f"{source_prefix}-{next_index:02d}"
             next_index += 1
         source.source_id = candidate
         used_ids.add(candidate)
@@ -373,7 +409,7 @@ def _format_history_messages(messages: list[dict[str, Any]], token_budget: int) 
         for source in sources:
             if not isinstance(source, dict):
                 continue
-            source_id = str(source.get("source_id") or "").strip().upper()
+            source_id = _normalize_source_id(source.get("source_id")) or ""
             display_name = str(source.get("display_name") or source.get("title") or source.get("doc_id") or "").strip()
             if source_id and display_name:
                 source_refs.append(f"[{source_id}] {display_name}")
@@ -402,17 +438,32 @@ def _format_history_messages(messages: list[dict[str, Any]], token_budget: int) 
     return "\n\n".join(selected)
 
 
-def _is_valid_source_id(value: str) -> bool:
-    return bool(re.fullmatch(r"S\d{2,}", value or ""))
+def _is_valid_source_id(value: str, prefix: str | None = None) -> bool:
+    match = re.fullmatch(r"([IP])-?(\d{2,})", value or "")
+    if not match:
+        return False
+    return match.group(1) == prefix if prefix else True
 
 
-def _next_source_index(source_map: dict[str, str]) -> int:
+def _normalize_source_id(value: Any, prefix: str | None = None) -> str | None:
+    raw = str(value or "").strip().upper()
+    match = re.fullmatch(r"([IP])-?(\d{2,})", raw)
+    if not match:
+        return None
+    resolved_prefix = match.group(1)
+    if prefix and resolved_prefix != prefix:
+        return None
+    digits = match.group(2)
+    return f"{resolved_prefix}-{digits}"
+
+
+def _next_source_index(source_map: dict[str, str], prefix: Literal["I", "P"]) -> int:
     highest = 0
     for value in source_map.values():
-        candidate = str(value or "").strip().upper()
-        if not _is_valid_source_id(candidate):
+        candidate = _normalize_source_id(value, prefix)
+        if not candidate:
             continue
-        highest = max(highest, int(candidate[1:]))
+        highest = max(highest, int(candidate.split("-", 1)[1]))
     return highest + 1 if highest > 0 else 1
 
 

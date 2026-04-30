@@ -46,29 +46,7 @@
     <header class="flex-none h-16 border-b border-white/10 bg-surface-container-lowest/50 flex items-center justify-between px-6">
       <div class="flex items-center gap-4">
         <h1 class="text-lg font-bold">Translator Validation</h1>
-        
-        <!-- Upload Section -->
-        <div class="flex items-center gap-2 ml-4">
-          <input type="file" id="uploadFileInput" accept=".pdf" class="hidden" />
-          <button id="uploadBtn" class="px-3 py-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 text-sm font-medium transition-colors flex items-center gap-1">
-            <span class="material-symbols-outlined text-sm">upload</span>
-            Upload PDF
-          </button>
-          <span id="uploadStatus" class="text-xs text-slate-400 hidden"></span>
-        </div>
-        
-        <div class="h-6 w-px bg-white/10 mx-2"></div>
-        
-        <!-- Document Selector -->
-        <div class="flex items-center gap-2">
-          <select id="documentSelect" class="bg-surface-container border border-white/10 rounded-lg px-3 py-1.5 text-sm focus:ring-1 focus:ring-primary/50">
-            <option value="">Select Document...</option>
-          </select>
-          <button id="loadDocBtn" class="px-3 py-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 text-sm font-medium transition-colors">Load</button>
-          <button id="refreshDocsBtn" class="p-1.5 rounded-lg hover:bg-white/10 text-slate-400" title="Refresh document list">
-            <span class="material-symbols-outlined text-sm">refresh</span>
-          </button>
-        </div>
+        <p class="text-xs text-slate-500 hidden md:block">Search, open, and translate PDF passages with shared provider config.</p>
       </div>
       <div class="flex items-center gap-3">
         <div class="relative flex items-center">
@@ -81,9 +59,40 @@
       </div>
     </header>
 
-    <main class="flex-1 flex overflow-hidden">
+    <main class="translator-main flex-1 flex overflow-hidden">
+      <aside class="translator-library-panel w-[20rem] flex flex-col border-r border-white/10 bg-surface-container-lowest/70">
+        <div class="p-4 border-b border-white/10">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-semibold flex items-center gap-2">
+              <span class="material-symbols-outlined text-primary">library_books</span>
+              Documents
+            </h2>
+            <button id="refreshDocsBtn" class="p-1.5 rounded-lg hover:bg-white/10 text-slate-400" title="Refresh document list">
+              <span class="material-symbols-outlined text-sm">refresh</span>
+            </button>
+          </div>
+
+          <input type="file" id="uploadFileInput" accept=".pdf" class="hidden" />
+          <div class="flex items-center gap-2 mb-3">
+            <button id="uploadBtn" class="flex-1 px-3 py-2 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 text-sm font-medium transition-colors flex items-center justify-center gap-1">
+              <span class="material-symbols-outlined text-sm">upload</span>
+              Upload PDF
+            </button>
+          </div>
+          <span id="uploadStatus" class="text-xs text-slate-400 hidden"></span>
+
+          <div class="relative flex items-center mt-3">
+            <span class="material-symbols-outlined absolute left-3 text-slate-400 text-sm">search</span>
+            <input type="text" id="documentSearchInput" class="w-full bg-surface-container border border-white/10 rounded-lg pl-9 pr-3 py-2 text-sm focus:ring-1 focus:ring-primary/50" placeholder="Search by title, author, year, or content..." />
+          </div>
+          <div id="documentSearchMeta" class="mt-2 text-[11px] text-slate-500"></div>
+        </div>
+
+        <div id="documentList" class="flex-1 overflow-y-auto thin-scrollbar p-3 flex flex-col gap-2"></div>
+      </aside>
+
       <!-- Viewer Area -->
-      <div class="flex-1 flex flex-col relative border-r border-white/10 bg-surface-container-lowest">
+      <div class="translator-viewer-region flex-1 flex flex-col relative border-r border-white/10 bg-surface-container-lowest">
         <div id="viewerEmpty" class="translator-empty-state absolute inset-0 flex flex-col items-center justify-center text-slate-500">
           <span class="material-symbols-outlined text-4xl mb-2">description</span>
           <p>Select a document to preview the original PDF</p>
@@ -144,6 +153,14 @@
             Translation
           </h2>
           <div class="flex gap-2 items-center">
+            <select id="targetLanguageSelect" class="bg-surface-container border border-white/10 rounded px-2 py-1 text-xs">
+              <option value="zh-CN">Chinese</option>
+              <option value="en">English</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+            </select>
             <select id="providerSelect" class="bg-surface-container border border-white/10 rounded px-2 py-1 text-xs">
               <option value="">Loading...</option>
             </select>

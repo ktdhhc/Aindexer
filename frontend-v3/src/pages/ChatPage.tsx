@@ -3,7 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 
 import { type ChatSession, useChatStore } from "../app/chatStore";
 import { useWorkspaceStore } from "../app/workspaceStore";
-import { type ChatContextStats, type ChatMode } from "../shared/api/chat";
+import {
+  resolveAssistantCitedSources,
+  stripAssistantCitationFooter,
+  type ChatContextStats,
+  type ChatMode,
+} from "../shared/api/chat";
 import { listFiles, type FileItem } from "../shared/api/files";
 import { listProviders } from "../shared/api/providers";
 import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
@@ -25,6 +30,19 @@ function modeLabel(mode: ChatMode): string {
   return CHAT_MODES.find((item) => item.mode === mode)?.label ?? "精读";
 }
 
+function statNumber(stats: ChatContextStats | undefined, key: string, fallback = 0): number {
+  const value = Number(stats?.[key] ?? fallback);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function formatWideStrategy(stats?: ChatContextStats): string {
+  if (!stats) return "待检索";
+  if (stats.wide_ranked_fallback) return "Top-K 摘要";
+  if (stats.wide_strategy === "full_index") return "全文索引";
+  if (stats.wide_strategy === "structured_summary") return "结构摘要";
+  return "全景";
+}
+
 function ModeIcon({ icon }: { icon: "scan" | "focus" | "path" }) {
   if (icon === "scan") {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h16" /></svg>;
@@ -39,8 +57,11 @@ function formatCompression(stats?: ChatContextStats): string {
   if (!stats) return "";
   const level = String(stats.compression_level || "none");
   const tokens = Number(stats.estimated_input_tokens || 0);
-  const docs = Number(stats.doc_count || 0);
   const levelLabel = level === "none" ? "原文" : level === "advisory" ? "建议压缩" : level === "auto" ? "已压缩" : "已兜底";
+  if (stats.wide_strategy) {
+    return `${formatWideStrategy(stats)} · ${tokens || "-"} tokens · ${levelLabel}`;
+  }
+  const docs = statNumber(stats, "included_source_count", Number(stats.doc_count || 0));
   return `${docs} sources · ${tokens || "-"} tokens · ${levelLabel}`;
 }
 
@@ -118,6 +139,9 @@ export function ChatPage() {
     [sessions, activeSessionId],
   );
   const activeMessages = activeSession?.messages ?? [];
+  const latestAssistantMessage = useMemo(() => {
+    return [...activeMessages].reverse().find((message) => message.role === "assistant") ?? null;
+  }, [activeMessages]);
   const activeMode = activeSession?.mode ?? "deep";
   const injectedDocIds = activeSession?.injectedDocIds ?? [];
   const selectedDocIds = activeSession?.selectedDocIds ?? [];
@@ -125,6 +149,16 @@ export function ChatPage() {
   const indexedFiles = useMemo(() => {
     return (filesQuery.data ?? []).filter((item) => item.status === "indexed");
   }, [filesQuery.data]);
+  const latestContextStats = latestAssistantMessage?.contextStats;
+  const latestSources = latestAssistantMessage?.sources ?? [];
+  const wideTotal = statNumber(latestContextStats, "total_indexed_count", indexedFiles.length);
+  const wideIncluded = statNumber(latestContextStats, "included_source_count", latestSources.length);
+  const wideOmitted = statNumber(latestContextStats, "omitted_source_count", Math.max(0, wideTotal - wideIncluded));
+  const sourceCountLabel = activeMode === "deep"
+    ? `${injectedDocIds.length}+${selectedDocIds.length}/${indexedFiles.length}`
+    : activeMode === "wide"
+      ? `${wideIncluded}/${wideTotal}`
+      : `${indexedFiles.length}`;
   const visibleSourceFiles = useMemo(() => {
     const query = sourceSearch.trim().toLowerCase();
     if (!query) return indexedFiles;
@@ -370,41 +404,45 @@ export function ChatPage() {
               </div>
             ) : null}
 
-            {activeMessages.map((message) => (
-              <article className={`v35-chat-turn role-${message.role}`} key={message.id} ref={(node) => { messageRefs.current[message.id] = node; }}>
-                <header>
-                  <span>{message.role === "user" ? "You" : message.role === "assistant" ? "Assistant" : "System"}</span>
-                  <time>{formatTime(message.createdAt)}</time>
-                </header>
-                {message.role === "assistant" ? (
-                  <div className="v35-chat-markdown" dangerouslySetInnerHTML={{ __html: renderMarkdownToHtml(message.content) }} />
-                ) : (
-                  <p>{message.content}</p>
-                )}
-                <footer>
-                  {(message.sources ?? []).map((source) => (
-                    <button
-                      className="v35-chat-source"
-                      key={source.doc_id}
-                      type="button"
-                      title={source.doc_id}
-                      onClick={() => void navigator.clipboard?.writeText(source.doc_id)}
-                    >
-                      {source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}
+            {activeMessages.map((message) => {
+              const displayContent = message.role === "assistant" ? stripAssistantCitationFooter(message.content) : message.content;
+              const displaySources = message.role === "assistant" ? resolveAssistantCitedSources(message.content, message.sources) : (message.sources ?? []);
+              return (
+                <article className={`v35-chat-turn role-${message.role}`} key={message.id} ref={(node) => { messageRefs.current[message.id] = node; }}>
+                  <header>
+                    <span>{message.role === "user" ? "You" : message.role === "assistant" ? "Assistant" : "System"}</span>
+                    <time>{formatTime(message.createdAt)}</time>
+                  </header>
+                  {message.role === "assistant" ? (
+                    <div className="v35-chat-markdown" dangerouslySetInnerHTML={{ __html: renderMarkdownToHtml(displayContent) }} />
+                  ) : (
+                    <p>{displayContent}</p>
+                  )}
+                  <footer>
+                    {displaySources.map((source) => (
+                      <button
+                        className="v35-chat-source"
+                        key={source.doc_id}
+                        type="button"
+                        title={source.doc_id}
+                        onClick={() => void navigator.clipboard?.writeText(source.doc_id)}
+                      >
+                        {source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}
+                      </button>
+                    ))}
+                    {message.contextStats ? <span className="v35-chat-context-stat">{formatCompression(message.contextStats)}</span> : null}
+                    <button className="v35-chat-text-action" type="button" onClick={() => void navigator.clipboard?.writeText(displayContent)}>
+                      复制
                     </button>
-                  ))}
-                  {message.contextStats ? <span className="v35-chat-context-stat">{formatCompression(message.contextStats)}</span> : null}
-                  <button className="v35-chat-text-action" type="button" onClick={() => void navigator.clipboard?.writeText(message.content)}>
-                    复制
-                  </button>
-                  {message.role === "user" ? (
-                    <button className="v35-chat-text-action" type="button" disabled={isSending} onClick={() => void submitQuestion(message.content)}>
-                      重试
-                    </button>
-                  ) : null}
-                </footer>
-              </article>
-            ))}
+                    {message.role === "user" ? (
+                      <button className="v35-chat-text-action" type="button" disabled={isSending} onClick={() => void submitQuestion(message.content)}>
+                        重试
+                      </button>
+                    ) : null}
+                  </footer>
+                </article>
+              );
+            })}
 
             {isSending ? (
               <article className="v35-chat-turn role-assistant is-pending">
@@ -542,7 +580,7 @@ export function ChatPage() {
           <section className="v35-chat-side-section">
             <div className="v35-chat-session-head">
               <h2 className="v35-section-title">Sources</h2>
-              <span className="v35-chat-side-count">{activeMode === "deep" ? `${injectedDocIds.length}+${selectedDocIds.length}/${indexedFiles.length}` : `${indexedFiles.length}`}</span>
+              <span className="v35-chat-side-count">{sourceCountLabel}</span>
             </div>
             {activeMode === "deep" ? (
               <>
@@ -569,6 +607,30 @@ export function ChatPage() {
                   {visibleSourceFiles.length === 0 ? <p className="v35-muted">暂无可选文献</p> : null}
                 </div>
               </>
+            ) : activeMode === "wide" ? (
+              <div className="v35-chat-wide-scope">
+                <div className="v35-chat-wide-meter">
+                  <span><strong>{wideTotal}</strong><em>全库</em></span>
+                  <span><strong>{wideIncluded}</strong><em>纳入</em></span>
+                  <span><strong>{wideOmitted}</strong><em>略过</em></span>
+                </div>
+                <div className="v35-chat-wide-strip">
+                  <span>{formatWideStrategy(latestContextStats)}</span>
+                  <span>{Number(latestContextStats?.estimated_input_tokens || 0) || "-"} tokens</span>
+                </div>
+                {latestSources.length > 0 ? (
+                  <div className="v35-chat-wide-source-list">
+                    {latestSources.map((source) => (
+                      <button key={source.doc_id} type="button" title={source.doc_id} onClick={() => void navigator.clipboard?.writeText(source.doc_id)}>
+                        <strong>{source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}</strong>
+                        <span>{source.title || source.doc_id}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="v35-muted">发送后显示纳入范围</p>
+                )}
+              </div>
             ) : (
               null
             )}

@@ -1,4 +1,5 @@
 export const sidepanelEls = {
+  targetLanguageSelect: document.getElementById('targetLanguageSelect'),
   providerSelect: document.getElementById('providerSelect'),
   thinkingToggleBtn: document.getElementById('thinkingToggleBtn'),
   cancelTranslationBtn: document.getElementById('cancelTranslationBtn'),

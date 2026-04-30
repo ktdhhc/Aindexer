@@ -47,9 +47,9 @@ def test_wide_context_uses_full_index_when_budget_allows(monkeypatch: pytest.Mon
 
     assert result.stats["wide_strategy"] == "full_index"
     assert result.sources[0].doc_id == "doc_a"
-    assert result.sources[0].source_id == "S01"
+    assert result.sources[0].source_id == "I-01"
     assert "可用文献顺序：" in result.context
-    assert "[S01] Doc A | Title doc_a" in result.context
+    assert "[I-01] Doc A | Title doc_a" in result.context
     assert "full markdown content" in result.context
 
 
@@ -74,6 +74,76 @@ def test_wide_context_falls_back_to_structured_summary(monkeypatch: pytest.Monke
     assert result.stats["structured_fallback"] is True
     assert "structured point" in result.context
     assert long_text not in result.context
+
+
+def test_wide_context_keeps_session_source_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(chat_modes, "resolve_model_context_window", lambda _model: 128_000)
+    monkeypatch.setattr(
+        chat_modes,
+        "list_documents",
+        lambda workspace_id: [
+            {"id": "doc_a", "status": "indexed"},
+            {"id": "doc_b", "status": "indexed"},
+            {"id": "doc_c", "status": "indexed"},
+        ],
+    )
+    monkeypatch.setattr(chat_modes, "get_document", lambda doc_id, workspace_id: {"id": doc_id, "display_name": f"Doc {doc_id[-1].upper()}", "filename": f"{doc_id}.pdf", "status": "indexed"})
+    monkeypatch.setattr(chat_modes, "get_index", lambda doc_id: _record(doc_id))
+    monkeypatch.setattr(chat_modes, "markdown_path", lambda doc_id: SimpleNamespace(exists=lambda: False))
+    monkeypatch.setattr(chat_modes, "render_markdown", lambda doc_id, record: f"markdown {doc_id}")
+
+    result = chat_modes.build_chat_context(
+        question="问题",
+        workspace_id="ws_default",
+        model_name="known-model",
+        mode="wide",
+        doc_ids=[],
+        source_map={"doc_a": "I-03", "doc_b": "I-04"},
+    )
+
+    assert [source.source_id for source in result.sources] == ["I-03", "I-04", "I-05"]
+    assert "[I-03] Doc A | Title doc_a" in result.context
+    assert "[I-05] Doc C | Title doc_c" in result.context
+    assert result.stats["total_indexed_count"] == 3
+    assert result.stats["included_source_count"] == 3
+    assert result.stats["wide_ranked_fallback"] is False
+
+
+def test_wide_context_reports_ranked_fallback_stats(monkeypatch: pytest.MonkeyPatch) -> None:
+    long_text = "文" * 60_000
+    monkeypatch.setattr(chat_modes, "resolve_model_context_window", lambda _model: 32_000)
+    monkeypatch.setattr(
+        chat_modes,
+        "list_documents",
+        lambda workspace_id: [
+            {"id": "doc_a", "status": "indexed"},
+            {"id": "doc_b", "status": "indexed"},
+            {"id": "doc_c", "status": "indexed"},
+        ],
+    )
+    monkeypatch.setattr(chat_modes, "get_document", lambda doc_id, workspace_id: {"id": doc_id, "display_name": f"Doc {doc_id[-1].upper()}", "filename": f"{doc_id}.pdf", "status": "indexed"})
+    monkeypatch.setattr(chat_modes, "get_index", lambda doc_id: _record(doc_id, long_text))
+    monkeypatch.setattr(chat_modes, "markdown_path", lambda doc_id: SimpleNamespace(exists=lambda: False))
+    monkeypatch.setattr(chat_modes, "render_markdown", lambda doc_id, record: long_text)
+    monkeypatch.setattr(chat_modes, "search_documents", lambda *args, **kwargs: [{"doc_id": "doc_b"}])
+
+    result = chat_modes.build_chat_context(
+        question="问题",
+        workspace_id="ws_default",
+        model_name="unknown-model",
+        mode="wide",
+        doc_ids=[],
+    )
+
+    assert result.stats["wide_strategy"] == "structured_summary"
+    assert result.stats["total_indexed_count"] == 3
+    assert result.stats["included_source_count"] == 1
+    assert result.stats["omitted_source_count"] == 2
+    assert result.stats["ranked_candidate_count"] == 1
+    assert result.stats["wide_ranked_fallback"] is True
+    assert [source.doc_id for source in result.sources] == ["doc_b"]
+    assert "Doc B" in result.context
+    assert "Doc A" not in result.context
 
 
 def test_deep_context_uses_original_file_content(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,9 +173,9 @@ def test_deep_context_uses_original_file_content(monkeypatch: pytest.MonkeyPatch
 
     assert "original file content" in result.context
     assert "index summary" not in result.context
-    assert result.sources[0].source_id == "S01"
+    assert result.sources[0].source_id == "P-01"
     assert "可用文献顺序：" in result.context
-    assert "## [S01] Doc A | Title doc_a" in result.context
+    assert "## [P-01] Doc A | Title doc_a" in result.context
 
 
 def test_deep_context_keeps_session_source_ids(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -131,12 +201,12 @@ def test_deep_context_keeps_session_source_ids(monkeypatch: pytest.MonkeyPatch) 
         model_name="unknown-model",
         mode="deep",
         doc_ids=["doc_a", "doc_b", "doc_c"],
-        source_map={"doc_a": "S03", "doc_b": "S04"},
+        source_map={"doc_a": "P-03", "doc_b": "P-04"},
     )
 
-    assert [source.source_id for source in result.sources] == ["S03", "S04", "S05"]
-    assert "[S03] Doc A | Title doc_a" in result.context
-    assert "[S05] Doc C | Title doc_c" in result.context
+    assert [source.source_id for source in result.sources] == ["P-03", "P-04", "P-05"]
+    assert "[P-03] Doc A | Title doc_a" in result.context
+    assert "[P-05] Doc C | Title doc_c" in result.context
 
 
 def test_chat_modes_use_distinct_prompts() -> None:
@@ -165,10 +235,10 @@ def test_chat_modes_use_distinct_prompts() -> None:
 def test_chat_prompt_includes_history() -> None:
     _system, user_prompt = chat_modes.build_chat_prompt(
         question="继续展开第三点",
-        context="## [S01] Doc A\n\ncontent",
+        context="## [P-01] Doc A\n\ncontent",
         mode="deep",
         history_messages=[
-            {"role": "user", "content": "先总结 S01", "sources": [{"source_id": "S01", "doc_id": "doc_a", "display_name": "Doc A"}]},
+            {"role": "user", "content": "先总结 P-01", "sources": [{"source_id": "P-01", "doc_id": "doc_a", "display_name": "Doc A"}]},
             {"role": "assistant", "content": "第三点是方法限制。"},
             {"role": "system", "content": "ignore me"},
         ],
@@ -176,7 +246,7 @@ def test_chat_prompt_includes_history() -> None:
     )
 
     assert "对话历史" in user_prompt
-    assert "先总结 S01" in user_prompt
+    assert "先总结 P-01" in user_prompt
     assert "第三点是方法限制" in user_prompt
-    assert "[S01] Doc A" in user_prompt
+    assert "[P-01] Doc A" in user_prompt
     assert "ignore me" not in user_prompt
