@@ -25,18 +25,17 @@ def test_selection_policy_normalizes_and_accepts_long_text() -> None:
     assert ensure_selection_long_enough(raw_text) == normalized
 
 
-def test_selection_policy_rejects_short_text() -> None:
+def test_selection_policy_accepts_short_text() -> None:
     short_text = "too short"
 
-    assert is_selection_long_enough(short_text) is False
-    try:
-        ensure_selection_long_enough(short_text)
-    except ValueError as exc:
-        assert str(exc) == (
-            f"Selection must contain at least {MIN_TRANSLATION_SELECTION_CHARS} visible characters."
-        )
-    else:  # pragma: no cover
-        raise AssertionError("short selection should have failed")
+    assert MIN_TRANSLATION_SELECTION_CHARS == 0
+    assert is_selection_long_enough(short_text) is True
+    assert ensure_selection_long_enough(short_text) == short_text
+
+
+def test_selection_policy_accepts_empty_text() -> None:
+    assert is_selection_long_enough("") is True
+    assert ensure_selection_long_enough("   ") == ""
 
 
 def test_selection_policy_cache_key_changes_with_provider_model_and_prompt() -> None:

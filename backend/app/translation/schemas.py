@@ -88,10 +88,7 @@ class TranslationRequestIn(BaseModel):
     @field_validator("source_text")
     @classmethod
     def validate_source_text(cls, value: str) -> str:
-        cleaned = value.strip()
-        if not cleaned:
-            raise ValueError("source_text cannot be empty")
-        return cleaned
+        return value.strip()
 
 
 class TranslationResponseOut(BaseModel):

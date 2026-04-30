@@ -66,22 +66,23 @@ def test_translation_contracts_reject_empty_request_fields() -> None:
             source_text="valid text",
         )
 
-    with pytest.raises(ValidationError):
-        translation_schemas.TranslationRequestIn(
-            document_id="tdoc_123",
-            provider="deepseek",
-            source_text="   ",
-        )
+    payload = translation_schemas.TranslationRequestIn(
+        document_id="tdoc_123",
+        provider="deepseek",
+        source_text="   ",
+    )
+
+    assert payload.source_text == ""
 
 
 def test_translation_error_payloads_are_machine_readable() -> None:
     error = translation_errors.TranslationErrorOut(
         code=translation_errors.TranslatorErrorCode.SELECTION_TOO_SHORT,
-        message="Selection must contain at least 40 visible characters.",
+        message="Selection too short.",
     )
 
     assert error.code == translation_errors.TranslatorErrorCode.SELECTION_TOO_SHORT
     assert error.model_dump() == {
         "code": "selection_too_short",
-        "message": "Selection must contain at least 40 visible characters.",
+        "message": "Selection too short.",
     }

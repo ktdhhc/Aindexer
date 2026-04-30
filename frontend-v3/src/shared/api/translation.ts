@@ -69,33 +69,6 @@ export interface TranslationResult {
   updated_at?: string | null;
 }
 
-export interface TranslatorProviderSummary {
-  provider: string;
-  base_url: string | null;
-  model: string | null;
-  has_api_key: boolean;
-  api_key_masked?: string;
-  temperature: number;
-  timeout: number;
-  enabled: boolean;
-}
-
-export interface TranslatorProviderPayload {
-  base_url: string;
-  model: string;
-  api_key?: string;
-  clear_api_key?: boolean;
-  temperature: number;
-  timeout: number;
-  enabled: boolean;
-}
-
-export interface TranslatorProviderTestResult {
-  success: boolean;
-  message: string;
-  elapsed_seconds: number;
-}
-
 export function listTranslationDocuments(
   workspaceId: string,
 ): Promise<TranslationDocument[]> {
@@ -172,27 +145,6 @@ export function translateSelection(
 export function cancelTranslationRequest(clientRequestId: string): Promise<{ ok: boolean; cancelled: boolean }> {
   return fetchJson<{ ok: boolean; cancelled: boolean }>(
     `/api/translation/requests/${encodeURIComponent(clientRequestId)}/cancel`,
-    { method: "POST" },
-  );
-}
-
-export function listTranslatorProviders(): Promise<TranslatorProviderSummary[]> {
-  return fetchJson<TranslatorProviderSummary[]>("/api/translation/providers");
-}
-
-export function updateTranslatorProvider(
-  provider: string,
-  payload: TranslatorProviderPayload,
-): Promise<{ ok: boolean }> {
-  return fetchJson<{ ok: boolean }>(`/api/translation/providers/${encodeURIComponent(provider)}`, {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function testTranslatorProvider(provider: string): Promise<TranslatorProviderTestResult> {
-  return fetchJson<TranslatorProviderTestResult>(
-    `/api/translation/providers/${encodeURIComponent(provider)}/test`,
     { method: "POST" },
   );
 }

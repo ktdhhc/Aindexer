@@ -163,7 +163,7 @@ export function PdfViewer({
         const text = String(selection.toString() || "")
           .replace(/\s+/g, " ")
           .trim();
-        if (text.length >= 40) {
+        if (text) {
           onSelection(text);
         }
       }, 0);

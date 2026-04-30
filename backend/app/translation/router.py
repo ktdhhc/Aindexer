@@ -3,21 +3,13 @@ from __future__ import annotations
 import mimetypes
 from importlib import import_module
 from pathlib import Path
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
 from ..db import DEFAULT_WORKSPACE_ID
 from ..routers._context import resolve_workspace_id
-from ..repository import (
-    build_scoped_file_hash,
-    get_provider_config_raw,
-    hash_file,
-    save_provider_config,
-)
-from ..schemas import ProviderConfigIn
-from ..services.provider_client import ProviderClient, ProviderConfig
+from ..repository import build_scoped_file_hash, hash_file
 from .cancellation import cancel_request
 from .repository import (
     create_translation_document,
@@ -32,9 +24,6 @@ from .schemas import TranslationRequestIn
 from .service import build_translation_error, execute_translation_request
 
 router = APIRouter()
-
-# Translator-supported providers (isolated from main app provider config)
-TRANSLATOR_PROVIDERS = {"deepseek", "gemini"}
 
 
 @router.get("/health")
@@ -199,177 +188,3 @@ def document_history(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     return list_translation_history(document_id, workspace_id=workspace)
-
-
-# Translator-isolated provider config endpoints
-# These allow the translator subproject to work independently from main provider page
-
-
-def _mask_api_key(api_key: str | None) -> str:
-    if not api_key:
-        return ""
-    plain = api_key
-    if len(plain) <= 8:
-        return "*" * len(plain)
-    return f"{plain[:4]}{'*' * (len(plain) - 8)}{plain[-4:]}"
-
-
-def _validate_base_url(base_url: str | None) -> str:
-    val = (base_url or "").strip()
-    if not val:
-        raise HTTPException(status_code=400, detail="Base URL 不能为空")
-    parsed = urlparse(val)
-    if parsed.scheme not in {"http", "https"}:
-        raise HTTPException(
-            status_code=400, detail="Base URL 必须以 http:// 或 https:// 开头"
-        )
-    if not parsed.netloc:
-        raise HTTPException(status_code=400, detail="Base URL 缺少主机名")
-    host = (parsed.hostname or "").strip()
-    if not host:
-        raise HTTPException(status_code=400, detail="Base URL 主机名无效")
-    labels = host.split(".")
-    for i, label in enumerate(labels):
-        if not label:
-            if i == 0:
-                raise HTTPException(
-                    status_code=400, detail="Base URL 主机名不能以点号开头"
-                )
-            elif i == len(labels) - 1:
-                raise HTTPException(
-                    status_code=400, detail="Base URL 主机名不能以点号结尾"
-                )
-            else:
-                raise HTTPException(
-                    status_code=400, detail="Base URL 主机名包含连续的点号"
-                )
-    try:
-        host.encode("idna")
-    except UnicodeError as e:
-        raise HTTPException(status_code=400, detail=f"Base URL 主机名包含无效字符: {e}")
-    return val
-
-
-@router.get("/providers")
-def list_translator_providers() -> list[dict]:
-    """List translator-supported providers with their current config status."""
-    result = []
-    for provider in sorted(TRANSLATOR_PROVIDERS):
-        raw = get_provider_config_raw(provider)
-        if raw:
-            result.append(
-                {
-                    "provider": provider,
-                    "base_url": raw.get("base_url"),
-                    "model": raw.get("model"),
-                    "has_api_key": bool(raw.get("api_key_enc")),
-                    "api_key_masked": _mask_api_key(raw.get("api_key_enc")),
-                    "temperature": raw.get("temperature")
-                    if raw.get("temperature") is not None
-                    else 0.1,
-                    "timeout": raw.get("timeout")
-                    if raw.get("timeout") is not None
-                    else 120,
-                    "enabled": bool(raw.get("enabled")),
-                }
-            )
-        else:
-            # Return default structure for unconfigured providers
-            defaults = {
-                "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat"),
-                "gemini": (
-                    "https://generativelanguage.googleapis.com/v1beta",
-                    "gemini-1.5-flash",
-                ),
-            }
-            default_url, default_model = defaults.get(provider, ("", ""))
-            result.append(
-                {
-                    "provider": provider,
-                    "base_url": default_url,
-                    "model": default_model,
-                    "has_api_key": False,
-                    "api_key_masked": "",
-                    "temperature": 0.1,
-                    "timeout": 120,
-                    "enabled": True,
-                }
-            )
-    return result
-
-
-@router.get("/providers/{provider}")
-def get_translator_provider_config(provider: str) -> dict:
-    """Get config for a specific translator provider."""
-    if provider not in TRANSLATOR_PROVIDERS:
-        raise HTTPException(
-            status_code=400, detail=f"Provider '{provider}' not supported in translator"
-        )
-    raw = get_provider_config_raw(provider)
-    if not raw:
-        raise HTTPException(status_code=404, detail="Provider not configured")
-    return {
-        "provider": provider,
-        "base_url": raw.get("base_url"),
-        "model": raw.get("model"),
-        "has_api_key": bool(raw.get("api_key_enc")),
-        "api_key_masked": _mask_api_key(raw.get("api_key_enc")),
-        "temperature": raw.get("temperature")
-        if raw.get("temperature") is not None
-        else 0.1,
-        "timeout": raw.get("timeout") if raw.get("timeout") is not None else 120,
-        "enabled": bool(raw.get("enabled")),
-    }
-
-
-@router.put("/providers/{provider}")
-def update_translator_provider_config(provider: str, payload: ProviderConfigIn) -> dict:
-    """Update config for a specific translator provider."""
-    if provider not in TRANSLATOR_PROVIDERS:
-        raise HTTPException(
-            status_code=400, detail=f"Provider '{provider}' not supported in translator"
-        )
-    base_url = _validate_base_url(payload.base_url)
-    api_key_enc = None
-    if payload.clear_api_key:
-        api_key_enc = ""
-    elif payload.api_key:
-        api_key_enc = payload.api_key
-    save_provider_config(
-        provider=provider,
-        base_url=base_url,
-        model=payload.model,
-        api_key_enc=api_key_enc,
-        temperature=payload.temperature,
-        timeout=payload.timeout,
-        enabled=payload.enabled,
-    )
-    return {"ok": True}
-
-
-@router.post("/providers/{provider}/test")
-def test_translator_provider(provider: str) -> dict:
-    """Test connection for a specific translator provider."""
-    if provider not in TRANSLATOR_PROVIDERS:
-        raise HTTPException(
-            status_code=400, detail=f"Provider '{provider}' not supported in translator"
-        )
-    cfg = get_provider_config_raw(provider)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Provider not configured")
-    if not cfg.get("api_key_enc"):
-        raise HTTPException(status_code=400, detail="API key is not configured")
-    client_cfg = ProviderConfig(
-        provider=provider,
-        base_url=_validate_base_url(cfg["base_url"]),
-        model=cfg["model"],
-        api_key=cfg["api_key_enc"],
-        temperature=cfg["temperature"] or 0.1,
-        timeout=cfg["timeout"] or 120,
-    )
-    ok, message, elapsed = ProviderClient.test_connection(client_cfg)
-    return {
-        "success": ok,
-        "message": message,
-        "elapsed_seconds": elapsed,
-    }

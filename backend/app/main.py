@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import mimetypes
 from datetime import datetime
 from pathlib import Path
 
@@ -83,8 +84,16 @@ def _configure_logging() -> None:
     )
 
 
+def _configure_static_mime_types() -> None:
+    # Windows registry mappings can report JS modules as text/plain, which breaks
+    # the translator frontend because it is loaded via <script type="module">.
+    mimetypes.add_type("text/javascript", ".js")
+    mimetypes.add_type("text/javascript", ".mjs")
+
+
 def create_app() -> FastAPI:
     _configure_logging()
+    _configure_static_mime_types()
     init_db()
     translation_router = importlib.import_module("app.translation.router").router
     app = FastAPI(title="Aindexer", version="0.1.0")

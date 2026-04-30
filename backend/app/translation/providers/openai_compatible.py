@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from urllib.parse import urlparse
 
 import httpx
 
@@ -13,29 +14,41 @@ from .base import (
     TranslationProviderResult,
 )
 
-DEESEEK_DEFAULT_MAX_TOKENS = 1200
+OPENAI_COMPAT_DEFAULT_MAX_TOKENS = 8192
+OPENROUTER_HOST = "openrouter.ai"
 
 
-def build_deepseek_payload(
+def build_openai_compatible_payload(
+    config: ResolvedTranslationProviderConfig,
     request: TranslationProviderRequest,
 ) -> dict[str, object]:
-    payload = {
+    payload: dict[str, object] = {
         "model": request.model,
         "messages": [
             {"role": "system", "content": request.system_prompt},
             {"role": "user", "content": request.user_prompt},
         ],
         "temperature": 0.1,
-        "max_tokens": DEESEEK_DEFAULT_MAX_TOKENS,
+        "max_tokens": OPENAI_COMPAT_DEFAULT_MAX_TOKENS,
         "stream": True,
-        "stream_options": {"include_usage": True},
     }
     if request.enable_thinking:
-        payload["thinking"] = {"type": "enabled"}
+        provider_name = str(config.provider or "").strip().lower()
+        if provider_name == "deepseek":
+            payload["thinking"] = {"type": "enabled"}
+        elif is_openrouter_base_url(config.base_url):
+            payload["reasoning"] = {"effort": "high"}
     return payload
 
 
-def translate_with_deepseek(
+def is_openrouter_base_url(base_url: str) -> bool:
+    host = (urlparse(base_url).hostname or "").strip().lower()
+    if not host:
+        return False
+    return host == OPENROUTER_HOST or host.endswith(f".{OPENROUTER_HOST}")
+
+
+def translate_with_openai_compatible(
     config: ResolvedTranslationProviderConfig,
     request: TranslationProviderRequest,
     should_cancel: Callable[[], bool] | None = None,
@@ -45,7 +58,7 @@ def translate_with_deepseek(
         "Authorization": f"Bearer {config.api_key}",
         "Content-Type": "application/json",
     }
-    payload = build_deepseek_payload(request)
+    payload = build_openai_compatible_payload(config, request)
 
     try:
         stream_result = stream_chat_completion_with_metrics(
@@ -59,7 +72,7 @@ def translate_with_deepseek(
     except httpx.ReadTimeout as exc:
         raise TranslationProviderError(
             kind=TranslationProviderErrorKind.TIMEOUT,
-            message="DeepSeek request timed out.",
+            message=f"{config.provider} request timed out.",
             retryable=True,
             provider=config.provider,
             model=request.model,
@@ -68,7 +81,7 @@ def translate_with_deepseek(
     except httpx.ConnectError as exc:
         raise TranslationProviderError(
             kind=TranslationProviderErrorKind.UPSTREAM,
-            message="DeepSeek connection failed.",
+            message=f"{config.provider} connection failed.",
             retryable=True,
             provider=config.provider,
             model=request.model,
@@ -77,18 +90,22 @@ def translate_with_deepseek(
     except UnicodeError as exc:
         raise TranslationProviderError(
             kind=TranslationProviderErrorKind.UPSTREAM,
-            message="DeepSeek base URL is invalid.",
+            message=f"{config.provider} base URL is invalid.",
             provider=config.provider,
             model=request.model,
             cause=exc,
         ) from exc
     except RuntimeError as exc:
-        raise _map_deepseek_runtime_error(exc, config=config, request=request) from exc
+        raise _map_openai_compatible_runtime_error(
+            exc,
+            config=config,
+            request=request,
+        ) from exc
 
     if not translated_text:
         raise TranslationProviderError(
             kind=TranslationProviderErrorKind.RESPONSE_INVALID,
-            message="DeepSeek returned an empty translation.",
+            message=f"{config.provider} returned an empty translation.",
             provider=config.provider,
             model=request.model,
         )
@@ -109,7 +126,7 @@ def translate_with_deepseek(
     )
 
 
-def _map_deepseek_runtime_error(
+def _map_openai_compatible_runtime_error(
     exc: RuntimeError,
     *,
     config: ResolvedTranslationProviderConfig,
@@ -121,50 +138,41 @@ def _map_deepseek_runtime_error(
     if "cancelled by user" in lowered:
         return TranslationProviderError(
             kind=TranslationProviderErrorKind.CANCELLED,
-            message="DeepSeek request was cancelled.",
+            message=f"{config.provider} request was cancelled.",
             provider=config.provider,
             model=request.model,
             cause=exc,
         )
-    if "http 401" in lowered or "http 403" in lowered:
+    if "401" in lowered or "403" in lowered:
         return TranslationProviderError(
             kind=TranslationProviderErrorKind.AUTH,
-            message="DeepSeek authentication failed.",
+            message=message,
             provider=config.provider,
             model=request.model,
             cause=exc,
         )
-    if "http 429" in lowered:
+    if "429" in lowered:
         return TranslationProviderError(
             kind=TranslationProviderErrorKind.RATE_LIMIT,
-            message="DeepSeek rate limit reached.",
+            message=message,
             retryable=True,
             provider=config.provider,
             model=request.model,
             cause=exc,
         )
-    if "transport error" in lowered or "timed out" in lowered:
-        return TranslationProviderError(
-            kind=TranslationProviderErrorKind.TIMEOUT,
-            message="DeepSeek transport timed out.",
-            retryable=True,
-            provider=config.provider,
-            model=request.model,
-            cause=exc,
-        )
-    if "http 5" in lowered:
-        return TranslationProviderError(
-            kind=TranslationProviderErrorKind.UPSTREAM,
-            message="DeepSeek upstream error.",
-            retryable=True,
-            provider=config.provider,
-            model=request.model,
-            cause=exc,
-        )
-    if "empty" in lowered:
+    if "llm流式响应为空" in lowered or "empty translation" in lowered:
         return TranslationProviderError(
             kind=TranslationProviderErrorKind.RESPONSE_INVALID,
-            message="DeepSeek returned an empty response.",
+            message=message,
+            provider=config.provider,
+            model=request.model,
+            cause=exc,
+        )
+    if "502" in lowered or "503" in lowered or "504" in lowered:
+        return TranslationProviderError(
+            kind=TranslationProviderErrorKind.UPSTREAM,
+            message=message,
+            retryable=True,
             provider=config.provider,
             model=request.model,
             cause=exc,

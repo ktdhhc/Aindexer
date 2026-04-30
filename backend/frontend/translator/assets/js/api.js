@@ -70,21 +70,15 @@ export async function uploadDocument(file) {
   return res.json();
 }
 
-// Provider Config APIs
-export async function fetchTranslatorProviders() {
-  const res = await fetch(apiPath('/translation/providers'));
+// Shared Provider Config APIs
+export async function fetchProviders() {
+  const res = await fetch(apiPath('/providers'));
   if (!res.ok) throw new Error(await readErrorMessage(res));
   return res.json();
 }
 
-export async function fetchTranslatorProviderConfig(provider) {
-  const res = await fetch(apiPath(`/translation/providers/${provider}`));
-  if (!res.ok) throw new Error(await readErrorMessage(res));
-  return res.json();
-}
-
-export async function updateTranslatorProviderConfig(provider, config) {
-  const res = await fetch(apiPath(`/translation/providers/${provider}`), {
+export async function updateProviderConfig(provider, config) {
+  const res = await fetch(apiPath(`/providers/${provider}`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config)
@@ -93,8 +87,8 @@ export async function updateTranslatorProviderConfig(provider, config) {
   return res.json();
 }
 
-export async function testTranslatorProviderConfig(provider) {
-  const res = await fetch(apiPath(`/translation/providers/${provider}/test`), {
+export async function testProviderConfig(provider) {
+  const res = await fetch(apiPath(`/providers/${provider}/test`), {
     method: 'POST'
   });
   if (!res.ok) throw new Error(await readErrorMessage(res));

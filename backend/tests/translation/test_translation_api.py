@@ -129,6 +129,67 @@ def test_translate_selection_returns_success_and_cache_hit(
     assert request_row["status"] == "completed"
 
 
+def test_translate_selection_supports_custom_configured_provider(
+    tmp_path, monkeypatch
+) -> None:
+    _patch_data_paths(tmp_path, monkeypatch)
+
+    def fake_run_provider_translation(resolved, request, should_cancel=None):
+        from app.translation.providers.base import TranslationProviderResult
+
+        return TranslationProviderResult(
+            provider=resolved.provider,
+            model=resolved.model,
+            source_text=request.source_text,
+            translated_text="本地模型翻译结果",
+            target_lang=request.target_lang,
+            source_lang=request.source_lang,
+            prompt_version=request.prompt_version,
+        )
+
+    monkeypatch.setattr(
+        translation_service,
+        "_run_provider_translation",
+        fake_run_provider_translation,
+    )
+
+    client = TestClient(create_app())
+    save_provider_config(
+        provider="ollama",
+        base_url="http://localhost:11434/v1",
+        model="hy-mt1.5-1.8b:latest",
+        api_key_enc="ollama",
+        temperature=0.1,
+        timeout=120,
+        enabled=True,
+    )
+    document_id = create_translation_document(
+        filename="paper.pdf",
+        display_name="paper.pdf",
+        file_type="pdf",
+        file_hash="hash-translate-ollama",
+        file_path=str(tmp_path / "paper.pdf"),
+        page_count=1,
+        text_layer_status="ready",
+    )
+
+    response = client.post(
+        "/api/translation/translate-selection",
+        json={
+            "document_id": document_id,
+            "provider": "ollama",
+            "model": "hy-mt1.5-1.8b:latest",
+            "source_text": "This is a sufficiently long sample passage for custom provider translation verification.",
+            "target_lang": "zh-CN",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "ollama"
+    assert response.json()["model"] == "hy-mt1.5-1.8b:latest"
+    assert response.json()["translated_text"] == "本地模型翻译结果"
+
+
 def test_translate_selection_handles_short_text_and_provider_timeout(
     tmp_path, monkeypatch
 ) -> None:
@@ -170,14 +231,6 @@ def test_translate_selection_handles_short_text_and_provider_timeout(
         text_layer_status="ready",
     )
 
-    short_res = client.post(
-        "/api/translation/translate-selection",
-        json={
-            "document_id": document_id,
-            "provider": "deepseek",
-            "source_text": "too short",
-        },
-    )
     timeout_res = client.post(
         "/api/translation/translate-selection",
         json={
@@ -189,8 +242,6 @@ def test_translate_selection_handles_short_text_and_provider_timeout(
         },
     )
 
-    assert short_res.status_code == 400
-    assert short_res.json()["detail"]["code"] == "selection_too_short"
     assert timeout_res.status_code == 400
     assert timeout_res.json()["detail"]["code"] == "provider_timeout"
 

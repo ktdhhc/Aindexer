@@ -166,7 +166,7 @@ def test_translator_provider_config_save_and_test(server):
 
         # Mock provider APIs
         page.route(
-            "**/api/translation/providers",
+            "**/api/providers",
             lambda route: route.fulfill(
                 json=[
                     {
@@ -182,27 +182,12 @@ def test_translator_provider_config_save_and_test(server):
                 ]
             ),
         )
-        page.route(
-            "**/api/translation/providers/deepseek",
-            lambda route: route.fulfill(
-                json={
-                    "provider": "deepseek",
-                    "base_url": "https://api.deepseek.com/v1",
-                    "model": "deepseek-chat",
-                    "has_api_key": True,
-                    "api_key_masked": "sk-****1234",
-                    "temperature": 0.1,
-                    "timeout": 120,
-                    "enabled": True,
-                }
-            ),
-        )
 
         # Mock save endpoint
         def handle_save(route):
             route.fulfill(json={"ok": True})
 
-        page.route("**/api/translation/providers/deepseek", handle_save)
+        page.route("**/api/providers/deepseek", handle_save)
 
         # Mock test endpoint
         def handle_test(route):
@@ -214,7 +199,7 @@ def test_translator_provider_config_save_and_test(server):
                 }
             )
 
-        page.route("**/api/translation/providers/deepseek/test", handle_test)
+        page.route("**/api/providers/deepseek/test", handle_test)
 
         page.goto(f"{server}/translator/")
 

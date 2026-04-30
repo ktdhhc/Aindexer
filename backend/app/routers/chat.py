@@ -33,6 +33,8 @@ class ChatAskIn(BaseModel):
     workspace_id: str = DEFAULT_WORKSPACE_ID
     mode: str = "deep"
     doc_ids: list[str] = Field(default_factory=list)
+    messages: list[dict] = Field(default_factory=list)
+    source_map: dict[str, str] = Field(default_factory=dict)
     session_id: str | None = None
 
 
@@ -59,6 +61,8 @@ def ask_chat(payload: ChatAskIn) -> dict:
             workspace_id=workspace_id,
             mode=payload.mode,  # type: ignore[arg-type]
             doc_ids=payload.doc_ids,
+            history_messages=payload.messages,
+            source_map=payload.source_map,
         )
         logger.info(
             "chat success mode=%s sources=%s answer_chars=%s",
@@ -93,11 +97,14 @@ def ask_chat_stream(payload: ChatAskIn):
             model_name=cfg.model,
             mode=mode,  # type: ignore[arg-type]
             doc_ids=payload.doc_ids,
+            source_map=payload.source_map,
         )
         system_prompt, user_prompt = build_chat_prompt(
             question=question,
             context=context_result.context,
             mode=mode,  # type: ignore[arg-type]
+            history_messages=payload.messages,
+            history_token_budget=int(context_result.stats.get("history_budget") or 0),
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -111,14 +118,20 @@ def ask_chat_stream(payload: ChatAskIn):
         }
         yield json.dumps(meta, ensure_ascii=False) + "\n"
         try:
+            finish_reason_holder: dict[str, str | None] = {"value": None}
+
+            def capture_finish_reason(reason: str | None) -> None:
+                finish_reason_holder["value"] = reason
+
             for chunk in ProviderClient.stream_text(
                 config=cfg,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                on_finish=capture_finish_reason,
             ):
                 if chunk:
                     yield json.dumps({"type": "delta", "text": chunk}, ensure_ascii=False) + "\n"
-            yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "done", "finish_reason": finish_reason_holder.get("value")}, ensure_ascii=False) + "\n"
         except Exception as exc:
             logger.warning("chat stream failed err=%s", exc)
             yield json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False) + "\n"

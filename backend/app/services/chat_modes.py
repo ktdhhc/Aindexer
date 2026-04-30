@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any, Literal
 
 from ..db import DEFAULT_WORKSPACE_ID
@@ -19,6 +20,9 @@ FULL_INDEX_RATIO = 0.45
 ADVISORY_RATIO = 0.70
 AUTO_COMPRESS_RATIO = 0.85
 HARD_LIMIT_RATIO = 0.95
+HISTORY_RATIO = 0.18
+MAX_HISTORY_MESSAGES = 8
+MAX_HISTORY_MESSAGE_CHARS = 1_800
 
 MODE_PROMPTS = {
     "wide": {
@@ -38,6 +42,7 @@ MODE_PROMPTS = {
 
 @dataclass
 class ChatSource:
+    source_id: str
     doc_id: str
     display_name: str
     title: str = ""
@@ -57,6 +62,8 @@ def run_chat(
     workspace_id: str = DEFAULT_WORKSPACE_ID,
     mode: ChatMode = "deep",
     doc_ids: list[str] | None = None,
+    history_messages: list[dict[str, Any]] | None = None,
+    source_map: dict[str, str] | None = None,
 ) -> dict:
     mode_value = _normalize_mode(mode)
     context_result = build_chat_context(
@@ -65,11 +72,14 @@ def run_chat(
         model_name=provider_cfg.model,
         mode=mode_value,
         doc_ids=doc_ids or [],
+        source_map=source_map or {},
     )
     system_prompt, user_prompt = build_chat_prompt(
         question=question,
         context=context_result.context,
         mode=mode_value,
+        history_messages=history_messages or [],
+        history_token_budget=int(context_result.stats.get("history_budget") or 0),
     )
     answer = ProviderClient.generate_text(
         config=provider_cfg,
@@ -91,6 +101,7 @@ def build_chat_context(
     model_name: str,
     mode: ChatMode,
     doc_ids: list[str],
+    source_map: dict[str, str] | None = None,
 ) -> ContextBuildResult:
     budget = _build_budget(model_name)
     if mode == "wide":
@@ -98,7 +109,7 @@ def build_chat_context(
     elif mode == "agent":
         result = _build_agent_context(workspace_id, question, budget)
     else:
-        result = _build_deep_context(workspace_id, doc_ids, budget)
+        result = _build_deep_context(workspace_id, doc_ids, budget, source_map or {})
 
     estimated = estimate_tokens(result.context)
     compression_level = _compression_level(estimated, int(budget["usable_context_budget"]))
@@ -122,9 +133,18 @@ def build_chat_context(
     return ContextBuildResult(context=context, sources=result.sources, stats=stats)
 
 
-def build_chat_prompt(*, question: str, context: str, mode: ChatMode) -> tuple[str, str]:
+def build_chat_prompt(
+    *,
+    question: str,
+    context: str,
+    mode: ChatMode,
+    history_messages: list[dict[str, Any]] | None = None,
+    history_token_budget: int = 0,
+) -> tuple[str, str]:
     prompt_pack = MODE_PROMPTS[mode]
+    history = _format_history_messages(history_messages or [], history_token_budget)
     user_prompt = prompt_pack["user"].format(
+        history=history,
         question=question.strip(),
         context=context.strip(),
     )
@@ -157,14 +177,17 @@ def _build_budget(model_name: str) -> dict[str, int]:
     output_reserve = max(4_000, int(window * 0.15))
     system_reserve = max(2_000, int(window * 0.05))
     usable = max(1_000, window - output_reserve - system_reserve)
+    history_budget = max(800, int(usable * HISTORY_RATIO))
+    context_budget = max(1_000, usable - history_budget)
     return {
         "model_context_window": window,
         "output_reserve": output_reserve,
         "system_reserve": system_reserve,
-        "usable_context_budget": usable,
-        "advisory_threshold": int(usable * ADVISORY_RATIO),
-        "auto_compress_threshold": int(usable * AUTO_COMPRESS_RATIO),
-        "hard_limit_threshold": int(usable * HARD_LIMIT_RATIO),
+        "usable_context_budget": context_budget,
+        "history_budget": history_budget,
+        "advisory_threshold": int(context_budget * ADVISORY_RATIO),
+        "auto_compress_threshold": int(context_budget * AUTO_COMPRESS_RATIO),
+        "hard_limit_threshold": int(context_budget * HARD_LIMIT_RATIO),
     }
 
 
@@ -211,7 +234,12 @@ def _build_wide_context(workspace_id: str, question: str, budget: dict[str, int]
     )
 
 
-def _build_deep_context(workspace_id: str, doc_ids: list[str], budget: dict[str, int]) -> ContextBuildResult:
+def _build_deep_context(
+    workspace_id: str,
+    doc_ids: list[str],
+    budget: dict[str, int],
+    source_map: dict[str, str],
+) -> ContextBuildResult:
     unique_ids = []
     for doc_id in doc_ids:
         cleaned = str(doc_id or "").strip()
@@ -222,7 +250,7 @@ def _build_deep_context(workspace_id: str, doc_ids: list[str], budget: dict[str,
 
     items = [_load_document_context(doc_id, workspace_id, variant="original_full") for doc_id in unique_ids]
     return ContextBuildResult(
-        context=_join_context_items(items),
+        context=_join_context_items(items, stable_source_ids=source_map),
         sources=[item["source"] for item in items],
         stats={"deep_doc_ids": unique_ids},
     )
@@ -264,15 +292,15 @@ def _load_document_context(
     if not record:
         raise RuntimeError(f"索引不存在：{doc_id}")
     display_name = str(doc.get("display_name") or doc.get("filename") or doc_id)
-    source = ChatSource(doc_id=doc_id, display_name=display_name, title=record.title)
+    source = ChatSource(source_id="", doc_id=doc_id, display_name=display_name, title=record.title)
     if variant == "index_full":
         md_path = markdown_path(doc_id)
-        content = md_path.read_text(encoding="utf-8") if md_path.exists() else render_markdown(doc_id, record)
+        body = md_path.read_text(encoding="utf-8") if md_path.exists() else render_markdown(doc_id, record)
     elif variant == "original_full":
-        content = _load_original_document_content(doc)
+        body = _load_original_document_content(doc)
     else:
-        content = _render_structured_summary(record)
-    return {"source": source, "content": f"## {display_name}\n\n{content.strip()}"}
+        body = _render_structured_summary(record)
+    return {"source": source, "body": body.strip()}
 
 
 def _load_original_document_content(doc: dict[str, Any]) -> str:
@@ -305,8 +333,87 @@ def _render_structured_summary(record: Any) -> str:
     return "\n".join(parts)
 
 
-def _join_context_items(items: list[dict[str, Any]]) -> str:
-    return "\n\n---\n\n".join(str(item["content"]) for item in items)
+def _join_context_items(items: list[dict[str, Any]], stable_source_ids: dict[str, str] | None = None) -> str:
+    if not items:
+        return ""
+    manifest_lines = ["可用文献顺序："]
+    blocks: list[str] = []
+    used_ids: set[str] = set()
+    next_index = _next_source_index(stable_source_ids or {})
+    for item in items:
+        source: ChatSource = item["source"]
+        candidate = str((stable_source_ids or {}).get(source.doc_id) or "").strip().upper()
+        if not _is_valid_source_id(candidate) or candidate in used_ids:
+            candidate = f"S{next_index:02d}"
+            next_index += 1
+        source.source_id = candidate
+        used_ids.add(candidate)
+        title = source.display_name if not source.title or source.title == source.display_name else f"{source.display_name} | {source.title}"
+        manifest_lines.append(f"[{source.source_id}] {title}")
+        blocks.append(f"## [{source.source_id}] {title}\n\n{str(item['body']).strip()}")
+    manifest = "\n".join(manifest_lines)
+    return f"{manifest}\n\n---\n\n" + "\n\n---\n\n".join(blocks)
+
+
+def _format_history_messages(messages: list[dict[str, Any]], token_budget: int) -> str:
+    normalized: list[str] = []
+    for item in messages:
+        role = str(item.get("role") or "").strip().lower()
+        if role not in {"user", "assistant"}:
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        if len(content) > MAX_HISTORY_MESSAGE_CHARS:
+            content = content[:MAX_HISTORY_MESSAGE_CHARS].rstrip() + "..."
+        label = "User" if role == "user" else "Assistant"
+        lines = [f"{label}:", content]
+        sources = item.get("sources") if isinstance(item.get("sources"), list) else []
+        source_refs = []
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            source_id = str(source.get("source_id") or "").strip().upper()
+            display_name = str(source.get("display_name") or source.get("title") or source.get("doc_id") or "").strip()
+            if source_id and display_name:
+                source_refs.append(f"[{source_id}] {display_name}")
+            elif display_name:
+                source_refs.append(display_name)
+        if source_refs:
+            lines.append("涉及文献：" + "；".join(source_refs[:8]))
+        normalized.append("\n".join(lines))
+
+    if not normalized:
+        return "（无）"
+
+    selected: list[str] = []
+    spent = 0
+    for entry in reversed(normalized[-MAX_HISTORY_MESSAGES:]):
+        tokens = estimate_tokens(entry)
+        if selected and token_budget > 0 and spent + tokens > token_budget:
+            break
+        if not selected and token_budget > 0 and tokens > token_budget:
+            max_chars = max(240, int(token_budget * 2.4))
+            entry = entry[:max_chars].rstrip() + "..."
+            tokens = estimate_tokens(entry)
+        selected.append(entry)
+        spent += tokens
+    selected.reverse()
+    return "\n\n".join(selected)
+
+
+def _is_valid_source_id(value: str) -> bool:
+    return bool(re.fullmatch(r"S\d{2,}", value or ""))
+
+
+def _next_source_index(source_map: dict[str, str]) -> int:
+    highest = 0
+    for value in source_map.values():
+        candidate = str(value or "").strip().upper()
+        if not _is_valid_source_id(candidate):
+            continue
+        highest = max(highest, int(candidate[1:]))
+    return highest + 1 if highest > 0 else 1
 
 
 def _compression_level(estimated: int, budget: int) -> str:

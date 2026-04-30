@@ -8,22 +8,10 @@ from app.translation.providers.base import TranslationProviderErrorKind
 from app.translation.service import ResolvedTranslationProviderConfig
 from app.services.provider_client import StreamChatCompletionResult
 
-deepseek_provider = importlib.import_module("app.translation.providers.deepseek")
+provider_module = importlib.import_module("app.translation.providers.openai_compatible")
 
 
-def _build_request():
-    translation_schemas = importlib.import_module("app.translation.schemas")
-    return translation_schemas.TranslationRequestIn(
-        document_id="tdoc_123",
-        provider="deepseek",
-        model="deepseek-chat",
-        source_text="This is a sufficiently long sample passage for translation.",
-        target_lang="zh-CN",
-        prompt_version="v1",
-    )
-
-
-def test_deepseek_adapter_returns_normalized_translation(monkeypatch) -> None:
+def test_openai_compatible_adapter_returns_normalized_translation(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_stream_chat_completion(*, url, headers, payload, timeout, should_cancel):
@@ -40,46 +28,44 @@ def test_deepseek_adapter_returns_normalized_translation(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        deepseek_provider,
+        provider_module,
         "stream_chat_completion_with_metrics",
         fake_stream_chat_completion,
     )
 
-    payload = _build_request()
-    request = deepseek_provider.TranslationProviderRequest(
-        provider="deepseek",
-        model="deepseek-chat",
-        source_text=payload.source_text,
-        target_lang=payload.target_lang,
-        prompt_version=payload.prompt_version,
+    request = provider_module.TranslationProviderRequest(
+        provider="ollama",
+        model="hy-mt1.5-1.8b:latest",
+        source_text="This is a sufficiently long sample passage for translation.",
+        target_lang="zh-CN",
+        prompt_version="v1",
         system_prompt="system prompt",
         user_prompt="user prompt",
     )
     config = ResolvedTranslationProviderConfig(
-        provider="deepseek",
-        base_url="https://api.deepseek.com/v1",
-        model="deepseek-chat",
-        api_key="secret-key",
+        provider="ollama",
+        base_url="http://localhost:11434/v1",
+        model="hy-mt1.5-1.8b:latest",
+        api_key="ollama",
         timeout=90,
         enabled=True,
     )
 
-    result = deepseek_provider.translate_with_deepseek(config, request)
+    result = provider_module.translate_with_openai_compatible(config, request)
 
-    assert captured["url"] == "https://api.deepseek.com/v1/chat/completions"
+    assert captured["url"] == "http://localhost:11434/v1/chat/completions"
     assert captured["timeout"] == 90
     assert captured["payload"] == {
-        "model": "deepseek-chat",
+        "model": "hy-mt1.5-1.8b:latest",
         "messages": [
             {"role": "system", "content": "system prompt"},
             {"role": "user", "content": "user prompt"},
         ],
         "temperature": 0.1,
-        "max_tokens": deepseek_provider.DEESEEK_DEFAULT_MAX_TOKENS,
+        "max_tokens": provider_module.OPENAI_COMPAT_DEFAULT_MAX_TOKENS,
         "stream": True,
-        "stream_options": {"include_usage": True},
     }
-    assert result.provider == "deepseek"
+    assert result.provider == "ollama"
     assert result.translated_text == "翻译后的文本"
     assert result.usage == {
         "prompt_tokens": 12,
@@ -90,8 +76,8 @@ def test_deepseek_adapter_returns_normalized_translation(monkeypatch) -> None:
     assert result.total_duration_ms == 456.0
 
 
-def test_deepseek_adapter_maps_runtime_failures() -> None:
-    config = ResolvedTranslationProviderConfig(
+def test_openai_compatible_adapter_supports_provider_specific_thinking() -> None:
+    deepseek_config = ResolvedTranslationProviderConfig(
         provider="deepseek",
         base_url="https://api.deepseek.com/v1",
         model="deepseek-chat",
@@ -99,7 +85,15 @@ def test_deepseek_adapter_maps_runtime_failures() -> None:
         timeout=90,
         enabled=True,
     )
-    request = deepseek_provider.TranslationProviderRequest(
+    openrouter_config = ResolvedTranslationProviderConfig(
+        provider="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        model="deepseek/deepseek-chat",
+        api_key="secret-key",
+        timeout=90,
+        enabled=True,
+    )
+    request = provider_module.TranslationProviderRequest(
         provider="deepseek",
         model="deepseek-chat",
         source_text="This is a sufficiently long sample passage for translation.",
@@ -107,19 +101,52 @@ def test_deepseek_adapter_maps_runtime_failures() -> None:
         prompt_version="v1",
         system_prompt="system prompt",
         user_prompt="user prompt",
+        enable_thinking=True,
     )
 
-    auth_error = deepseek_provider._map_deepseek_runtime_error(
+    deepseek_payload = provider_module.build_openai_compatible_payload(
+        deepseek_config,
+        request,
+    )
+    openrouter_payload = provider_module.build_openai_compatible_payload(
+        openrouter_config,
+        request,
+    )
+
+    assert deepseek_payload["thinking"] == {"type": "enabled"}
+    assert openrouter_payload["reasoning"] == {"effort": "high"}
+
+
+def test_openai_compatible_adapter_maps_runtime_failures() -> None:
+    config = ResolvedTranslationProviderConfig(
+        provider="ollama",
+        base_url="http://localhost:11434/v1",
+        model="hy-mt1.5-1.8b:latest",
+        api_key="ollama",
+        timeout=90,
+        enabled=True,
+    )
+    request = provider_module.TranslationProviderRequest(
+        provider="ollama",
+        model="hy-mt1.5-1.8b:latest",
+        source_text="This is a sufficiently long sample passage for translation.",
+        target_lang="zh-CN",
+        prompt_version="v1",
+        system_prompt="system prompt",
+        user_prompt="user prompt",
+    )
+
+    auth_error = provider_module._map_openai_compatible_runtime_error(
         RuntimeError("LLM HTTP 401: unauthorized"),
         config=config,
         request=request,
     )
-    rate_limit_error = deepseek_provider._map_deepseek_runtime_error(
+    rate_limit_error = provider_module._map_openai_compatible_runtime_error(
         RuntimeError("LLM HTTP 429: limited"),
         config=config,
         request=request,
     )
-    cancelled_error = deepseek_provider._map_deepseek_runtime_error(
+    cancelled_error = provider_module._map_openai_compatible_runtime_error(
         RuntimeError("cancelled by user during stream"),
         config=config,
         request=request,
@@ -131,27 +158,27 @@ def test_deepseek_adapter_maps_runtime_failures() -> None:
     assert cancelled_error.kind == TranslationProviderErrorKind.CANCELLED
 
 
-def test_deepseek_adapter_maps_empty_translation(monkeypatch) -> None:
+def test_openai_compatible_adapter_maps_empty_translation(monkeypatch) -> None:
     def fake_stream_chat_completion(*, url, headers, payload, timeout, should_cancel):
         return StreamChatCompletionResult(text="   ")
 
     monkeypatch.setattr(
-        deepseek_provider,
+        provider_module,
         "stream_chat_completion_with_metrics",
         fake_stream_chat_completion,
     )
 
     config = ResolvedTranslationProviderConfig(
-        provider="deepseek",
-        base_url="https://api.deepseek.com/v1",
-        model="deepseek-chat",
-        api_key="secret-key",
+        provider="ollama",
+        base_url="http://localhost:11434/v1",
+        model="hy-mt1.5-1.8b:latest",
+        api_key="ollama",
         timeout=90,
         enabled=True,
     )
-    request = deepseek_provider.TranslationProviderRequest(
-        provider="deepseek",
-        model="deepseek-chat",
+    request = provider_module.TranslationProviderRequest(
+        provider="ollama",
+        model="hy-mt1.5-1.8b:latest",
         source_text="This is a sufficiently long sample passage for translation.",
         target_lang="zh-CN",
         prompt_version="v1",
@@ -159,8 +186,8 @@ def test_deepseek_adapter_maps_empty_translation(monkeypatch) -> None:
         user_prompt="user prompt",
     )
 
-    with pytest.raises(deepseek_provider.TranslationProviderError) as exc_info:
-        deepseek_provider.translate_with_deepseek(config, request)
+    with pytest.raises(provider_module.TranslationProviderError) as exc_info:
+        provider_module.translate_with_openai_compatible(config, request)
 
     assert exc_info.value.kind == TranslationProviderErrorKind.RESPONSE_INVALID
-    assert exc_info.value.message == "DeepSeek returned an empty translation."
+    assert exc_info.value.message == "ollama returned an empty translation."

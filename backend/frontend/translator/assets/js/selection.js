@@ -35,6 +35,12 @@ export async function handleSelection() {
   const text = normalizeSelectedText(selection.toString());
   if (!text) return;
 
+  const provider = sidepanelEls.providerSelect.value;
+  if (!provider) {
+    showError(new Error('No enabled provider is configured for translation.'));
+    return;
+  }
+
   const pageContainer = selectionRoot.closest('.pdf-preview-page');
   const pageNumber = Number.parseInt(pageContainer?.dataset.page || '1', 10) || 1;
   const selectionId = ++selectionState.lastSelectionId;
@@ -56,7 +62,7 @@ export async function handleSelection() {
   try {
     const payload = {
       document_id: viewerState.currentDocId,
-      provider: sidepanelEls.providerSelect.value,
+      provider,
       source_text: text,
       target_lang: 'zh-CN',
       anchor: {

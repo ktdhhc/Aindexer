@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
+import {
+  DEFAULT_PREVIEW_SCALE,
+  PREVIEW_SCALE_MAX,
+  PREVIEW_SCALE_MIN,
+  PREVIEW_SCALE_STEP,
+  useTranslatorStore,
+} from "../app/translatorStore";
 import { useWorkspaceStore } from "../app/workspaceStore";
 import { buildOriginalFileUrl, listFiles } from "../shared/api/files";
 import {
-  cancelTranslationRequest,
   listTranslationHistory,
-  translateSelection,
-  type TranslationResult,
 } from "../shared/api/translation";
 import { listProviders } from "../shared/api/providers";
 import {
@@ -15,15 +19,7 @@ import {
   type ProviderModelEntry,
 } from "../shared/lib/providerModels";
 import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
-import { PdfViewer, type PdfSelectionMode } from "../features/translator/PdfViewer";
-
-type InspectorTab = "result" | "history";
-type TranslateMode = "full" | "compact";
-
-const PREVIEW_SCALE_MIN = 0.9;
-const PREVIEW_SCALE_MAX = 2.1;
-const PREVIEW_SCALE_STEP = 0.15;
-const DEFAULT_PREVIEW_SCALE = 1.35;
+import { PdfViewer } from "../features/translator/PdfViewer";
 
 function normalizeText(text: string): string {
   return String(text || "").replace(/\s+/g, " ").trim();
@@ -41,22 +37,29 @@ function formatTime(value?: string | null): string {
 }
 
 export function TranslatorPage() {
-  const queryClient = useQueryClient();
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
+  const ensureWorkspace = useTranslatorStore((state) => state.ensureWorkspace);
+  const selectedDocumentId = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.selectedDocumentId ?? "");
+  const selectedModelKey = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.selectedModelKey ?? "");
+  const sourceText = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.sourceText ?? "");
+  const inspectorTab = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.inspectorTab ?? "result");
+  const translateMode = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.translateMode ?? "full");
+  const latestResult = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.latestResult ?? null);
+  const statusMessage = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.statusMessage ?? "准备就绪");
+  const viewerMode = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.viewerMode ?? "layout");
+  const isTranslating = useTranslatorStore((state) => Boolean(state.byWorkspace[workspaceId]?.isTranslating));
+  const previewScale = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.previewScale ?? DEFAULT_PREVIEW_SCALE);
+  const setSelectedDocumentId = useTranslatorStore((state) => state.setSelectedDocumentId);
+  const setSelectedModelKey = useTranslatorStore((state) => state.setSelectedModelKey);
+  const setSourceText = useTranslatorStore((state) => state.setSourceText);
+  const setInspectorTab = useTranslatorStore((state) => state.setInspectorTab);
+  const setTranslateMode = useTranslatorStore((state) => state.setTranslateMode);
+  const setLatestResult = useTranslatorStore((state) => state.setLatestResult);
+  const setViewerMode = useTranslatorStore((state) => state.setViewerMode);
+  const setPreviewScale = useTranslatorStore((state) => state.setPreviewScale);
+  const startTranslation = useTranslatorStore((state) => state.startTranslation);
+  const cancelStoredTranslation = useTranslatorStore((state) => state.cancelActiveTranslation);
 
-  const [selectedDocumentId, setSelectedDocumentId] = useState("");
-  const [selectedModelKey, setSelectedModelKey] = useState("");
-  const [sourceText, setSourceText] = useState("");
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("result");
-  const [translateMode, setTranslateMode] = useState<TranslateMode>("full");
-  const [latestResult, setLatestResult] = useState<TranslationResult | null>(null);
-  const [statusMessage, setStatusMessage] = useState("准备就绪");
-  const [viewerMode, setViewerMode] = useState<PdfSelectionMode>("layout");
-  const [isTranslating, setIsTranslating] = useState(false);
-  const [previewScale, setPreviewScale] = useState(DEFAULT_PREVIEW_SCALE);
-
-  const activeControllerRef = useRef<AbortController | null>(null);
-  const activeClientRequestIdRef = useRef<string | null>(null);
   const autoDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAutoSourceRef = useRef("");
 
@@ -106,20 +109,24 @@ export function TranslatorPage() {
   }, [sourceText]);
 
   useEffect(() => {
+    ensureWorkspace(workspaceId);
+  }, [ensureWorkspace, workspaceId]);
+
+  useEffect(() => {
     const docs = pdfDocuments;
     if (!docs || docs.length === 0) {
-      setSelectedDocumentId("");
+      setSelectedDocumentId(workspaceId, "");
       return;
     }
     if (!selectedDocumentId || !docs.some((item) => item.id === selectedDocumentId)) {
-      setSelectedDocumentId(docs[0].id);
+      setSelectedDocumentId(workspaceId, docs[0].id);
     }
-  }, [pdfDocuments, selectedDocumentId]);
+  }, [pdfDocuments, selectedDocumentId, setSelectedDocumentId, workspaceId]);
 
   useEffect(() => {
     const options = modelOptions;
     if (options.length === 0) {
-      setSelectedModelKey("");
+      setSelectedModelKey(workspaceId, "");
       return;
     }
     if (!selectedModelKey || !options.some((e) => `${e.provider}::${e.model}` === selectedModelKey)) {
@@ -127,76 +134,37 @@ export function TranslatorPage() {
         translationDefault && options.some((e) => e.provider === translationDefault.provider && e.model === translationDefault.model)
           ? `${translationDefault.provider}::${translationDefault.model}`
           : `${options[0].provider}::${options[0].model}`;
-      setSelectedModelKey(defaultKey);
+      setSelectedModelKey(workspaceId, defaultKey);
     }
-  }, [modelOptions, selectedModelKey, translationDefault]);
+  }, [modelOptions, selectedModelKey, setSelectedModelKey, translationDefault, workspaceId]);
 
   const doTranslate = useCallback(
     async (text: string) => {
-      const documentId = selectedDocumentId.trim();
       const entry = selectedModelEntry;
       const source = normalizeText(text);
-      if (!documentId) return;
+      if (!selectedDocumentId.trim()) return;
       if (!entry?.provider) return;
-      if (source.length < 40) return;
-
-      activeControllerRef.current?.abort();
-      const controller = new AbortController();
-      const clientRequestId = crypto.randomUUID?.() || `treq_${Date.now()}`;
-      activeControllerRef.current = controller;
-      activeClientRequestIdRef.current = clientRequestId;
-      setIsTranslating(true);
-      setStatusMessage("正在翻译");
-
-      try {
-        const result = await translateSelection(
-          {
-            document_id: documentId,
-            workspace_id: workspaceId,
-            provider: entry.provider,
-            model: entry.model || null,
-            source_text: source,
-            target_lang: "zh-CN",
-            source_lang: null,
-            anchor: { page: 1, quote: source, version: "v1" },
-            metadata: { client_request_id: clientRequestId },
-          },
-          controller.signal,
-        );
-        setLatestResult(result);
-        setInspectorTab("result");
-        setStatusMessage(result.cached ? "命中缓存" : "翻译完成");
-        await queryClient.invalidateQueries({ queryKey: ["translation-history", workspaceId, selectedDocumentId] });
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        setStatusMessage(error instanceof Error ? error.message : "翻译失败");
-      } finally {
-        if (activeControllerRef.current === controller) {
-          activeControllerRef.current = null;
-          activeClientRequestIdRef.current = null;
-          setIsTranslating(false);
-        }
-      }
+      await startTranslation({
+        workspaceId,
+        provider: entry.provider,
+        model: entry.model || null,
+        sourceText: source,
+      });
     },
-    [selectedDocumentId, selectedModelEntry, workspaceId, queryClient],
+    [selectedDocumentId, selectedModelEntry, startTranslation, workspaceId],
   );
 
   const translateMutation = useMutation({
     mutationFn: () => doTranslate(sourceText),
-    onError: (error) => {
-      setStatusMessage(error instanceof Error ? error.message : "翻译失败");
-    },
   });
 
   async function cancelActiveTranslation() {
-    const clientRequestId = activeClientRequestIdRef.current;
-    activeControllerRef.current?.abort();
-    if (clientRequestId) {
-      await cancelTranslationRequest(clientRequestId).catch(() => undefined);
+    if (autoDebounceRef.current) {
+      clearTimeout(autoDebounceRef.current);
+      autoDebounceRef.current = null;
     }
     translateMutation.reset();
-    setIsTranslating(false);
-    setStatusMessage("已取消");
+    await cancelStoredTranslation(workspaceId);
   }
 
   const handlePdfSelection = useCallback(
@@ -206,10 +174,9 @@ export function TranslatorPage() {
       }
       const normalized = normalizeText(text);
       if (normalized === lastAutoSourceRef.current) return;
-      if (normalized.length < 40) return;
 
       lastAutoSourceRef.current = normalized;
-      setSourceText(normalized);
+      setSourceText(workspaceId, normalized);
 
       if (translateMode !== "compact") {
         return;
@@ -219,7 +186,7 @@ export function TranslatorPage() {
         void doTranslate(normalized);
       }, 800);
     },
-    [doTranslate, translateMode],
+    [doTranslate, setSourceText, translateMode, workspaceId],
   );
 
   const handleTextareaMouseUp = useCallback(() => {
@@ -231,19 +198,38 @@ export function TranslatorPage() {
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) return;
       const text = normalizeText(selection.toString());
-      if (!text || text.length < 40) return;
+      if (!text) return;
       if (text === lastAutoSourceRef.current) return;
       if (!selectedDocumentId || !selectedModelEntry?.provider) return;
       lastAutoSourceRef.current = text;
-      setSourceText(text);
+      setSourceText(workspaceId, text);
       autoDebounceRef.current = setTimeout(() => {
         void doTranslate(text);
       }, 600);
     }, 200);
-  }, [selectedDocumentId, selectedModelEntry, doTranslate, translateMode]);
+  }, [selectedDocumentId, selectedModelEntry, doTranslate, setSourceText, translateMode, workspaceId]);
+
+  useEffect(() => {
+    return () => {
+      if (autoDebounceRef.current) {
+        clearTimeout(autoDebounceRef.current);
+        autoDebounceRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!latestResult || !selectedDocumentId) {
+      return;
+    }
+    if (latestResult.document_id !== selectedDocumentId) {
+      return;
+    }
+    void historyQuery.refetch();
+  }, [historyQuery.refetch, latestResult, selectedDocumentId]);
 
   const canStartTranslate = Boolean(
-    selectedDocumentId && selectedModelEntry && sourceStats.chars >= 40 && !isTranslating,
+    selectedDocumentId && selectedModelEntry && !isTranslating,
   );
 
   const pdfFileUrl = selectedDocumentId ? buildOriginalFileUrl(selectedDocumentId, workspaceId) : "";
@@ -251,7 +237,7 @@ export function TranslatorPage() {
   const canZoomIn = previewScale < PREVIEW_SCALE_MAX;
 
   function changePreviewScale(direction: -1 | 1) {
-    setPreviewScale((current) => {
+    setPreviewScale(workspaceId, (current) => {
       const next = current + direction * PREVIEW_SCALE_STEP;
       return Math.min(PREVIEW_SCALE_MAX, Math.max(PREVIEW_SCALE_MIN, Math.round(next * 100) / 100));
     });
@@ -289,9 +275,9 @@ export function TranslatorPage() {
                   key={doc.id}
                   type="button"
                   onClick={() => {
-                    setSelectedDocumentId(doc.id);
-                    setSourceText("");
-                    setLatestResult(null);
+                    setSelectedDocumentId(workspaceId, doc.id);
+                    setSourceText(workspaceId, "");
+                    setLatestResult(workspaceId, null);
                     lastAutoSourceRef.current = "";
                   }}
                 >
@@ -345,14 +331,14 @@ export function TranslatorPage() {
                 <button
                   className={`v35-mode-btn ${viewerMode === "layout" ? "is-active" : ""}`}
                   type="button"
-                  onClick={() => setViewerMode("layout")}
+                  onClick={() => setViewerMode(workspaceId, "layout")}
                 >
                   版面
                 </button>
                 <button
                   className={`v35-mode-btn ${viewerMode === "text" ? "is-active" : ""}`}
                   type="button"
-                  onClick={() => setViewerMode("text")}
+                  onClick={() => setViewerMode(workspaceId, "text")}
                 >
                   文本
                 </button>
@@ -382,10 +368,10 @@ export function TranslatorPage() {
 
         <aside className="v35-translation-inspector v35-paper-panel">
           <div className="v35-inspector-tabs" role="tablist" aria-label="翻译面板">
-            <button className={inspectorTab === "result" ? "is-active" : ""} type="button" onClick={() => setInspectorTab("result")}>
+            <button className={inspectorTab === "result" ? "is-active" : ""} type="button" onClick={() => setInspectorTab(workspaceId, "result")}>
               译文
             </button>
-            <button className={inspectorTab === "history" ? "is-active" : ""} type="button" onClick={() => setInspectorTab("history")}>
+            <button className={inspectorTab === "history" ? "is-active" : ""} type="button" onClick={() => setInspectorTab(workspaceId, "history")}>
               历史
             </button>
           </div>
@@ -394,7 +380,7 @@ export function TranslatorPage() {
             <div className="v35-inspector-section">
               <label className="v35-field">
                 <span>Model</span>
-                <select className="v35-input" value={selectedModelKey} onChange={(event) => setSelectedModelKey(event.target.value)}>
+                <select className="v35-input" value={selectedModelKey} onChange={(event) => setSelectedModelKey(workspaceId, event.target.value)}>
                   {modelOptions.map((entry) => (
                     <option key={`${entry.provider}::${entry.model}`} value={`${entry.provider}::${entry.model}`}>
                       {entry.provider} · {entry.model}
@@ -409,14 +395,14 @@ export function TranslatorPage() {
                   <button
                     className={`v35-mode-btn ${translateMode === "full" ? "is-active" : ""}`}
                     type="button"
-                    onClick={() => setTranslateMode("full")}
+                    onClick={() => setTranslateMode(workspaceId, "full")}
                   >
                     完整
                   </button>
                   <button
                     className={`v35-mode-btn ${translateMode === "compact" ? "is-active" : ""}`}
                     type="button"
-                    onClick={() => setTranslateMode("compact")}
+                    onClick={() => setTranslateMode(workspaceId, "compact")}
                   >
                     精简
                   </button>
@@ -433,7 +419,7 @@ export function TranslatorPage() {
                       className="v35-textarea v35-source-textarea"
                       value={sourceText}
                       onChange={(event) => {
-                        setSourceText(event.target.value);
+                        setSourceText(workspaceId, event.target.value);
                         lastAutoSourceRef.current = "";
                       }}
                       onMouseUp={handleTextareaMouseUp}
@@ -448,14 +434,13 @@ export function TranslatorPage() {
                      <button className="v35-button" type="button" disabled={!isTranslating} onClick={() => void cancelActiveTranslation()}>
                        取消
                      </button>
-                    <button className="v35-button" type="button" disabled={!sourceText} onClick={() => { setSourceText(""); lastAutoSourceRef.current = ""; }}>
+                    <button className="v35-button" type="button" disabled={!sourceText} onClick={() => { setSourceText(workspaceId, ""); lastAutoSourceRef.current = ""; }}>
                       清空
                     </button>
                   </div>
                 </>
               ) : null}
 
-              {sourceStats.chars > 0 && sourceStats.chars < 40 ? <p className="v35-error">选区至少 40 字</p> : null}
               {translateMutation.isError ? (
                 <p className="v35-error">{translateMutation.error instanceof Error ? translateMutation.error.message : "翻译失败"}</p>
               ) : null}
@@ -502,8 +487,8 @@ export function TranslatorPage() {
                         className="v35-button"
                         type="button"
                         onClick={() => {
-                          setSourceText(item.source_text);
-                          setLatestResult({
+                          setSourceText(workspaceId, item.source_text);
+                          setLatestResult(workspaceId, {
                             request_id: item.request_id,
                             document_id: selectedDocumentId,
                             provider: item.provider,
@@ -514,7 +499,7 @@ export function TranslatorPage() {
                             prompt_version: "v1",
                             cached: true,
                           });
-                          setInspectorTab("result");
+                          setInspectorTab(workspaceId, "result");
                         }}
                       >
                         恢复

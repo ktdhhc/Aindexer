@@ -34,6 +34,33 @@ def test_translator_shell_load(server):
                 ]
             ),
         )
+        page.route(
+            "**/api/providers",
+            lambda route: route.fulfill(
+                json=[
+                    {
+                        "provider": "openai",
+                        "base_url": "https://api.openai.com/v1",
+                        "model": "gpt-4.1-mini",
+                        "has_api_key": False,
+                        "api_key_masked": "",
+                        "temperature": 0.1,
+                        "timeout": 120,
+                        "enabled": True,
+                    },
+                    {
+                        "provider": "ollama",
+                        "base_url": "http://localhost:11434/v1",
+                        "model": "hy-mt1.5-1.8b:latest",
+                        "has_api_key": True,
+                        "api_key_masked": "ollama",
+                        "temperature": 0.1,
+                        "timeout": 120,
+                        "enabled": True,
+                    },
+                ]
+            ),
+        )
 
         page.goto(f"{server}/translator/")
 
@@ -57,9 +84,9 @@ def test_translator_shell_load(server):
         expect(page.locator("#saveConfigBtn")).to_be_visible()
         expect(page.locator("#testConfigBtn")).to_be_visible()
 
-        # Check provider selector has both deepseek and gemini
-        expect(page.locator("#configProviderSelect")).to_contain_text("DeepSeek")
-        expect(page.locator("#configProviderSelect")).to_contain_text("Gemini")
+        # Check provider selectors are populated from shared provider config
+        expect(page.locator("#configProviderSelect option")).to_have_count(2)
+        expect(page.locator("#providerSelect option")).to_have_count(2)
 
         # Check refresh button is visible
         expect(page.locator("#refreshDocsBtn")).to_be_visible()

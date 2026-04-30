@@ -1,47 +1,17 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { type ChatSession, useChatStore } from "../app/chatStore";
 import { useWorkspaceStore } from "../app/workspaceStore";
-import { askChatWithSignal, streamChatWithSignal, type ChatContextStats, type ChatMode, type ChatSource } from "../shared/api/chat";
+import { type ChatContextStats, type ChatMode } from "../shared/api/chat";
 import { listFiles, type FileItem } from "../shared/api/files";
 import { listProviders } from "../shared/api/providers";
 import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
+import { renderMarkdownToHtml } from "../features/workbench/utils";
 import {
   buildAvailableProviderModelEntries,
   type ProviderModelEntry,
 } from "../shared/lib/providerModels";
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  createdAt: string;
-  sources?: ChatSource[];
-  contextStats?: ChatContextStats;
-}
-
-interface ChatSession {
-  id: string;
-  title: string;
-  mode: ChatMode;
-  locked: boolean;
-  injectedDocIds: string[];
-  selectedDocIds: string[];
-  createdAt: string;
-  updatedAt: string;
-  lastQuestion: string;
-  messages: ChatMessage[];
-}
-
-type ChatSessionStore = Record<string, ChatSession[]>;
-
-const STORAGE_KEY = "aindexer_v35_chat_sessions";
-const QUICK_PROMPTS = [
-  "这篇文献的核心贡献是什么？",
-  "提取研究方法、数据来源和限制。",
-  "写一段适合综述使用的中文摘要。",
-  "列出后续阅读时应该核对的问题。",
-];
 
 const CHAT_MODES: Array<{ mode: ChatMode; label: string; icon: "scan" | "focus" | "path" }> = [
   { mode: "wide", label: "全景", icon: "scan" },
@@ -49,62 +19,10 @@ const CHAT_MODES: Array<{ mode: ChatMode; label: string; icon: "scan" | "focus" 
   { mode: "agent", label: "探索", icon: "path" },
 ];
 
-function createMessageId(): string {
-  return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function createSessionId(): string {
-  return `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function createMessage(role: ChatMessage["role"], content: string, sources?: ChatSource[], contextStats?: ChatContextStats): ChatMessage {
-  return {
-    id: createMessageId(),
-    role,
-    content,
-    sources,
-    contextStats,
-    createdAt: new Date().toISOString(),
-  };
-}
-
-function createEmptySession(mode: ChatMode = "deep"): ChatSession {
-  const now = new Date().toISOString();
-  return {
-    id: createSessionId(),
-    title: "新会话",
-    mode,
-    locked: false,
-    injectedDocIds: [],
-    selectedDocIds: [],
-    createdAt: now,
-    updatedAt: now,
-    lastQuestion: "",
-    messages: [],
-  };
-}
+const THREAD_BOTTOM_THRESHOLD = 24;
 
 function modeLabel(mode: ChatMode): string {
   return CHAT_MODES.find((item) => item.mode === mode)?.label ?? "精读";
-}
-
-function normalizeSession(raw: ChatSession): ChatSession {
-  const mode = raw.mode && ["wide", "deep", "agent"].includes(raw.mode) ? raw.mode : "deep";
-  const injectedDocIds = Array.isArray((raw as ChatSession & { injectedDocIds?: string[] }).injectedDocIds)
-    ? (raw as ChatSession & { injectedDocIds?: string[] }).injectedDocIds ?? []
-    : Array.isArray(raw.selectedDocIds)
-      ? raw.selectedDocIds
-      : [];
-  return {
-    ...raw,
-    mode,
-    locked: Boolean(raw.locked || raw.messages?.some((message) => message.role === "user" || message.role === "assistant")),
-    injectedDocIds,
-    selectedDocIds: Array.isArray((raw as ChatSession & { injectedDocIds?: string[] }).injectedDocIds)
-      ? (Array.isArray(raw.selectedDocIds) ? raw.selectedDocIds : [])
-      : [],
-    messages: Array.isArray(raw.messages) ? raw.messages : [],
-  };
 }
 
 function ModeIcon({ icon }: { icon: "scan" | "focus" | "path" }) {
@@ -145,47 +63,38 @@ function parseModelKey(value: string): ProviderModelEntry | null {
   return provider ? { provider, model } : null;
 }
 
-function buildSessionTitle(question: string): string {
-  const normalized = question.replace(/\s+/g, " ").trim();
-  if (!normalized) return "新会话";
-  return normalized.length > 24 ? `${normalized.slice(0, 24)}...` : normalized;
-}
-
-function readSessionStore(): ChatSessionStore {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as ChatSessionStore;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeSessionStore(store: ChatSessionStore): void {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
-  } catch {
-    // ignore storage failures
-  }
+function isThreadNearBottom(node: HTMLDivElement): boolean {
+  return node.scrollHeight - node.scrollTop - node.clientHeight <= THREAD_BOTTOM_THRESHOLD;
 }
 
 export function ChatPage() {
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
+  const ensureWorkspace = useChatStore((state) => state.ensureWorkspace);
+  const sessions = useChatStore((state) => state.sessionsByWorkspace[workspaceId] ?? []);
+  const activeSessionId = useChatStore((state) => state.activeSessionIds[workspaceId] ?? "");
+  const isSending = useChatStore((state) => Boolean(state.sendingByWorkspace[workspaceId]));
+  const statusMessage = useChatStore((state) => state.statusByWorkspace[workspaceId] ?? "Ready");
+  const setActiveSessionId = useChatStore((state) => state.setActiveSessionId);
+  const createChatSession = useChatStore((state) => state.createSession);
+  const deleteChatSession = useChatStore((state) => state.deleteSession);
+  const renameSession = useChatStore((state) => state.renameSession);
+  const changeMode = useChatStore((state) => state.changeMode);
+  const toggleSource = useChatStore((state) => state.toggleSource);
+  const addSource = useChatStore((state) => state.addSource);
+  const submitChatQuestion = useChatStore((state) => state.submitQuestion);
+  const stopChatGeneration = useChatStore((state) => state.stopGeneration);
   const [selectedModelKey, setSelectedModelKey] = useState("");
   const [question, setQuestion] = useState("");
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState("");
-  const [loadedWorkspaceId, setLoadedWorkspaceId] = useState("");
-  const [isSending, setIsSending] = useState(false);
-  const [statusMessage, setStatusMessage] = useState("Ready");
   const [sourceSearch, setSourceSearch] = useState("");
   const [editingSessionId, setEditingSessionId] = useState("");
   const [editingSessionTitle, setEditingSessionTitle] = useState("");
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
 
   const threadRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const activeControllerRef = useRef<AbortController | null>(null);
+  const messageRefs = useRef<Record<string, HTMLElement | null>>({});
+  const autoFollowEnabledRef = useRef(true);
+  const resumeSmoothUntilRef = useRef(0);
 
   const providersQuery = useQuery({
     queryKey: ["providers"],
@@ -250,6 +159,23 @@ export function ChatPage() {
       return !term || corpus.includes(term);
     });
   }, [indexedFiles, mentionState]);
+  const timelineEntries = useMemo(() => {
+    let turn = 0;
+    return activeMessages.flatMap((message) => {
+      if (message.role !== "user") return [];
+      turn += 1;
+      const summary = message.content.replace(/\s+/g, " ").trim();
+      return [{
+        id: message.id,
+        turn,
+        summary: summary.length > 28 ? `${summary.slice(0, 28)}...` : summary || `第 ${turn} 轮`,
+      }];
+    });
+  }, [activeMessages]);
+
+  useEffect(() => {
+    ensureWorkspace(workspaceId);
+  }, [ensureWorkspace, workspaceId]);
 
   useEffect(() => {
     if (modelOptions.length === 0) {
@@ -266,86 +192,58 @@ export function ChatPage() {
   }, [chatDefault, modelOptions, selectedModelKey]);
 
   useEffect(() => {
-    const store = readSessionStore();
-    const nextSessions = (store[workspaceId] ?? []).map(normalizeSession).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    if (nextSessions.length === 0) {
-      const initial = createEmptySession();
-      setSessions([initial]);
-      setActiveSessionId(initial.id);
-      setLoadedWorkspaceId(workspaceId);
-      return;
-    }
-    setSessions(nextSessions);
-    setActiveSessionId((current) => (nextSessions.some((session) => session.id === current) ? current : nextSessions[0].id));
-    setLoadedWorkspaceId(workspaceId);
-  }, [workspaceId]);
+    const node = threadRef.current;
+    if (!node) return;
 
-  useEffect(() => {
-    if (loadedWorkspaceId !== workspaceId) return;
-    if (sessions.length === 0) return;
-    const store = readSessionStore();
-    store[workspaceId] = sessions;
-    writeSessionStore(store);
-  }, [loadedWorkspaceId, sessions, workspaceId]);
+    const syncScrollState = () => {
+      const nearBottom = isThreadNearBottom(node);
+      if (nearBottom) {
+        autoFollowEnabledRef.current = true;
+        setShowJumpToBottom(false);
+        return;
+      }
+      if (performance.now() < resumeSmoothUntilRef.current && autoFollowEnabledRef.current) {
+        setShowJumpToBottom(false);
+        return;
+      }
+      autoFollowEnabledRef.current = false;
+      setShowJumpToBottom(true);
+    };
+
+    node.addEventListener("scroll", syncScrollState, { passive: true });
+    syncScrollState();
+    return () => {
+      node.removeEventListener("scroll", syncScrollState);
+    };
+  }, [activeSessionId]);
 
   useEffect(() => {
     const node = threadRef.current;
     if (!node) return;
-    node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
-  }, [activeMessages, isSending, activeSessionId]);
-
-  function updateActiveSession(updater: (session: ChatSession) => ChatSession) {
-    setSessions((current) => {
-      const target = current.find((session) => session.id === activeSessionId);
-      if (!target) return current;
-      const nextSession = updater(target);
-      const nextSessions = current
-        .map((session) => (session.id === activeSessionId ? nextSession : session))
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-      return nextSessions;
+    autoFollowEnabledRef.current = true;
+    setShowJumpToBottom(false);
+    resumeSmoothUntilRef.current = 0;
+    requestAnimationFrame(() => {
+      node.scrollTo({ top: node.scrollHeight, behavior: "auto" });
     });
-  }
+  }, [activeSessionId]);
 
-  function changeMode(mode: ChatMode) {
-    if (!activeSession || activeSession.locked || isSending) return;
-    updateActiveSession((session) => ({
-      ...session,
-      mode,
-      updatedAt: new Date().toISOString(),
-    }));
-  }
-
-  function toggleSource(docId: string) {
-    if (!activeSession || isSending) return;
-    updateActiveSession((session) => {
-      if (session.injectedDocIds.includes(docId)) {
-        return session;
+  useEffect(() => {
+    const node = threadRef.current;
+    if (!node) return;
+    requestAnimationFrame(() => {
+      if (autoFollowEnabledRef.current) {
+        const behavior = performance.now() < resumeSmoothUntilRef.current ? "smooth" : "auto";
+        node.scrollTo({ top: node.scrollHeight, behavior });
+        setShowJumpToBottom(false);
+        return;
       }
-      const exists = session.selectedDocIds.includes(docId);
-      return {
-        ...session,
-        selectedDocIds: exists
-          ? session.selectedDocIds.filter((item) => item !== docId)
-          : [...session.selectedDocIds, docId],
-        updatedAt: new Date().toISOString(),
-      };
+      setShowJumpToBottom(!isThreadNearBottom(node));
     });
-  }
-
-  function addSource(docId: string) {
-    if (!activeSession || isSending) return;
-    updateActiveSession((session) => ({
-      ...session,
-      selectedDocIds:
-        session.injectedDocIds.includes(docId) || session.selectedDocIds.includes(docId)
-          ? session.selectedDocIds
-          : [...session.selectedDocIds, docId],
-      updatedAt: new Date().toISOString(),
-    }));
-  }
+  }, [activeMessages, isSending]);
 
   function selectMentionSource(file: FileItem) {
-    addSource(file.id);
+    addSource(workspaceId, file.id);
     const atIndex = question.lastIndexOf("@");
     if (atIndex >= 0) {
       setQuestion(`${question.slice(0, atIndex)}${question.slice(atIndex).replace(/^@\S*/, "")}`.replace(/\s{2,}/g, " "));
@@ -361,11 +259,7 @@ export function ChatPage() {
   function commitRenameSession(sessionId = editingSessionId) {
     const nextTitle = editingSessionTitle.trim();
     if (!sessionId) return;
-    setSessions((current) => current.map((session) => (
-      session.id === sessionId
-        ? { ...session, title: nextTitle || session.title, updatedAt: new Date().toISOString() }
-        : session
-    )));
+    renameSession(workspaceId, sessionId, nextTitle);
     setEditingSessionId("");
     setEditingSessionTitle("");
   }
@@ -375,159 +269,33 @@ export function ChatPage() {
     setEditingSessionTitle("");
   }
 
+  function jumpToMessage(messageId: string) {
+    const container = threadRef.current;
+    const node = messageRefs.current[messageId];
+    if (!container || !node) return;
+    const containerRect = container.getBoundingClientRect();
+    const nodeRect = node.getBoundingClientRect();
+    const top = container.scrollTop + (nodeRect.top - containerRect.top) - 18;
+    container.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  }
+
+  function jumpToBottom() {
+    const node = threadRef.current;
+    if (!node) return;
+    autoFollowEnabledRef.current = true;
+    setShowJumpToBottom(false);
+    resumeSmoothUntilRef.current = performance.now() + 420;
+    node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
+  }
+
   async function submitQuestion(input = question) {
-    const trimmedQuestion = input.trim();
-    const entry = selectedModelEntry;
-    const currentSessionId = activeSessionId;
-    const currentMode = activeMode;
-    const currentDocIds = currentContextDocIds;
-    const newlySelectedDocIds = selectedDocIds;
-    if (!trimmedQuestion || isSending || !currentSessionId) return;
-    if (!entry?.provider) {
-      updateActiveSession((session) => ({
-        ...session,
-        updatedAt: new Date().toISOString(),
-        messages: [...session.messages, createMessage("system", "没有可用模型，请先在配置页完成 Provider 设置。")],
-      }));
-      setStatusMessage("No model");
-      return;
-    }
-    if (currentMode === "deep" && currentDocIds.length === 0) {
-      updateActiveSession((session) => ({
-        ...session,
-        updatedAt: new Date().toISOString(),
-        messages: [...session.messages, createMessage("system", "精读模式需要先选择至少一篇文献。")],
-      }));
-      setStatusMessage("Select source");
-      return;
-    }
-
-    activeControllerRef.current?.abort();
-    const controller = new AbortController();
-    activeControllerRef.current = controller;
-
-    updateActiveSession((session) => ({
-      ...session,
-      title: session.messages.length === 0 ? buildSessionTitle(trimmedQuestion) : session.title,
-      locked: true,
-      updatedAt: new Date().toISOString(),
-      lastQuestion: trimmedQuestion,
-      messages: [...session.messages, createMessage("user", trimmedQuestion)],
-    }));
     setQuestion("");
-    setIsSending(true);
-    setStatusMessage(modeLabel(currentMode));
-
-    try {
-      const payload = {
-        question: trimmedQuestion,
-        provider: entry.provider,
-        model: entry.model || null,
-          workspace_id: workspaceId,
-          mode: currentMode,
-          doc_ids: currentDocIds,
-        session_id: currentSessionId,
-      };
-      const assistantMessageId = createMessageId();
-      let streamStarted = false;
-      try {
-        await streamChatWithSignal(
-          payload,
-          (event) => {
-            if (event.type === "meta") {
-              streamStarted = true;
-              const message: ChatMessage = {
-                id: assistantMessageId,
-                role: "assistant",
-                content: "",
-                sources: event.sources,
-                contextStats: event.context_stats,
-                createdAt: new Date().toISOString(),
-              };
-              setSessions((current) => current.map((session) => {
-                if (session.id !== currentSessionId) return session;
-                if (session.messages.some((item) => item.id === assistantMessageId)) return session;
-                return {
-                  ...session,
-                  injectedDocIds: [...new Set([...session.injectedDocIds, ...newlySelectedDocIds])],
-                  selectedDocIds: session.id === currentSessionId ? [] : session.selectedDocIds,
-                  updatedAt: new Date().toISOString(),
-                  messages: [...session.messages, message],
-                };
-              }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
-              return;
-            }
-            if (event.type === "delta") {
-              streamStarted = true;
-              setSessions((current) => current.map((session) => {
-                if (session.id !== currentSessionId) return session;
-                return {
-                  ...session,
-                  updatedAt: new Date().toISOString(),
-                  messages: session.messages.map((message) => (
-                    message.id === assistantMessageId
-                      ? { ...message, content: `${message.content}${event.text}` }
-                      : message
-                  )),
-                };
-              }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
-            }
-          },
-          controller.signal,
-        );
-        if (controller.signal.aborted) return;
-        setStatusMessage("Ready");
-        return;
-      } catch (streamError) {
-        if (controller.signal.aborted) return;
-        if (streamStarted) {
-          throw streamError;
-        }
-      }
-
-      const response = await askChatWithSignal(payload, controller.signal);
-      if (controller.signal.aborted) return;
-      setSessions((current) => {
-        const nextSessions = current
-          .map((session) => {
-            if (session.id !== currentSessionId) return session;
-            return {
-              ...session,
-              injectedDocIds: [...new Set([...session.injectedDocIds, ...newlySelectedDocIds])],
-              selectedDocIds: [],
-              updatedAt: new Date().toISOString(),
-              messages: [
-                ...session.messages,
-                createMessage("assistant", response.answer, response.sources, response.context_stats),
-              ],
-            };
-          })
-          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-        return nextSessions;
-      });
-      setStatusMessage("Ready");
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      setSessions((current) => {
-        const nextSessions = current
-          .map((session) => {
-            if (session.id !== currentSessionId) return session;
-            return {
-              ...session,
-              updatedAt: new Date().toISOString(),
-              messages: [...session.messages, createMessage("system", error instanceof Error ? error.message : "Chat 请求失败")],
-            };
-          })
-          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-        return nextSessions;
-      });
-      setStatusMessage("Error");
-    } finally {
-      if (activeControllerRef.current === controller) {
-        activeControllerRef.current = null;
-        setIsSending(false);
-      }
-    }
+    await submitChatQuestion({
+      workspaceId,
+      question: input,
+      selectedModelEntry,
+      indexedFiles,
+    });
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -542,41 +310,17 @@ export function ChatPage() {
   }
 
   function stopGeneration() {
-    activeControllerRef.current?.abort();
-    activeControllerRef.current = null;
-    setIsSending(false);
-    setStatusMessage("Stopped");
-  }
-
-  function usePrompt(prompt: string) {
-    setQuestion(prompt);
-    textareaRef.current?.focus();
+    stopChatGeneration(workspaceId);
   }
 
   function createSession() {
-    const next = createEmptySession(activeMode);
-    setSessions((current) => [next, ...current]);
-    setActiveSessionId(next.id);
+    createChatSession(workspaceId, activeMode);
     setQuestion("");
-    setStatusMessage("Ready");
     textareaRef.current?.focus();
   }
 
   function deleteSession(sessionId: string) {
-    if (isSending && sessionId === activeSessionId) {
-      stopGeneration();
-    }
-    const nextSessions = sessions.filter((session) => session.id !== sessionId);
-    if (nextSessions.length === 0) {
-      const fallback = createEmptySession();
-      setSessions([fallback]);
-      setActiveSessionId(fallback.id);
-      return;
-    }
-    setSessions(nextSessions);
-    if (sessionId === activeSessionId) {
-      setActiveSessionId(nextSessions[0].id);
-    }
+    deleteChatSession(workspaceId, sessionId);
   }
 
   const canSend = Boolean(
@@ -609,7 +353,7 @@ export function ChatPage() {
                 key={item.mode}
                 type="button"
                 disabled={Boolean(activeSession?.locked) || isSending}
-                onClick={() => changeMode(item.mode)}
+                  onClick={() => changeMode(workspaceId, item.mode)}
                 title={activeSession?.locked ? "当前会话已锁定模式" : item.label}
               >
                 <ModeIcon icon={item.icon} />
@@ -623,17 +367,20 @@ export function ChatPage() {
               <div className="v35-chat-empty">
                 <span>Aindexer</span>
                 <h2>向当前工作区提问</h2>
-                <p>{activeMode === "deep" ? "选择文献后开始精读。" : activeMode === "wide" ? "横向查看工作区索引。" : "让系统先找材料再回答。"}</p>
               </div>
             ) : null}
 
             {activeMessages.map((message) => (
-              <article className={`v35-chat-turn role-${message.role}`} key={message.id}>
+              <article className={`v35-chat-turn role-${message.role}`} key={message.id} ref={(node) => { messageRefs.current[message.id] = node; }}>
                 <header>
                   <span>{message.role === "user" ? "You" : message.role === "assistant" ? "Assistant" : "System"}</span>
                   <time>{formatTime(message.createdAt)}</time>
                 </header>
-                <p>{message.content}</p>
+                {message.role === "assistant" ? (
+                  <div className="v35-chat-markdown" dangerouslySetInnerHTML={{ __html: renderMarkdownToHtml(message.content) }} />
+                ) : (
+                  <p>{message.content}</p>
+                )}
                 <footer>
                   {(message.sources ?? []).map((source) => (
                     <button
@@ -643,7 +390,7 @@ export function ChatPage() {
                       title={source.doc_id}
                       onClick={() => void navigator.clipboard?.writeText(source.doc_id)}
                     >
-                      {source.display_name}
+                      {source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}
                     </button>
                   ))}
                   {message.contextStats ? <span className="v35-chat-context-stat">{formatCompression(message.contextStats)}</span> : null}
@@ -670,11 +417,39 @@ export function ChatPage() {
             ) : null}
           </div>
 
+          {timelineEntries.length > 0 ? (
+            <aside className="v35-chat-timeline" aria-label="Timeline">
+              {timelineEntries.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  data-summary={entry.summary}
+                  onClick={() => jumpToMessage(entry.id)}
+                >
+                  <span>{String(entry.turn).padStart(2, "0")}</span>
+                </button>
+              ))}
+            </aside>
+          ) : null}
+
           <form className="v35-chat-composer" onSubmit={handleSubmit}>
+            {showJumpToBottom ? (
+              <button
+                className="v35-icon-button v35-chat-jump-bottom"
+                type="button"
+                aria-label={isSending ? "回到底部并恢复跟随" : "回到底部"}
+                title={isSending ? "回到底部并恢复跟随" : "回到底部"}
+                onClick={jumpToBottom}
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M8 3v10M4.5 9.5 8 13l3.5-3.5" />
+                </svg>
+              </button>
+            ) : null}
             {activeMode === "deep" && selectedSourceFiles.length > 0 ? (
               <div className="v35-chat-selected-sources">
                 {selectedSourceFiles.map((item) => (
-                  <button key={item.id} type="button" disabled={isSending} onClick={() => toggleSource(item.id)}>
+                  <button key={item.id} type="button" disabled={isSending} onClick={() => toggleSource(workspaceId, item.id)}>
                     {item.display_name || item.filename}
                   </button>
                 ))}
@@ -685,7 +460,7 @@ export function ChatPage() {
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
               onKeyDown={handleComposerKeyDown}
-              placeholder="输入问题，Enter 发送，Shift + Enter 换行"
+              placeholder="输入问题"
             />
             {mentionState.active && mentionCandidates.length > 0 ? (
               <div className="v35-chat-mention-popover">
@@ -751,7 +526,7 @@ export function ChatPage() {
                       }}
                     />
                   ) : (
-                    <button type="button" onClick={() => setActiveSessionId(session.id)} onDoubleClick={() => startRenameSession(session)}>
+                    <button type="button" onClick={() => setActiveSessionId(workspaceId, session.id)} onDoubleClick={() => startRenameSession(session)}>
                       <strong>{session.title}</strong>
                       <span>{modeLabel(session.mode)} · {formatSessionTime(session.updatedAt)} · {session.messages.filter((message) => message.role !== "system").length} turns</span>
                     </button>
@@ -785,7 +560,7 @@ export function ChatPage() {
                       key={item.id}
                       type="button"
                       disabled={isSending || injectedDocIds.includes(item.id)}
-                      onClick={() => toggleSource(item.id)}
+                      onClick={() => toggleSource(workspaceId, item.id)}
                     >
                       <strong>{item.display_name || item.filename}</strong>
                       <span>{injectedDocIds.includes(item.id) ? "已注入" : selectedDocIds.includes(item.id) ? "当前选择" : item.file_type}</span>
@@ -795,19 +570,8 @@ export function ChatPage() {
                 </div>
               </>
             ) : (
-              <p className="v35-muted">{activeMode === "wide" ? "使用工作区内的已索引文献。" : "系统会按问题读取候选文献。"}</p>
+              null
             )}
-          </section>
-
-          <section className="v35-chat-side-section">
-            <h2 className="v35-section-title">Prompt</h2>
-            <div className="v35-chat-prompt-list">
-              {QUICK_PROMPTS.map((prompt) => (
-                <button key={prompt} type="button" onClick={() => usePrompt(prompt)}>
-                  {prompt}
-                </button>
-              ))}
-            </div>
           </section>
         </aside>
       </div>

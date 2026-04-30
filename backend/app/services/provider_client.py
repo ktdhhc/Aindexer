@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from ..provider_registry import resolve_model_name_registry_entry
 from .prompt_store import get_required_prompt
 
 
@@ -153,7 +154,7 @@ class ProviderClient:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": _effective_temperature(config.model, config.temperature),
-            "max_tokens": 1800,
+            "max_tokens": _chat_max_tokens(config.model),
             "stream": True,
         }
         url = config.base_url.rstrip("/") + "/chat/completions"
@@ -179,6 +180,7 @@ class ProviderClient:
         system_prompt: str,
         user_prompt: str,
         should_cancel: Callable[[], bool] | None = None,
+        on_finish: Callable[[str | None], None] | None = None,
     ) -> Iterator[str]:
         payload = {
             "model": config.model,
@@ -187,7 +189,7 @@ class ProviderClient:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": _effective_temperature(config.model, config.temperature),
-            "max_tokens": 1800,
+            "max_tokens": _chat_max_tokens(config.model),
             "stream": True,
         }
         url = config.base_url.rstrip("/") + "/chat/completions"
@@ -202,6 +204,7 @@ class ProviderClient:
                 payload=payload,
                 timeout=config.timeout,
                 should_cancel=should_cancel,
+                on_finish=on_finish,
             )
         except UnicodeError as exc:
             raise RuntimeError(_format_url_error(config.base_url, exc)) from exc
@@ -344,6 +347,7 @@ def stream_chat_completion_chunks(
     payload: dict,
     timeout: int,
     should_cancel: Callable[[], bool] | None = None,
+    on_finish: Callable[[str | None], None] | None = None,
 ) -> Iterator[str]:
     timeout_cfg = httpx.Timeout(
         connect=min(timeout, 30), read=None, write=timeout, pool=timeout
@@ -358,6 +362,7 @@ def stream_chat_completion_chunks(
 
             raw_lines: list[str] = []
             yielded = False
+            finish_reason: str | None = None
             for line in resp.iter_lines():
                 if should_cancel and should_cancel():
                     raise RuntimeError("cancelled by user during stream")
@@ -381,12 +386,15 @@ def stream_chat_completion_chunks(
                     err_code = chunk_error.get("code", "")
                     raise RuntimeError(f"LLM stream error code={err_code}: {err_msg}")
 
+                finish_reason = _extract_stream_finish_reason(chunk) or finish_reason
                 delta_text = _extract_stream_delta_text(chunk)
                 if delta_text:
                     yielded = True
                     yield delta_text
 
             if yielded:
+                if on_finish:
+                    on_finish(finish_reason)
                 return
 
             if raw_lines:
@@ -399,6 +407,8 @@ def stream_chat_completion_chunks(
                     if isinstance(body, dict):
                         text = _extract_assistant_text(body)
                         if text:
+                            if on_finish:
+                                on_finish(_extract_body_finish_reason(body))
                             yield text
                             return
 
@@ -560,3 +570,17 @@ def _effective_max_tokens(model: str, default: int) -> int:
     if "reasoner" in m:
         return max(default * 2, 4096)
     return default
+
+
+def _chat_max_tokens(model: str) -> int:
+    base = _effective_max_tokens(model, 8196)
+    resolved = resolve_model_name_registry_entry(model)
+    if not resolved:
+        return base
+    try:
+        max_output = int(resolved.get("max_output_tokens") or 0)
+    except (TypeError, ValueError):
+        max_output = 0
+    if max_output > 0:
+        return min(base, max_output)
+    return base

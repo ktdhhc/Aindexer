@@ -15,7 +15,7 @@ from .base import (
     TranslationProviderResult,
 )
 
-GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 1200
+GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 8192
 OPENROUTER_HOST = "openrouter.ai"
 
 

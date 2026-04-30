@@ -10,9 +10,16 @@ export interface ChatAskPayload {
 export type ChatMode = "wide" | "deep" | "agent";
 
 export interface ChatSource {
+  source_id?: string;
   doc_id: string;
   display_name: string;
   title?: string;
+}
+
+export interface ChatHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+  sources?: ChatSource[];
 }
 
 export interface ChatContextStats {
@@ -28,6 +35,8 @@ export interface ChatContextStats {
 export interface ChatAskV1Payload extends ChatAskPayload {
   mode: ChatMode;
   doc_ids?: string[];
+  messages?: ChatHistoryMessage[];
+  source_map?: Record<string, string>;
   session_id?: string;
 }
 
@@ -47,7 +56,7 @@ export interface ChatAnswerV1 {
 export type ChatStreamEvent =
   | { type: "meta"; mode: ChatMode; sources: ChatSource[]; context_stats: ChatContextStats }
   | { type: "delta"; text: string }
-  | { type: "done" }
+  | { type: "done"; finish_reason?: string | null }
   | { type: "error"; message: string };
 
 export function askChatV0(payload: ChatAskPayload): Promise<ChatAnswer> {
@@ -94,7 +103,10 @@ export async function streamChatWithSignal(
   let buffer = "";
   while (true) {
     const { value, done } = await reader.read();
-    if (done) break;
+    if (done) {
+      buffer += decoder.decode();
+      break;
+    }
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";

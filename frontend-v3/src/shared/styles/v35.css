@@ -805,6 +805,7 @@ body {
 }
 
 .v35-chat-paper {
+  position: relative;
   min-height: 0;
   height: var(--v35-pane-height);
   display: grid;
@@ -864,10 +865,108 @@ body {
 .v35-chat-thread {
   min-height: 0;
   overflow: auto;
-  padding: 30px clamp(18px, 4vw, 52px) 24px;
+  padding: 30px clamp(48px, 7vw, 84px) 24px clamp(18px, 4vw, 52px);
   display: grid;
   align-content: start;
   gap: 18px;
+}
+
+.v35-chat-jump-bottom {
+  position: absolute;
+  left: 50%;
+  top: -18px;
+  transform: translateX(-50%);
+  z-index: 3;
+  width: 36px;
+  height: 36px;
+  border-color: rgba(166, 95, 43, 0.18);
+  background: rgba(255, 252, 243, 0.94);
+  box-shadow: 0 10px 24px rgba(63, 42, 27, 0.08);
+}
+
+.v35-chat-jump-bottom:hover:not(:disabled) {
+  background: #fff7e9;
+}
+
+.v35-chat-timeline {
+  position: absolute;
+  top: 74px;
+  right: 10px;
+  bottom: 112px;
+  width: 28px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.v35-chat-timeline button {
+  position: relative;
+  width: 28px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--v35-text-muted);
+  cursor: pointer;
+  pointer-events: auto;
+  font-family: "JetBrains Mono", "SF Mono", monospace;
+  font-size: 10px;
+}
+
+.v35-chat-timeline button::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 50%;
+  height: 1px;
+  background: rgba(166, 95, 43, 0.24);
+  transform: translateY(-50%);
+}
+
+.v35-chat-timeline button span {
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+  padding: 0 3px;
+  background: var(--v35-bg-surface);
+}
+
+.v35-chat-timeline button::after {
+  content: attr(data-summary);
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 140px;
+  max-width: 220px;
+  border: 1px solid rgba(166, 95, 43, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 252, 243, 0.96);
+  color: var(--v35-text-primary);
+  box-shadow: 0 10px 24px rgba(63, 42, 27, 0.1);
+  padding: 6px 8px;
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  white-space: normal;
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.v35-chat-timeline button:hover,
+.v35-chat-timeline button:focus-visible {
+  color: var(--v35-accent-hover);
+}
+
+.v35-chat-timeline button:hover::before,
+.v35-chat-timeline button:focus-visible::before {
+  background: rgba(166, 95, 43, 0.52);
+}
+
+.v35-chat-timeline button:hover::after,
+.v35-chat-timeline button:focus-visible::after {
+  opacity: 1;
 }
 
 .v35-chat-empty {
@@ -959,6 +1058,96 @@ body {
   font-family: inherit;
   font-size: 14px;
   line-height: 22px;
+}
+
+.v35-chat-markdown {
+  color: var(--v35-text-primary);
+  font-family: "Source Serif 4", "Noto Serif SC", Georgia, serif;
+  font-size: 17px;
+  line-height: 30px;
+}
+
+.v35-chat-markdown > *:first-child {
+  margin-top: 0;
+}
+
+.v35-chat-markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.v35-chat-markdown p,
+.v35-chat-markdown ul,
+.v35-chat-markdown ol,
+.v35-chat-markdown blockquote,
+.v35-chat-markdown pre {
+  margin: 0 0 10px;
+}
+
+.v35-chat-markdown h1,
+.v35-chat-markdown h2,
+.v35-chat-markdown h3,
+.v35-chat-markdown h4,
+.v35-chat-markdown h5,
+.v35-chat-markdown h6 {
+  margin: 14px 0 8px;
+  color: var(--v35-text-primary);
+  line-height: 1.3;
+}
+
+.v35-chat-markdown h1,
+.v35-chat-markdown h2 {
+  font-size: 24px;
+}
+
+.v35-chat-markdown h3 {
+  font-size: 20px;
+}
+
+.v35-chat-markdown h4,
+.v35-chat-markdown h5,
+.v35-chat-markdown h6 {
+  font-size: 17px;
+}
+
+.v35-chat-markdown ul,
+.v35-chat-markdown ol {
+  padding-left: 22px;
+}
+
+.v35-chat-markdown li + li {
+  margin-top: 4px;
+}
+
+.v35-chat-markdown a {
+  color: var(--v35-accent-hover);
+  text-decoration: underline;
+}
+
+.v35-chat-markdown code {
+  padding: 0 4px;
+  border-radius: 6px;
+  background: rgba(166, 95, 43, 0.1);
+  font-family: "JetBrains Mono", "SF Mono", monospace;
+  font-size: 0.86em;
+}
+
+.v35-chat-markdown pre {
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid rgba(36, 28, 22, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 252, 243, 0.78);
+}
+
+.v35-chat-markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.v35-chat-markdown blockquote {
+  padding-left: 14px;
+  border-left: 2px solid rgba(166, 95, 43, 0.26);
+  color: var(--v35-text-secondary);
 }
 
 .v35-chat-turn footer {

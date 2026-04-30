@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from importlib import import_module
+from urllib.parse import urlparse
 
 from .cancellation import managed_cancel_token
 from ..repository import get_provider_config_raw
@@ -20,7 +21,7 @@ from .schemas import TranslationRequestIn, TranslationResponseOut
 translation_repository = import_module("app.translation.repository")
 
 TRANSLATION_TEMPERATURE = 0.1
-MIN_TRANSLATION_SELECTION_CHARS = 40
+MIN_TRANSLATION_SELECTION_CHARS = 0
 TRANSLATION_SYSTEM_PROMPT = get_prompt(
     "translation_system_prompt.txt",
     "You are a precise academic translation assistant. Translate the selected passage into Simplified Chinese. Preserve meaning, terminology, citations, formulas, and tone. Output plain translated text only.",
@@ -329,22 +330,31 @@ def _run_provider_translation(
     request: TranslationProviderRequest,
     should_cancel=None,
 ) -> TranslationProviderResult:
-    if resolved.provider == "deepseek":
-        deepseek_provider = import_module("app.translation.providers.deepseek")
-        return deepseek_provider.translate_with_deepseek(
-            resolved, request, should_cancel=should_cancel
-        )
-    if resolved.provider == "gemini":
+    if _uses_native_gemini_translation_api(resolved):
         gemini_provider = import_module("app.translation.providers.gemini")
         return gemini_provider.translate_with_gemini(
             resolved, request, should_cancel=should_cancel
         )
-    raise TranslationProviderError(
-        kind=TranslationProviderErrorKind.NOT_CONFIGURED,
-        message=f"Unsupported translation provider: {resolved.provider}",
-        provider=resolved.provider,
-        model=resolved.model,
+    openai_compatible_provider = import_module(
+        "app.translation.providers.openai_compatible"
     )
+    return openai_compatible_provider.translate_with_openai_compatible(
+        resolved,
+        request,
+        should_cancel=should_cancel,
+    )
+
+
+def _uses_native_gemini_translation_api(
+    resolved: ResolvedTranslationProviderConfig,
+) -> bool:
+    if str(resolved.provider or "").strip().lower() != "gemini":
+        return False
+    base_url = str(resolved.base_url or "").strip().lower()
+    if not base_url:
+        return False
+    host = (urlparse(base_url).hostname or "").strip().lower()
+    return host == "generativelanguage.googleapis.com" or ":generatecontent" in base_url
 
 
 def _usage_int(usage: dict | None, key: str) -> int | None:

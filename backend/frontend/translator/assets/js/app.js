@@ -1,10 +1,9 @@
 import { 
   fetchDocuments, 
   uploadDocument,
-  fetchTranslatorProviders,
-  fetchTranslatorProviderConfig,
-  updateTranslatorProviderConfig,
-  testTranslatorProviderConfig
+  fetchProviders,
+  updateProviderConfig,
+  testProviderConfig
 } from './api.js';
 import { loadDocument, refreshDocumentList } from './viewer.js';
 import { initSearch } from './search.js';
@@ -18,6 +17,7 @@ const els = {
   uploadBtn: document.getElementById('uploadBtn'),
   uploadStatus: document.getElementById('uploadStatus'),
   configProviderSelect: document.getElementById('configProviderSelect'),
+  providerSelect: document.getElementById('providerSelect'),
   configBaseUrl: document.getElementById('configBaseUrl'),
   configModel: document.getElementById('configModel'),
   configApiKey: document.getElementById('configApiKey'),
@@ -49,15 +49,45 @@ async function loadDocumentList() {
 
 async function loadProviderConfigs() {
   try {
-    const providers = await fetchTranslatorProviders();
+    const providers = await fetchProviders();
     providerConfigs = {};
     providers.forEach(p => {
       providerConfigs[p.provider] = p;
     });
+    renderProviderSelects(providers);
     updateConfigUI();
   } catch (err) {
     console.error('Failed to load provider configs:', err);
     showConfigMessage('Failed to load provider configs', 'error');
+  }
+}
+
+function renderProviderSelects(providers) {
+  const items = Array.isArray(providers) ? providers.filter((item) => item?.provider) : [];
+  const translatableItems = items.filter((item) => item.enabled && item.model);
+  const currentConfigProvider = els.configProviderSelect.value;
+  const currentTranslateProvider = els.providerSelect.value;
+
+  els.configProviderSelect.innerHTML = items.length
+    ? items.map((item) => `<option value="${item.provider}">${item.provider}</option>`).join('')
+    : '<option value="">No providers</option>';
+  els.configProviderSelect.disabled = items.length === 0;
+
+  els.providerSelect.innerHTML = translatableItems.length
+    ? translatableItems.map((item) => `<option value="${item.provider}">${item.provider}</option>`).join('')
+    : '<option value="">No enabled providers</option>';
+  els.providerSelect.disabled = translatableItems.length === 0;
+
+  if (items.some((item) => item.provider === currentConfigProvider)) {
+    els.configProviderSelect.value = currentConfigProvider;
+  } else if (items[0]) {
+    els.configProviderSelect.value = items[0].provider;
+  }
+
+  if (translatableItems.some((item) => item.provider === currentTranslateProvider)) {
+    els.providerSelect.value = currentTranslateProvider;
+  } else if (translatableItems[0]) {
+    els.providerSelect.value = translatableItems[0].provider;
   }
 }
 
@@ -73,7 +103,11 @@ function updateConfigUI() {
     } else {
       els.configApiKeyStatus.classList.add('hidden');
     }
+    return;
   }
+  els.configBaseUrl.value = '';
+  els.configModel.value = '';
+  els.configApiKeyStatus.classList.add('hidden');
 }
 
 async function handleUpload() {
@@ -117,6 +151,10 @@ function showConfigMessage(message, type) {
 
 async function handleSaveConfig() {
   const provider = els.configProviderSelect.value;
+  if (!provider) {
+    showConfigMessage('No provider selected', 'error');
+    return;
+  }
   const config = {
     base_url: els.configBaseUrl.value,
     model: els.configModel.value,
@@ -132,7 +170,7 @@ async function handleSaveConfig() {
   }
   
   try {
-    await updateTranslatorProviderConfig(provider, config);
+    await updateProviderConfig(provider, config);
     showConfigMessage('Configuration saved successfully', 'success');
     els.configApiKey.value = ''; // Clear the input for security
     await loadProviderConfigs(); // Refresh to show masked key
@@ -143,12 +181,16 @@ async function handleSaveConfig() {
 
 async function handleTestConfig() {
   const provider = els.configProviderSelect.value;
+  if (!provider) {
+    showConfigMessage('No provider selected', 'error');
+    return;
+  }
   
   try {
     els.testConfigBtn.disabled = true;
     els.testConfigBtn.innerHTML = '<span class="material-symbols-outlined text-xs animate-spin">sync</span> Testing...';
     
-    const result = await testTranslatorProviderConfig(provider);
+    const result = await testProviderConfig(provider);
     
     if (result.success) {
       showConfigMessage(`Connection successful (${result.elapsed_seconds.toFixed(2)}s)`, 'success');
