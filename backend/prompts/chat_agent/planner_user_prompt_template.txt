@@ -1,0 +1,45 @@
+元数据层：
+{metadata_context}
+
+已读取索引层：
+{index_context}
+
+已读取正文层：
+{paper_context}
+
+对话历史：
+{history}
+
+用户问题：
+{question}
+
+当前轮次：{iteration}/{max_iterations}
+剩余轮次：{remaining_iterations}
+本轮是否包含全量元数据：{metadata_visible}
+正文单次读取上限：{paper_top_k}
+
+已执行步骤：
+{trace}
+
+决策提醒：
+- 如果上下文中没有全量元数据，而你需要在全库重新找文献，你必须返回 read_metadata。
+- 如果你已经知道候选 doc_id，优先 read_index。
+- 如果问题涉及观点、方法、定义、比较、结论、局限、实验或证据，不要只停留在元数据层，优先 read_index。
+- 只有索引不足时才 read_paper。
+- read_index / read_paper 的 doc_ids 不能凭空猜测，必须来自可见元数据或已读取内容。
+- 本轮必须输出合法 `action`，绝不能留空。
+- 如果不确定，优先选择更保守的读取动作，而不是输出空 JSON。
+
+请只输出 JSON：
+{{
+  "action": "answer | read_metadata | read_index | read_paper | not_found",
+  "reason": "一句话说明",
+  "doc_ids": ["doc_id"],
+  "answer": "如果 action 是 answer/not_found，可给出草稿，否则留空",
+  "citations": {{"index": ["I-01"], "paper": ["P-01"]}}
+}}
+
+再次检查：
+- 不要输出 `{{}}`
+- 不要输出 `"action": ""`
+- 不要输出 JSON 之外的任何文字

@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import {
   askChatWithSignal,
+  cancelChatRun,
   type AgentTraceStep,
   normalizeSourceId,
   resolveAssistantCitedSources,
@@ -69,6 +70,7 @@ interface ChatState {
 
 const STORAGE_KEY = "aindexer_v35_chat_sessions";
 const controllers = new Map<string, AbortController>();
+const runIds = new Map<string, string>();
 
 function createMessageId(): string {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -76,6 +78,10 @@ function createMessageId(): string {
 
 function createSessionId(): string {
   return `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createRunId(): string {
+  return `chat_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function createMessage(
@@ -92,6 +98,17 @@ function createMessage(
     sources,
     contextStats,
     agentTrace,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function createAssistantPlaceholder(id: string): ChatMessage {
+  return {
+    id,
+    role: "assistant",
+    content: "",
+    sources: [],
+    agentTrace: [],
     createdAt: new Date().toISOString(),
   };
 }
@@ -266,7 +283,8 @@ function buildSourceSnapshot(docIds: string[], files: FileItem[], sourceMap: Rec
 
 function upsertAgentTraceStep(steps: AgentTraceStep[], nextStep: AgentTraceStep): AgentTraceStep[] {
   const next = [...steps];
-  const index = next.findIndex((step) => step.step === nextStep.step);
+  const nextKey = `${nextStep.step}:${nextStep.iteration ?? ""}`;
+  const index = next.findIndex((step) => `${step.step}:${step.iteration ?? ""}` === nextKey);
   if (index >= 0) {
     next[index] = { ...next[index], ...nextStep };
     return next;
@@ -482,9 +500,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
     ))));
   },
   stopGeneration: (workspaceId) => {
+    const runId = runIds.get(workspaceId) || "";
+    if (runId) {
+      void cancelChatRun(runId);
+      runIds.delete(workspaceId);
+    }
     controllers.get(workspaceId)?.abort();
     controllers.delete(workspaceId);
     set((state) => ({
+      ...updateSessionsForWorkspace(state, workspaceId, (sessions) => sessions.map((session) => {
+        const isActive = session.id === (state.activeSessionIds[workspaceId] || "");
+        if (!isActive) return session;
+        const stoppedStep: AgentTraceStep = { step: "stopped", label: "停止", detail: "已停止", status: "done" };
+        const nextMessages = session.messages.filter((message, index) => {
+          const isLast = index === session.messages.length - 1;
+          if (!isLast || message.role !== "assistant") return true;
+          return Boolean(message.content.trim()) || (message.agentTrace?.length ?? 0) > 0;
+        });
+        return {
+          ...session,
+          agentTrace: session.mode === "agent" ? upsertAgentTraceStep(session.agentTrace, stoppedStep) : session.agentTrace,
+          messages: nextMessages.map((message, index) => (
+            session.mode === "agent" && index === nextMessages.length - 1 && message.role === "assistant"
+              ? { ...message, agentTrace: upsertAgentTraceStep(message.agentTrace ?? [], stoppedStep) }
+              : message
+          )),
+        };
+      })),
       sendingByWorkspace: {
         ...state.sendingByWorkspace,
         [workspaceId]: false,
@@ -550,7 +592,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     controllers.get(workspaceId)?.abort();
     const controller = new AbortController();
+    const runId = createRunId();
+    const assistantMessageId = createMessageId();
     controllers.set(workspaceId, controller);
+    runIds.set(workspaceId, runId);
 
     set((current) => ({
       ...updateSessionsForWorkspace(current, workspaceId, (sessions) => sessions.map((session) => (
@@ -562,7 +607,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
               updatedAt: new Date().toISOString(),
               lastQuestion: trimmedQuestion,
               agentTrace: currentMode === "agent" ? [] : session.agentTrace,
-              messages: [...session.messages, createMessage("user", trimmedQuestion, currentSources)],
+              messages: [
+                ...session.messages,
+                createMessage("user", trimmedQuestion, currentSources),
+                createAssistantPlaceholder(assistantMessageId),
+              ],
             }
           : session
       ))),
@@ -587,14 +636,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: historyMessages,
         source_map: nextSourceMap,
         session_id: currentSessionId,
+        run_id: runId,
       };
-      const assistantMessageId = createMessageId();
       let streamStarted = false;
       try {
         await streamChatWithSignal(
           payload,
           (event) => {
+            if (event.type === "agent_run") {
+              streamStarted = true;
+              runIds.set(workspaceId, event.run_id);
+              return;
+            }
             if (event.type === "agent_step") {
+              streamStarted = true;
               set((current) => ({
                 ...updateSessionsForWorkspace(current, workspaceId, (sessions) => sessions.map((session) => (
                   session.id === currentSessionId
@@ -668,7 +723,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
                       ))
                     : [...session.messages, message],
                 };
-              })));
+                })));
+              set((current) => ({
+                statusByWorkspace: {
+                  ...current.statusByWorkspace,
+                  [workspaceId]: "回答中",
+                },
+              }));
               return;
             }
             if (event.type === "delta") {
@@ -694,27 +755,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     ? {
                         ...session,
                         updatedAt: new Date().toISOString(),
-                        agentTrace: currentMode === "agent"
-                          ? upsertAgentTraceStep(session.agentTrace, {
-                              step: "answer",
-                              label: "汇总回答",
-                              detail: event.finish_reason === "length" ? "output limit" : "done",
-                              status: "done",
-                            })
-                          : session.agentTrace,
-                        messages: session.messages.map((message) => (
-                          message.id === assistantMessageId && currentMode === "agent"
-                            ? {
-                                ...message,
-                                agentTrace: upsertAgentTraceStep(message.agentTrace ?? [], {
-                                  step: "answer",
-                                  label: "汇总回答",
-                                  detail: event.finish_reason === "length" ? "output limit" : "done",
-                                  status: "done",
-                                }),
-                              }
-                            : message
-                        )),
+                        messages: session.messages,
                       }
                     : session
                 ))),
@@ -769,16 +810,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   ? ((response.context_stats.agent_trace as AgentTraceStep[] | undefined) ?? session.agentTrace)
                   : session.agentTrace,
                 updatedAt: new Date().toISOString(),
-                messages: [
-                  ...session.messages,
-                  createMessage(
-                    "assistant",
-                    response.answer,
-                    response.sources,
-                    response.context_stats,
-                    (response.context_stats.agent_trace as AgentTraceStep[] | undefined) ?? undefined,
-                  ),
-                ],
+                messages: session.messages.map((message) => (
+                  message.id === assistantMessageId
+                    ? {
+                        ...message,
+                        content: response.answer,
+                        sources: response.sources,
+                        contextStats: response.context_stats,
+                        agentTrace: (response.context_stats.agent_trace as AgentTraceStep[] | undefined) ?? message.agentTrace,
+                      }
+                    : message
+                )),
               }
             : session
         ))),
@@ -795,7 +837,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ? {
                 ...session,
                 updatedAt: new Date().toISOString(),
-                messages: [...session.messages, createMessage("system", error instanceof Error ? error.message : "Chat 请求失败")],
+                messages: [
+                  ...session.messages.filter((message) => (
+                    message.id !== assistantMessageId || Boolean(message.content.trim()) || (message.agentTrace?.length ?? 0) > 0
+                  )),
+                  createMessage("system", error instanceof Error ? error.message : "Chat 请求失败"),
+                ],
               }
             : session
         ))),
@@ -807,6 +854,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } finally {
       if (controllers.get(workspaceId) === controller) {
         controllers.delete(workspaceId);
+        if (runIds.get(workspaceId) === runId) {
+          runIds.delete(workspaceId);
+        }
         set((current) => ({
           sendingByWorkspace: {
             ...current.sendingByWorkspace,

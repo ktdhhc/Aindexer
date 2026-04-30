@@ -24,6 +24,7 @@ export interface AgentTraceStep {
   label: string;
   detail?: string;
   status?: "running" | "done" | string;
+  iteration?: number;
   sources?: ChatSource[];
 }
 
@@ -64,6 +65,7 @@ export interface ChatAskV1Payload extends ChatAskPayload {
   messages?: ChatHistoryMessage[];
   source_map?: Record<string, string>;
   session_id?: string;
+  run_id?: string;
 }
 
 export interface ChatAnswer {
@@ -80,6 +82,7 @@ export interface ChatAnswerV1 {
 }
 
 export type ChatStreamEvent =
+  | { type: "agent_run"; run_id: string; max_iterations: number; paper_top_k: number }
   | { type: "agent_step"; step: AgentTraceStep }
   | { type: "meta"; mode: ChatMode; sources: ChatSource[]; context_stats: ChatContextStats }
   | { type: "delta"; text: string }
@@ -88,6 +91,13 @@ export type ChatStreamEvent =
 
 export function askChatV0(payload: ChatAskPayload): Promise<ChatAnswer> {
   return askChatV0WithSignal(payload);
+}
+
+export async function cancelChatRun(runId: string): Promise<void> {
+  if (!runId) return;
+  await fetch(`/api/chat/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: "POST",
+  }).catch(() => undefined);
 }
 
 export function askChatV0WithSignal(payload: ChatAskPayload, signal?: AbortSignal): Promise<ChatAnswer> {
@@ -219,7 +229,7 @@ function parseAssistantCitationInfo(content: string): { content: string; sourceI
     return { content: raw, sourceIds: [], hasFooter: false };
   }
 
-  const stripped = lines.slice(0, lastIndex).join("\n").replace(/[\s\n]+$/g, "");
+  const stripped = lines.slice(0, lastIndex + 1).join("\n").replace(/[\s\n]+$/g, "");
   return {
     content: stripped,
     sourceIds: footerIds,

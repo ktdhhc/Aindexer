@@ -71,8 +71,8 @@
 - `/v2/`：当前新版工作台入口，覆盖控制台、Provider 配置页、字段配置页。
 - `/translator/`：当前独立翻译工作区入口。
 - `/v3/`：React V3 统一前端入口（需先构建 `frontend-v3` 产物），当前已包含 `workbench`、`config`、`chat`、`translator` 路由骨架。
-- V3 Chat 已接入 `POST /api/chat/ask` 三模式与 `POST /api/chat/ask_stream` 流式输出：`wide` 全景、`deep` 精读、`agent` 探索；旧 `POST /api/chat/ask_v0` 保留兼容。
-- Chat 三模式 prompt 已拆分到 `backend/prompts/chat_modes/`；请求会携带最近会话历史，索引类上下文使用稳定 `[I-xx]` 编号，原文类上下文使用稳定 `[P-xx]` 编号；`wide` 模式会返回实际纳入范围，`deep` 模式会累计已注入文献并注入原始文件文本（pdf/txt/docx 解析结果），而不是索引 Markdown；`agent` 模式已升级为受限探索循环：先检索候选，再读取索引，并在问题需要时补充读取原文摘录，流式返回步骤轨迹。
+- V3 Chat 已接入 `POST /api/chat/ask` 三模式与 `POST /api/chat/ask_stream` 流式输出：`wide` 全景、`deep` 精读、`agent` 探索；旧 `POST /api/chat/ask_v0` 保留兼容；探索模式流式请求支持 `POST /api/chat/runs/{run_id}/cancel` 取消。
+- Chat 三模式 prompt 已拆分到 `backend/prompts/chat_modes/`；请求会携带最近会话历史，索引类上下文使用稳定 `[I-xx]` 编号，原文类上下文使用稳定 `[P-xx]` 编号；`wide` 模式会返回实际纳入范围，`deep` 模式会累计已注入文献并注入原始文件文本（pdf/txt/docx 解析结果），而不是索引 Markdown；`agent` 流式模式已升级为模型驱动 loop：每个 Chat session 的首条用户消息默认注入全量元数据，后续消息仅在模型显式请求 `read_metadata` 时重新注入；模型可按需读取完整索引或正文，最多 6 轮，正文单次读取默认限制 2 篇，流式返回简洁步骤轨迹。
 - V3 Chat 与 V3 翻译页的运行中请求状态已提升到 app 级 store；在 `/v3` 内切换路由时，请求不会因页面卸载而直接丢失，但文库页旧 Chat 仍是页面内状态。
 - V3 翻译页当前不再要求最小选区字符数；翻译 provider 默认输出上限为 `8192` tokens。
 - 当前 UI 仍未完成统一；后续迁移目标是以 V3.5 Editorial Lab 统一 `workbench`、配置、Chat 与翻译工作区。

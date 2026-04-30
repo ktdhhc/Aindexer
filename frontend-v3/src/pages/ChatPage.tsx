@@ -397,7 +397,7 @@ export function ChatPage() {
         </div>
         <div className="v35-chat-hero-meta">
           <span>{workspaceId}</span>
-          <span className={isSending ? "is-live" : ""}>{statusMessage}</span>
+          <span>{statusMessage}</span>
         </div>
       </header>
 
@@ -432,10 +432,14 @@ export function ChatPage() {
               const displaySources = message.role === "assistant" ? resolveAssistantCitedSources(message.content, message.sources) : (message.sources ?? []);
               const traceSteps = message.agentTrace ?? [];
               const traceExpanded = expandedTraceByMessage[message.id] ?? !displayContent.trim();
+              const isLiveAssistant = message.role === "assistant" && isSending && latestAssistantMessage?.id === message.id;
               return (
                 <article className={`v35-chat-turn role-${message.role}`} key={message.id} ref={(node) => { messageRefs.current[message.id] = node; }}>
                   <header>
-                    <span>{message.role === "user" ? "You" : message.role === "assistant" ? "Assistant" : "System"}</span>
+                    <span>
+                      {message.role === "user" ? "You" : message.role === "assistant" ? "Assistant" : "System"}
+                      {isLiveAssistant ? <i className="v35-chat-live-inline"><span className="v35-chat-dot" />生成中</i> : null}
+                    </span>
                     <time>{formatTime(message.createdAt)}</time>
                   </header>
                   {message.role === "assistant" && traceSteps.length > 0 ? (
@@ -454,12 +458,11 @@ export function ChatPage() {
                               </header>
                               {(step.sources ?? []).length > 0 ? (
                                 <div className="v35-chat-inline-trace-sources">
-                                  {(step.sources ?? []).map((source) => (
-                                    <button key={`${source.source_kind || "index"}:${source.doc_id}:${source.source_id || ""}`} type="button" onClick={() => void navigator.clipboard?.writeText(source.doc_id)}>
-                                      <strong>{source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}</strong>
-                                      <span>{formatSourceMeta(source) || source.doc_id}</span>
-                                    </button>
-                                  ))}
+                                   {(step.sources ?? []).map((source) => (
+                                     <button key={`${source.source_kind || "index"}:${source.doc_id}:${source.source_id || ""}`} type="button" onClick={() => void navigator.clipboard?.writeText(source.doc_id)}>
+                                       <strong>{source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}</strong>
+                                     </button>
+                                   ))}
                                 </div>
                               ) : null}
                             </article>
@@ -469,7 +472,11 @@ export function ChatPage() {
                     </div>
                   ) : null}
                   {message.role === "assistant" ? (
-                    <div className="v35-chat-markdown" dangerouslySetInnerHTML={{ __html: renderMarkdownToHtml(displayContent) }} />
+                    displayContent.trim()
+                      ? <div className="v35-chat-markdown" dangerouslySetInnerHTML={{ __html: renderMarkdownToHtml(displayContent) }} />
+                      : isLiveAssistant
+                        ? <p>{statusMessage}</p>
+                        : null
                   ) : (
                     <p>{displayContent}</p>
                   )}
@@ -499,15 +506,6 @@ export function ChatPage() {
               );
             })}
 
-            {isSending && !(activeMode === "agent" && Boolean(latestAssistantMessage)) ? (
-              <article className="v35-chat-turn role-assistant is-pending">
-                <header>
-                  <span>Assistant</span>
-                  <time>now</time>
-                </header>
-                  <p><span className="v35-chat-dot" /> {activeMode === "agent" ? statusMessage : "正在生成..."}</p>
-                </article>
-              ) : null}
           </div>
 
           {timelineEntries.length > 0 ? (

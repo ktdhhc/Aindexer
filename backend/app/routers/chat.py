@@ -10,10 +10,10 @@ from pydantic import BaseModel, Field
 from ..db import DEFAULT_WORKSPACE_ID
 from ..provider_registry import resolve_model_name_registry_entry
 from ..repository import get_provider_config_raw
+from ..services.chat_agent import cancel_chat_run, stream_agent_chat
 from ..services.chat_modes import (
     build_chat_context,
     build_chat_prompt,
-    iter_agent_context_events,
     run_chat,
 )
 from ..services.chat_v0 import run_chat_v0
@@ -41,6 +41,11 @@ class ChatAskIn(BaseModel):
     messages: list[dict] = Field(default_factory=list)
     source_map: dict[str, str] = Field(default_factory=dict)
     session_id: str | None = None
+    run_id: str | None = None
+
+
+class ChatCancelOut(BaseModel):
+    cancelled: bool
 
 
 @router.post("/ask")
@@ -99,19 +104,16 @@ def ask_chat_stream(payload: ChatAskIn):
     def generate():
         try:
             if mode == "agent":
-                builder = iter_agent_context_events(
+                for event in stream_agent_chat(
                     question=question,
                     workspace_id=workspace_id,
-                    model_name=cfg.model,
+                    provider_cfg=cfg,
+                    history_messages=payload.messages,
                     source_map=payload.source_map,
-                )
-                while True:
-                    try:
-                        event = next(builder)
-                    except StopIteration as stop:
-                        context_result = stop.value
-                        break
+                    run_id=payload.run_id,
+                ):
                     yield json.dumps(event, ensure_ascii=False) + "\n"
+                return
             else:
                 context_result = build_chat_context(
                     question=question,
@@ -157,6 +159,11 @@ def ask_chat_stream(payload: ChatAskIn):
             yield json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+@router.post("/runs/{run_id}/cancel", response_model=ChatCancelOut)
+def cancel_chat_stream(run_id: str) -> ChatCancelOut:
+    return ChatCancelOut(cancelled=cancel_chat_run(run_id))
 
 
 @router.post("/ask_v0")

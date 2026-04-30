@@ -1,0 +1,16 @@
+任务：基于已读取内容回答用户问题。
+
+已读取内容：
+{context}
+
+对话历史：
+{history}
+
+用户问题：
+{question}
+
+终止原因：
+{finish_reason}
+
+规划器草稿：
+{draft_answer}
