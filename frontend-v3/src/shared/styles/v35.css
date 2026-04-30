@@ -1616,6 +1616,101 @@ body {
   font-size: 11px;
 }
 
+.v35-chat-inline-trace,
+.v35-chat-inline-trace-steps {
+  display: grid;
+  gap: 10px;
+}
+
+.v35-chat-inline-trace {
+  margin-bottom: 8px;
+  padding: 8px 0 2px;
+  border-top: 1px solid rgba(36, 28, 22, 0.08);
+}
+
+.v35-chat-inline-trace-toggle {
+  border: none;
+  background: transparent;
+  color: var(--v35-text-secondary);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  font-family: "JetBrains Mono", "SF Mono", monospace;
+  font-size: 11px;
+}
+
+.v35-chat-inline-trace-toggle span {
+  color: var(--v35-accent-hover);
+  font-weight: 800;
+}
+
+.v35-chat-inline-trace-toggle em {
+  font-style: normal;
+}
+
+.v35-chat-inline-trace-step {
+  border-bottom: 1px solid rgba(36, 28, 22, 0.1);
+  padding-bottom: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.v35-chat-inline-trace-step header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.v35-chat-inline-trace-step strong {
+  font-size: 12px;
+}
+
+.v35-chat-inline-trace-step span {
+  color: var(--v35-text-secondary);
+  font-family: "JetBrains Mono", "SF Mono", monospace;
+  font-size: 11px;
+}
+
+.v35-chat-inline-trace-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.v35-chat-inline-trace-sources button {
+  border: 1px solid rgba(166, 95, 43, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 247, 233, 0.5);
+  color: var(--v35-text-primary);
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+
+.v35-chat-inline-trace-sources button strong,
+.v35-chat-inline-trace-sources button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v35-chat-inline-trace-sources button strong {
+  color: var(--v35-accent-hover);
+  font-size: 11px;
+}
+
+.v35-chat-inline-trace-sources button span {
+  color: var(--v35-text-secondary);
+  font-family: inherit;
+}
+
 .v35-chat-prompt-list button {
   border: 1px solid var(--v35-border);
   border-radius: 14px;

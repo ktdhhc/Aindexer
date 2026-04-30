@@ -573,7 +573,7 @@ def _effective_max_tokens(model: str, default: int) -> int:
 
 
 def _chat_max_tokens(model: str) -> int:
-    base = _effective_max_tokens(model, 8196)
+    base = _effective_max_tokens(model, 12_288)
     resolved = resolve_model_name_registry_entry(model)
     if not resolved:
         return base

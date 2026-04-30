@@ -10,7 +10,12 @@ from pydantic import BaseModel, Field
 from ..db import DEFAULT_WORKSPACE_ID
 from ..provider_registry import resolve_model_name_registry_entry
 from ..repository import get_provider_config_raw
-from ..services.chat_modes import build_chat_context, build_chat_prompt, run_chat
+from ..services.chat_modes import (
+    build_chat_context,
+    build_chat_prompt,
+    iter_agent_context_events,
+    run_chat,
+)
 from ..services.chat_v0 import run_chat_v0
 from ..services.provider_client import ProviderClient, ProviderConfig
 from ._context import resolve_workspace_id
@@ -90,34 +95,47 @@ def ask_chat_stream(payload: ChatAskIn):
         raise HTTPException(status_code=400, detail="当前模型未标记为支持流式输出")
 
     mode = payload.mode if payload.mode in {"wide", "deep", "agent"} else "deep"
-    try:
-        context_result = build_chat_context(
-            question=question,
-            workspace_id=workspace_id,
-            model_name=cfg.model,
-            mode=mode,  # type: ignore[arg-type]
-            doc_ids=payload.doc_ids,
-            source_map=payload.source_map,
-        )
-        system_prompt, user_prompt = build_chat_prompt(
-            question=question,
-            context=context_result.context,
-            mode=mode,  # type: ignore[arg-type]
-            history_messages=payload.messages,
-            history_token_budget=int(context_result.stats.get("history_budget") or 0),
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     def generate():
-        meta = {
-            "type": "meta",
-            "mode": mode,
-            "sources": [source.__dict__ for source in context_result.sources],
-            "context_stats": context_result.stats,
-        }
-        yield json.dumps(meta, ensure_ascii=False) + "\n"
         try:
+            if mode == "agent":
+                builder = iter_agent_context_events(
+                    question=question,
+                    workspace_id=workspace_id,
+                    model_name=cfg.model,
+                    source_map=payload.source_map,
+                )
+                while True:
+                    try:
+                        event = next(builder)
+                    except StopIteration as stop:
+                        context_result = stop.value
+                        break
+                    yield json.dumps(event, ensure_ascii=False) + "\n"
+            else:
+                context_result = build_chat_context(
+                    question=question,
+                    workspace_id=workspace_id,
+                    model_name=cfg.model,
+                    mode=mode,  # type: ignore[arg-type]
+                    doc_ids=payload.doc_ids,
+                    source_map=payload.source_map,
+                )
+
+            system_prompt, user_prompt = build_chat_prompt(
+                question=question,
+                context=context_result.context,
+                mode=mode,  # type: ignore[arg-type]
+                history_messages=payload.messages,
+                history_token_budget=int(context_result.stats.get("history_budget") or 0),
+            )
+            meta = {
+                "type": "meta",
+                "mode": mode,
+                "sources": [source.__dict__ for source in context_result.sources],
+                "context_stats": context_result.stats,
+            }
+            yield json.dumps(meta, ensure_ascii=False) + "\n"
             finish_reason_holder: dict[str, str | None] = {"value": None}
 
             def capture_finish_reason(reason: str | None) -> None:
@@ -132,6 +150,8 @@ def ask_chat_stream(payload: ChatAskIn):
                 if chunk:
                     yield json.dumps({"type": "delta", "text": chunk}, ensure_ascii=False) + "\n"
             yield json.dumps({"type": "done", "finish_reason": finish_reason_holder.get("value")}, ensure_ascii=False) + "\n"
+        except RuntimeError as exc:
+            yield json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False) + "\n"
         except Exception as exc:
             logger.warning("chat stream failed err=%s", exc)
             yield json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False) + "\n"

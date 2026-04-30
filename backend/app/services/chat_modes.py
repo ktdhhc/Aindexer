@@ -46,6 +46,9 @@ class ChatSource:
     doc_id: str
     display_name: str
     title: str = ""
+    authors: list[str] | None = None
+    year: int | None = None
+    source_kind: Literal["index", "paper"] = "index"
 
 
 @dataclass
@@ -110,6 +113,14 @@ def build_chat_context(
         result = _build_agent_context(workspace_id, question, budget, source_map or {})
     else:
         result = _build_deep_context(workspace_id, doc_ids, budget, source_map or {})
+
+    return _finalize_context_result(result, budget)
+
+
+def _finalize_context_result(
+    result: ContextBuildResult,
+    budget: dict[str, int],
+) -> ContextBuildResult:
 
     estimated = estimate_tokens(result.context)
     compression_level = _compression_level(estimated, int(budget["usable_context_budget"]))
@@ -286,6 +297,48 @@ def _build_agent_context(
     budget: dict[str, int],
     source_map: dict[str, str],
 ) -> ContextBuildResult:
+    ranked = _agent_search_candidates(workspace_id, question)
+    index_items = _agent_load_index_items(ranked, workspace_id)
+    original_items = _agent_load_original_items(ranked, workspace_id, question)
+    trace = _build_agent_trace(index_items, original_items, len(ranked))
+    return _compose_agent_context_result(
+        question=question,
+        ranked=ranked,
+        index_items=index_items,
+        original_items=original_items,
+        source_map=source_map,
+        trace=trace,
+    )
+
+
+def iter_agent_context_events(
+    *,
+    question: str,
+    workspace_id: str,
+    model_name: str,
+    source_map: dict[str, str],
+) -> Any:
+    budget = _build_budget(model_name)
+    ranked = _agent_search_candidates(workspace_id, question)
+    index_items = _agent_load_index_items(ranked, workspace_id)
+    original_items = _agent_load_original_items(ranked, workspace_id, question)
+    trace = _build_agent_trace(index_items, original_items, len(ranked))
+
+    for step in trace:
+        yield {"type": "agent_step", "step": step}
+
+    result = _compose_agent_context_result(
+        question=question,
+        ranked=ranked,
+        index_items=index_items,
+        original_items=original_items,
+        source_map=source_map,
+        trace=trace,
+    )
+    return _finalize_context_result(result, budget)
+
+
+def _agent_search_candidates(workspace_id: str, question: str) -> list[dict[str, Any]]:
     ranked = search_documents(
         question,
         year_from=None,
@@ -296,15 +349,123 @@ def _build_agent_context(
         workspace_id=workspace_id,
     )
     if not ranked:
-        ranked = [item for item in list_documents(workspace_id=workspace_id) if item.get("status") == "indexed"]
+        ranked = [
+            item for item in list_documents(workspace_id=workspace_id)
+            if item.get("status") == "indexed"
+        ]
     if not ranked:
         raise RuntimeError("当前工作区暂无可用索引")
+    return ranked
 
-    items = [_load_document_context(str(item.get("doc_id") or item.get("id")), workspace_id, variant="summary") for item in ranked[:8]]
+
+def _agent_load_index_items(
+    ranked: list[dict[str, Any]],
+    workspace_id: str,
+) -> list[dict[str, Any]]:
+    limit = min(6, len(ranked))
+    return [
+        _load_document_context(
+            str(item.get("doc_id") or item.get("id")),
+            workspace_id,
+            variant="summary",
+        )
+        for item in ranked[:limit]
+    ]
+
+
+def _agent_load_original_items(
+    ranked: list[dict[str, Any]],
+    workspace_id: str,
+    question: str,
+) -> list[dict[str, Any]]:
+    if not _agent_should_read_original(question):
+        return []
+    limit = min(2, len(ranked))
+    return [
+        _load_document_context(
+            str(item.get("doc_id") or item.get("id")),
+            workspace_id,
+            variant="original_excerpt",
+            question=question,
+        )
+        for item in ranked[:limit]
+    ]
+
+
+def _build_agent_trace(
+    index_items: list[dict[str, Any]],
+    original_items: list[dict[str, Any]],
+    candidate_count: int,
+) -> list[dict[str, Any]]:
+    trace: list[dict[str, Any]] = [
+        {
+            "step": "search",
+            "label": "检索候选",
+            "detail": f"{candidate_count} 篇候选",
+            "status": "done",
+        },
+        {
+            "step": "read_index",
+            "label": "读取索引",
+            "detail": f"{len(index_items)} 篇索引",
+            "status": "done",
+            "sources": [item["source"].__dict__ for item in index_items],
+        },
+    ]
+    if original_items:
+        trace.append(
+            {
+                "step": "read_paper",
+                "label": "核对原文",
+                "detail": f"{len(original_items)} 篇原文",
+                "status": "done",
+                "sources": [item["source"].__dict__ for item in original_items],
+            }
+        )
+    trace.append(
+        {
+            "step": "answer",
+            "label": "汇总回答",
+            "detail": "ready",
+            "status": "running",
+        }
+    )
+    return trace
+
+
+def _compose_agent_context_result(
+    *,
+    question: str,
+    ranked: list[dict[str, Any]],
+    index_items: list[dict[str, Any]],
+    original_items: list[dict[str, Any]],
+    source_map: dict[str, str],
+    trace: list[dict[str, Any]],
+) -> ContextBuildResult:
+    sections: list[str] = []
+    if index_items:
+        sections.append(
+            "候选索引上下文：\n"
+            + _join_context_items(index_items, stable_source_ids=source_map, source_prefix="I")
+        )
+    if original_items:
+        sections.append(
+            "原文核对上下文：\n"
+            + _join_context_items(original_items, stable_source_ids=source_map, source_prefix="P")
+        )
+    context = "\n\n===\n\n".join(section for section in sections if section.strip())
     return ContextBuildResult(
-        context=_join_context_items(items, stable_source_ids=source_map, source_prefix="I"),
-        sources=[item["source"] for item in items],
-        stats={"agent_strategy": "ranked_structured_read", "agent_steps": ["search", "read_structured", "answer"]},
+        context=context,
+        sources=[item["source"] for item in [*index_items, *original_items]],
+        stats={
+            "agent_strategy": "guided_multi_read",
+            "candidate_count": len(ranked),
+            "read_index_count": len(index_items),
+            "read_original_count": len(original_items),
+            "agent_steps": [step["step"] for step in trace],
+            "agent_trace": trace,
+            "agent_original_triggered": bool(original_items),
+        },
     )
 
 
@@ -312,7 +473,8 @@ def _load_document_context(
     doc_id: str,
     workspace_id: str,
     *,
-    variant: Literal["index_full", "summary", "original_full"],
+    variant: Literal["index_full", "summary", "original_full", "original_excerpt"],
+    question: str = "",
 ) -> dict[str, Any]:
     doc = get_document(doc_id, workspace_id=workspace_id)
     if not doc or doc.get("status") != "indexed":
@@ -321,12 +483,25 @@ def _load_document_context(
     if not record:
         raise RuntimeError(f"索引不存在：{doc_id}")
     display_name = str(doc.get("display_name") or doc.get("filename") or doc_id)
-    source = ChatSource(source_id="", doc_id=doc_id, display_name=display_name, title=record.title)
+    source_kind: Literal["index", "paper"] = (
+        "paper" if variant in {"original_full", "original_excerpt"} else "index"
+    )
+    source = ChatSource(
+        source_id="",
+        doc_id=doc_id,
+        display_name=display_name,
+        title=record.title,
+        authors=list(record.authors or []),
+        year=record.year,
+        source_kind=source_kind,
+    )
     if variant == "index_full":
         md_path = markdown_path(doc_id)
         body = md_path.read_text(encoding="utf-8") if md_path.exists() else render_markdown(doc_id, record)
     elif variant == "original_full":
         body = _load_original_document_content(doc)
+    elif variant == "original_excerpt":
+        body = _build_original_excerpt(_load_original_document_content(doc), question)
     else:
         body = _render_structured_summary(record)
     return {"source": source, "body": body.strip()}
@@ -362,6 +537,72 @@ def _render_structured_summary(record: Any) -> str:
     return "\n".join(parts)
 
 
+def _agent_should_read_original(question: str) -> bool:
+    q = str(question or "").lower()
+    triggers = [
+        "原文",
+        "实验",
+        "方法",
+        "局限",
+        "证据",
+        "定义",
+        "结论",
+        "具体",
+        "段落",
+        "数据",
+        "引文",
+        "compare",
+        "method",
+        "experiment",
+        "limitation",
+        "evidence",
+        "result",
+    ]
+    return any(token in q for token in triggers)
+
+
+def _extract_question_terms(question: str) -> list[str]:
+    return [token.lower() for token in re.findall(r"[\w\u4e00-\u9fff]+", question or "") if len(token) >= 2]
+
+
+def _build_original_excerpt(raw: str, question: str, max_chars: int = 14_000) -> str:
+    content = str(raw or "").strip()
+    if len(content) <= max_chars:
+        return content
+
+    terms = _extract_question_terms(question)
+    blocks = [block.strip() for block in re.split(r"\n\s*\n", content) if block.strip()]
+    if not blocks:
+        return content[:max_chars].rstrip() + "\n\n[原文已截断]"
+
+    scored: list[tuple[int, str]] = []
+    for block in blocks:
+        block_lower = block.lower()
+        score = sum(block_lower.count(term) for term in terms) if terms else 0
+        scored.append((score, block))
+
+    selected: list[str] = []
+    used_blocks: set[str] = set()
+
+    for block in blocks[:2]:
+        if block not in used_blocks:
+            selected.append(block)
+            used_blocks.add(block)
+
+    for _score, block in sorted(scored, key=lambda item: (item[0], len(item[1])), reverse=True):
+        if block in used_blocks:
+            continue
+        selected.append(block)
+        used_blocks.add(block)
+        if len("\n\n".join(selected)) >= max_chars:
+            break
+
+    excerpt = "\n\n".join(selected)
+    if len(excerpt) > max_chars:
+        excerpt = excerpt[:max_chars].rstrip()
+    return excerpt + "\n\n[原文为按问题裁剪的摘录]"
+
+
 def _join_context_items(
     items: list[dict[str, Any]],
     stable_source_ids: dict[str, str] | None = None,
@@ -376,7 +617,7 @@ def _join_context_items(
     for item in items:
         source: ChatSource = item["source"]
         candidate = _normalize_source_id(
-            (stable_source_ids or {}).get(source.doc_id),
+            _lookup_stable_source_id(stable_source_ids or {}, source),
             source_prefix,
         )
         if not candidate or candidate in used_ids:
@@ -455,6 +696,15 @@ def _normalize_source_id(value: Any, prefix: str | None = None) -> str | None:
         return None
     digits = match.group(2)
     return f"{resolved_prefix}-{digits}"
+
+
+def _source_map_key(doc_id: str, source_kind: str) -> str:
+    return f"{source_kind}:{doc_id}"
+
+
+def _lookup_stable_source_id(source_map: dict[str, str], source: ChatSource) -> str | None:
+    contextual_key = _source_map_key(source.doc_id, source.source_kind)
+    return source_map.get(contextual_key) or source_map.get(source.doc_id)
 
 
 def _next_source_index(source_map: dict[str, str], prefix: Literal["I", "P"]) -> int:

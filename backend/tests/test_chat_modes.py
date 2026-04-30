@@ -209,6 +209,83 @@ def test_deep_context_keeps_session_source_ids(monkeypatch: pytest.MonkeyPatch) 
     assert "[P-05] Doc C | Title doc_c" in result.context
 
 
+def test_agent_context_reads_index_and_original_with_split_prefixes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(chat_modes, "resolve_model_context_window", lambda _model: 128_000)
+    monkeypatch.setattr(
+        chat_modes,
+        "search_documents",
+        lambda *args, **kwargs: [{"doc_id": "doc_a"}, {"doc_id": "doc_b"}],
+    )
+    monkeypatch.setattr(
+        chat_modes,
+        "get_document",
+        lambda doc_id, workspace_id: {
+            "id": doc_id,
+            "display_name": f"Doc {doc_id[-1].upper()}",
+            "filename": f"{doc_id}.pdf",
+            "file_path": f"D:/fake/{doc_id}.pdf",
+            "file_type": "pdf",
+            "status": "indexed",
+        },
+    )
+    monkeypatch.setattr(chat_modes, "get_index", lambda doc_id: _record(doc_id, f"summary {doc_id}"))
+    monkeypatch.setattr(chat_modes, "parse_file", lambda path, file_type: f"original {path.stem}\n\nmethod details")
+    monkeypatch.setattr(chat_modes.Path, "exists", lambda self: True)
+
+    result = chat_modes.build_chat_context(
+        question="比较实验方法与局限",
+        workspace_id="ws_default",
+        model_name="known-model",
+        mode="agent",
+        doc_ids=[],
+        source_map={"index:doc_a": "I-03", "paper:doc_a": "P-02"},
+    )
+
+    assert [source.source_id for source in result.sources] == ["I-03", "I-04", "P-02", "P-03"]
+    assert [source.source_kind for source in result.sources] == ["index", "index", "paper", "paper"]
+    assert "[I-03] Doc A | Title doc_a" in result.context
+    assert "[P-02] Doc A | Title doc_a" in result.context
+    assert result.stats["agent_strategy"] == "guided_multi_read"
+    assert result.stats["candidate_count"] == 2
+    assert result.stats["read_index_count"] == 2
+    assert result.stats["read_original_count"] == 2
+
+
+def test_agent_context_events_emit_trace_steps(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(chat_modes, "resolve_model_context_window", lambda _model: 128_000)
+    monkeypatch.setattr(chat_modes, "search_documents", lambda *args, **kwargs: [{"doc_id": "doc_a"}])
+    monkeypatch.setattr(
+        chat_modes,
+        "get_document",
+        lambda doc_id, workspace_id: {
+            "id": doc_id,
+            "display_name": "Doc A",
+            "filename": "doc_a.pdf",
+            "status": "indexed",
+        },
+    )
+    monkeypatch.setattr(chat_modes, "get_index", lambda doc_id: _record(doc_id, "summary a"))
+
+    stream = chat_modes.iter_agent_context_events(
+        question="帮我找相关候选并总结",
+        workspace_id="ws_default",
+        model_name="known-model",
+        source_map={},
+    )
+    events = []
+    while True:
+        try:
+            events.append(next(stream))
+        except StopIteration as stop:
+            result = stop.value
+            break
+
+    assert [event["type"] for event in events] == ["agent_step", "agent_step", "agent_step"]
+    assert [event["step"]["step"] for event in events] == ["search", "read_index", "answer"]
+    assert result.stats["agent_trace"][0]["label"] == "检索候选"
+    assert result.sources[0].source_id == "I-01"
+
+
 def test_chat_modes_use_distinct_prompts() -> None:
     wide_system, wide_user = chat_modes.build_chat_prompt(
         question="Q",

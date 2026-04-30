@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import {
   askChatWithSignal,
+  type AgentTraceStep,
   normalizeSourceId,
   resolveAssistantCitedSources,
   streamChatWithSignal,
@@ -21,6 +22,7 @@ export interface ChatMessage {
   createdAt: string;
   sources?: ChatSource[];
   contextStats?: ChatContextStats;
+  agentTrace?: AgentTraceStep[];
 }
 
 export interface ChatSession {
@@ -34,6 +36,7 @@ export interface ChatSession {
   createdAt: string;
   updatedAt: string;
   lastQuestion: string;
+  agentTrace: AgentTraceStep[];
   messages: ChatMessage[];
 }
 
@@ -75,13 +78,20 @@ function createSessionId(): string {
   return `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function createMessage(role: ChatMessage["role"], content: string, sources?: ChatSource[], contextStats?: ChatContextStats): ChatMessage {
+function createMessage(
+  role: ChatMessage["role"],
+  content: string,
+  sources?: ChatSource[],
+  contextStats?: ChatContextStats,
+  agentTrace?: AgentTraceStep[],
+): ChatMessage {
   return {
     id: createMessageId(),
     role,
     content,
     sources,
     contextStats,
+    agentTrace,
     createdAt: new Date().toISOString(),
   };
 }
@@ -99,8 +109,18 @@ function createEmptySession(mode: ChatMode = "deep"): ChatSession {
     createdAt: now,
     updatedAt: now,
     lastQuestion: "",
+    agentTrace: [],
     messages: [],
   };
+}
+
+function sourceMapKey(docId: string, sourceKind: ChatSource["source_kind"]): string {
+  const kind = sourceKind === "paper" ? "paper" : sourceKind === "index" ? "index" : "";
+  return kind ? `${kind}:${docId}` : docId;
+}
+
+function sourceMapKeyFromSource(source: ChatSource): string {
+  return sourceMapKey(source.doc_id, source.source_kind);
 }
 
 function readSessionStore(): ChatSessionStore {
@@ -145,18 +165,24 @@ function mergeSourceMap(sourceMap: Record<string, string>, sources?: ChatSource[
   for (const source of sources ?? []) {
     const sourceId = normalizeSourceId(source.source_id);
     if (!source.doc_id || !isValidSourceId(sourceId)) continue;
-    next[source.doc_id] = sourceId;
+    next[sourceMapKeyFromSource(source)] = sourceId;
   }
   return next;
 }
 
-function extendSourceMap(sourceMap: Record<string, string>, docIds: string[], prefix: "I" | "P"): Record<string, string> {
+function extendSourceMap(
+  sourceMap: Record<string, string>,
+  docIds: string[],
+  prefix: "I" | "P",
+  sourceKind: ChatSource["source_kind"],
+): Record<string, string> {
   const next = { ...sourceMap };
   let cursor = nextSourceIndex(next, prefix);
   for (const docId of docIds) {
-    const existing = normalizeSourceId(next[docId]);
+    const existingKey = sourceMapKey(docId, sourceKind);
+    const existing = normalizeSourceId(next[existingKey]);
     if (isValidSourceId(existing) && existing.startsWith(prefix)) continue;
-    next[docId] = `${prefix}-${String(cursor).padStart(2, "0")}`;
+    next[existingKey] = `${prefix}-${String(cursor).padStart(2, "0")}`;
     cursor += 1;
   }
   return next;
@@ -187,6 +213,7 @@ function normalizeSession(raw: ChatSession): ChatSession {
           ...source,
           source_id: normalizeSourceId(source.source_id) || source.source_id,
         })),
+        agentTrace: Array.isArray(message.agentTrace) ? message.agentTrace : [],
       }))
     : [];
   const injectedDocIds = Array.isArray((raw as ChatSession & { injectedDocIds?: string[] }).injectedDocIds)
@@ -203,6 +230,9 @@ function normalizeSession(raw: ChatSession): ChatSession {
       ? (Array.isArray(raw.selectedDocIds) ? raw.selectedDocIds : [])
       : [],
     sourceMap: normalizeSourceMap((raw as ChatSession & { sourceMap?: Record<string, string> }).sourceMap, messages),
+    agentTrace: Array.isArray((raw as ChatSession & { agentTrace?: AgentTraceStep[] }).agentTrace)
+      ? (raw as ChatSession & { agentTrace?: AgentTraceStep[] }).agentTrace ?? []
+      : [],
     messages,
   };
 }
@@ -212,7 +242,7 @@ function modeLabel(mode: ChatMode): string {
 }
 
 function shouldPersistSourceMap(mode: ChatMode): boolean {
-  return mode === "deep" || mode === "wide";
+  return mode === "deep" || mode === "wide" || mode === "agent";
 }
 
 function buildSessionTitle(question: string): string {
@@ -226,11 +256,23 @@ function buildSourceSnapshot(docIds: string[], files: FileItem[], sourceMap: Rec
   return docIds.map((docId) => {
     const item = map.get(docId);
     return {
-      source_id: normalizeSourceId(sourceMap[docId]) || sourceMap[docId],
+      source_id: normalizeSourceId(sourceMap[sourceMapKey(docId, "paper")]) || sourceMap[sourceMapKey(docId, "paper")],
       doc_id: docId,
       display_name: item?.display_name || item?.filename || docId,
+      source_kind: "paper",
     };
   });
+}
+
+function upsertAgentTraceStep(steps: AgentTraceStep[], nextStep: AgentTraceStep): AgentTraceStep[] {
+  const next = [...steps];
+  const index = next.findIndex((step) => step.step === nextStep.step);
+  if (index >= 0) {
+    next[index] = { ...next[index], ...nextStep };
+    return next;
+  }
+  next.push(nextStep);
+  return next;
 }
 
 function buildHistoryPayload(messages: ChatMessage[]): ChatHistoryMessage[] {
@@ -464,7 +506,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const selectedDocIds = activeSession?.selectedDocIds ?? [];
     const currentDocIds = [...new Set([...injectedDocIds, ...selectedDocIds])];
     const nextSourceMap = currentMode === "deep"
-      ? extendSourceMap(activeSession?.sourceMap ?? {}, selectedDocIds, "P")
+      ? extendSourceMap(activeSession?.sourceMap ?? {}, selectedDocIds, "P", "paper")
       : (activeSession?.sourceMap ?? {});
     const currentSources = buildSourceSnapshot(selectedDocIds, indexedFiles, nextSourceMap);
     const historyMessages = buildHistoryPayload(activeSession?.messages ?? []);
@@ -519,6 +561,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               locked: true,
               updatedAt: new Date().toISOString(),
               lastQuestion: trimmedQuestion,
+              agentTrace: currentMode === "agent" ? [] : session.agentTrace,
               messages: [...session.messages, createMessage("user", trimmedQuestion, currentSources)],
             }
           : session
@@ -551,6 +594,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
         await streamChatWithSignal(
           payload,
           (event) => {
+            if (event.type === "agent_step") {
+              set((current) => ({
+                ...updateSessionsForWorkspace(current, workspaceId, (sessions) => sessions.map((session) => (
+                  session.id === currentSessionId
+                    ? {
+                        ...session,
+                        updatedAt: new Date().toISOString(),
+                        agentTrace: upsertAgentTraceStep(session.agentTrace, event.step),
+                        messages: session.messages.some((message) => message.id === assistantMessageId)
+                          ? session.messages.map((message) => (
+                              message.id === assistantMessageId
+                                ? {
+                                    ...message,
+                                    agentTrace: upsertAgentTraceStep(message.agentTrace ?? [], event.step),
+                                  }
+                                : message
+                            ))
+                          : [
+                              ...session.messages,
+                              {
+                                id: assistantMessageId,
+                                role: "assistant",
+                                content: "",
+                                sources: [],
+                                agentTrace: [event.step],
+                                createdAt: new Date().toISOString(),
+                              },
+                            ],
+                      }
+                    : session
+                ))),
+                statusByWorkspace: {
+                  ...current.statusByWorkspace,
+                  [workspaceId]: event.step.label,
+                },
+              }));
+              return;
+            }
             if (event.type === "meta") {
               streamStarted = true;
               const message: ChatMessage = {
@@ -559,18 +640,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 content: "",
                 sources: event.sources,
                 contextStats: event.context_stats,
+                agentTrace: (event.context_stats.agent_trace as AgentTraceStep[] | undefined) ?? [],
                 createdAt: new Date().toISOString(),
               };
               set((current) => updateSessionsForWorkspace(current, workspaceId, (sessions) => sessions.map((session) => {
                 if (session.id !== currentSessionId) return session;
-                if (session.messages.some((item) => item.id === assistantMessageId)) return session;
+                const hasAssistantMessage = session.messages.some((item) => item.id === assistantMessageId);
                 return {
                   ...session,
                   injectedDocIds: [...new Set([...session.injectedDocIds, ...selectedDocIds])],
                   selectedDocIds: session.id === currentSessionId ? [] : session.selectedDocIds,
                   sourceMap: shouldPersistSourceMap(currentMode) ? mergeSourceMap(nextSourceMap, event.sources) : session.sourceMap,
+                  agentTrace: currentMode === "agent"
+                    ? ((event.context_stats.agent_trace as AgentTraceStep[] | undefined) ?? session.agentTrace)
+                    : session.agentTrace,
                   updatedAt: new Date().toISOString(),
-                  messages: [...session.messages, message],
+                  messages: hasAssistantMessage
+                    ? session.messages.map((item) => (
+                        item.id === assistantMessageId
+                          ? {
+                              ...item,
+                              sources: event.sources,
+                              contextStats: event.context_stats,
+                              agentTrace: (event.context_stats.agent_trace as AgentTraceStep[] | undefined) ?? item.agentTrace,
+                            }
+                          : item
+                      ))
+                    : [...session.messages, message],
                 };
               })));
               return;
@@ -591,22 +687,55 @@ export const useChatStore = create<ChatState>((set, get) => ({
               })));
               return;
             }
-            if (event.type === "done" && event.finish_reason === "length") {
+            if (event.type === "done") {
               set((current) => ({
                 ...updateSessionsForWorkspace(current, workspaceId, (sessions) => sessions.map((session) => (
                   session.id === currentSessionId
                     ? {
                         ...session,
                         updatedAt: new Date().toISOString(),
-                        messages: [...session.messages, createMessage("system", "本轮回答达到模型输出上限，内容可能被截断。")],
+                        agentTrace: currentMode === "agent"
+                          ? upsertAgentTraceStep(session.agentTrace, {
+                              step: "answer",
+                              label: "汇总回答",
+                              detail: event.finish_reason === "length" ? "output limit" : "done",
+                              status: "done",
+                            })
+                          : session.agentTrace,
+                        messages: session.messages.map((message) => (
+                          message.id === assistantMessageId && currentMode === "agent"
+                            ? {
+                                ...message,
+                                agentTrace: upsertAgentTraceStep(message.agentTrace ?? [], {
+                                  step: "answer",
+                                  label: "汇总回答",
+                                  detail: event.finish_reason === "length" ? "output limit" : "done",
+                                  status: "done",
+                                }),
+                              }
+                            : message
+                        )),
                       }
                     : session
                 ))),
                 statusByWorkspace: {
                   ...current.statusByWorkspace,
-                  [workspaceId]: "Output limit",
+                  [workspaceId]: event.finish_reason === "length" ? "Output limit" : current.statusByWorkspace[workspaceId],
                 },
               }));
+              if (event.finish_reason === "length") {
+                set((current) => ({
+                  ...updateSessionsForWorkspace(current, workspaceId, (sessions) => sessions.map((session) => (
+                    session.id === currentSessionId
+                      ? {
+                          ...session,
+                          updatedAt: new Date().toISOString(),
+                          messages: [...session.messages, createMessage("system", "本轮回答达到模型输出上限，内容可能被截断。")],
+                        }
+                      : session
+                  ))),
+                }));
+              }
             }
           },
           controller.signal,
@@ -636,10 +765,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 injectedDocIds: [...new Set([...session.injectedDocIds, ...selectedDocIds])],
                 selectedDocIds: [],
                 sourceMap: shouldPersistSourceMap(currentMode) ? mergeSourceMap(nextSourceMap, response.sources) : session.sourceMap,
+                agentTrace: currentMode === "agent"
+                  ? ((response.context_stats.agent_trace as AgentTraceStep[] | undefined) ?? session.agentTrace)
+                  : session.agentTrace,
                 updatedAt: new Date().toISOString(),
                 messages: [
                   ...session.messages,
-                  createMessage("assistant", response.answer, response.sources, response.context_stats),
+                  createMessage(
+                    "assistant",
+                    response.answer,
+                    response.sources,
+                    response.context_stats,
+                    (response.context_stats.agent_trace as AgentTraceStep[] | undefined) ?? undefined,
+                  ),
                 ],
               }
             : session

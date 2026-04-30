@@ -43,6 +43,11 @@ function formatWideStrategy(stats?: ChatContextStats): string {
   return "全景";
 }
 
+function formatSourceMeta(source: { title?: string; year?: number | null; authors?: string[] }): string {
+  const parts = [source.title || "", source.year ? String(source.year) : "", (source.authors ?? []).slice(0, 3).join(", ")].filter(Boolean);
+  return parts.join(" · ");
+}
+
 function ModeIcon({ icon }: { icon: "scan" | "focus" | "path" }) {
   if (icon === "scan") {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h16" /></svg>;
@@ -110,6 +115,7 @@ export function ChatPage() {
   const [editingSessionId, setEditingSessionId] = useState("");
   const [editingSessionTitle, setEditingSessionTitle] = useState("");
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  const [expandedTraceByMessage, setExpandedTraceByMessage] = useState<Record<string, boolean>>({});
 
   const threadRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -142,6 +148,12 @@ export function ChatPage() {
   const latestAssistantMessage = useMemo(() => {
     return [...activeMessages].reverse().find((message) => message.role === "assistant") ?? null;
   }, [activeMessages]);
+  const latestVisibleAssistantMessage = useMemo(() => {
+    return [...activeMessages].reverse().find((message) => {
+      if (message.role !== "assistant") return false;
+      return Boolean(stripAssistantCitationFooter(message.content).trim());
+    }) ?? null;
+  }, [activeMessages]);
   const activeMode = activeSession?.mode ?? "deep";
   const injectedDocIds = activeSession?.injectedDocIds ?? [];
   const selectedDocIds = activeSession?.selectedDocIds ?? [];
@@ -149,16 +161,20 @@ export function ChatPage() {
   const indexedFiles = useMemo(() => {
     return (filesQuery.data ?? []).filter((item) => item.status === "indexed");
   }, [filesQuery.data]);
-  const latestContextStats = latestAssistantMessage?.contextStats;
-  const latestSources = latestAssistantMessage?.sources ?? [];
+  const latestContextStats = latestVisibleAssistantMessage?.contextStats;
+  const latestSources = latestVisibleAssistantMessage?.sources ?? [];
   const wideTotal = statNumber(latestContextStats, "total_indexed_count", indexedFiles.length);
   const wideIncluded = statNumber(latestContextStats, "included_source_count", latestSources.length);
   const wideOmitted = statNumber(latestContextStats, "omitted_source_count", Math.max(0, wideTotal - wideIncluded));
+  const agentIndexCount = statNumber(latestContextStats, "read_index_count", latestSources.filter((source) => source.source_kind !== "paper").length);
+  const agentPaperCount = statNumber(latestContextStats, "read_original_count", latestSources.filter((source) => source.source_kind === "paper").length);
   const sourceCountLabel = activeMode === "deep"
     ? `${injectedDocIds.length}+${selectedDocIds.length}/${indexedFiles.length}`
     : activeMode === "wide"
       ? `${wideIncluded}/${wideTotal}`
-      : `${indexedFiles.length}`;
+      : activeMode === "agent"
+        ? `I${agentIndexCount}/P${agentPaperCount}`
+        : `${indexedFiles.length}`;
   const visibleSourceFiles = useMemo(() => {
     const query = sourceSearch.trim().toLowerCase();
     if (!query) return indexedFiles;
@@ -357,6 +373,13 @@ export function ChatPage() {
     deleteChatSession(workspaceId, sessionId);
   }
 
+  function toggleTrace(messageId: string) {
+    setExpandedTraceByMessage((current) => ({
+      ...current,
+      [messageId]: !current[messageId],
+    }));
+  }
+
   const canSend = Boolean(
     question.trim()
     && selectedModelEntry?.provider
@@ -407,12 +430,44 @@ export function ChatPage() {
             {activeMessages.map((message) => {
               const displayContent = message.role === "assistant" ? stripAssistantCitationFooter(message.content) : message.content;
               const displaySources = message.role === "assistant" ? resolveAssistantCitedSources(message.content, message.sources) : (message.sources ?? []);
+              const traceSteps = message.agentTrace ?? [];
+              const traceExpanded = expandedTraceByMessage[message.id] ?? !displayContent.trim();
               return (
                 <article className={`v35-chat-turn role-${message.role}`} key={message.id} ref={(node) => { messageRefs.current[message.id] = node; }}>
                   <header>
                     <span>{message.role === "user" ? "You" : message.role === "assistant" ? "Assistant" : "System"}</span>
                     <time>{formatTime(message.createdAt)}</time>
                   </header>
+                  {message.role === "assistant" && traceSteps.length > 0 ? (
+                    <div className={`v35-chat-inline-trace ${traceExpanded ? "is-expanded" : "is-collapsed"}`}>
+                      <button className="v35-chat-inline-trace-toggle" type="button" onClick={() => toggleTrace(message.id)}>
+                        <span>Trace</span>
+                        <em>{traceExpanded ? "收起" : `展开 ${traceSteps.length} 步`}</em>
+                      </button>
+                      {traceExpanded ? (
+                        <div className="v35-chat-inline-trace-steps">
+                          {traceSteps.map((step) => (
+                            <article className="v35-chat-inline-trace-step" key={step.step}>
+                              <header>
+                                <strong>{step.label}</strong>
+                                <span>{step.detail || step.status || "done"}</span>
+                              </header>
+                              {(step.sources ?? []).length > 0 ? (
+                                <div className="v35-chat-inline-trace-sources">
+                                  {(step.sources ?? []).map((source) => (
+                                    <button key={`${source.source_kind || "index"}:${source.doc_id}:${source.source_id || ""}`} type="button" onClick={() => void navigator.clipboard?.writeText(source.doc_id)}>
+                                      <strong>{source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}</strong>
+                                      <span>{formatSourceMeta(source) || source.doc_id}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </article>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {message.role === "assistant" ? (
                     <div className="v35-chat-markdown" dangerouslySetInnerHTML={{ __html: renderMarkdownToHtml(displayContent) }} />
                   ) : (
@@ -422,7 +477,7 @@ export function ChatPage() {
                     {displaySources.map((source) => (
                       <button
                         className="v35-chat-source"
-                        key={source.doc_id}
+                        key={`${source.source_kind || "index"}:${source.doc_id}:${source.source_id || ""}`}
                         type="button"
                         title={source.doc_id}
                         onClick={() => void navigator.clipboard?.writeText(source.doc_id)}
@@ -444,15 +499,15 @@ export function ChatPage() {
               );
             })}
 
-            {isSending ? (
+            {isSending && !(activeMode === "agent" && Boolean(latestAssistantMessage)) ? (
               <article className="v35-chat-turn role-assistant is-pending">
                 <header>
                   <span>Assistant</span>
                   <time>now</time>
                 </header>
-                <p><span className="v35-chat-dot" /> 正在生成...</p>
-              </article>
-            ) : null}
+                  <p><span className="v35-chat-dot" /> {activeMode === "agent" ? statusMessage : "正在生成..."}</p>
+                </article>
+              ) : null}
           </div>
 
           {timelineEntries.length > 0 ? (
@@ -629,6 +684,26 @@ export function ChatPage() {
                   </div>
                 ) : (
                   <p className="v35-muted">发送后显示纳入范围</p>
+                )}
+              </div>
+            ) : activeMode === "agent" ? (
+              <div className="v35-chat-wide-scope">
+                <div className="v35-chat-wide-meter">
+                  <span><strong>{agentIndexCount}</strong><em>索引</em></span>
+                  <span><strong>{agentPaperCount}</strong><em>原文</em></span>
+                  <span><strong>{latestSources.length}</strong><em>总计</em></span>
+                </div>
+                {latestSources.length > 0 ? (
+                  <div className="v35-chat-wide-source-list">
+                    {latestSources.map((source) => (
+                      <button key={`${source.source_kind || "index"}:${source.doc_id}:${source.source_id || ""}`} type="button" title={source.doc_id} onClick={() => void navigator.clipboard?.writeText(source.doc_id)}>
+                        <strong>{source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}</strong>
+                        <span>{formatSourceMeta(source) || source.doc_id}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="v35-muted">发送后显示本轮读取来源</p>
                 )}
               </div>
             ) : (

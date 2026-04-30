@@ -14,6 +14,17 @@ export interface ChatSource {
   doc_id: string;
   display_name: string;
   title?: string;
+  authors?: string[];
+  year?: number | null;
+  source_kind?: "index" | "paper";
+}
+
+export interface AgentTraceStep {
+  step: string;
+  label: string;
+  detail?: string;
+  status?: "running" | "done" | string;
+  sources?: ChatSource[];
 }
 
 export interface ChatHistoryMessage {
@@ -36,6 +47,11 @@ export interface ChatContextStats {
   total_index_tokens?: number;
   wide_ranked_fallback?: boolean;
   ranked_candidate_count?: number;
+  agent_strategy?: string;
+  candidate_count?: number;
+  read_index_count?: number;
+  read_original_count?: number;
+  agent_trace?: AgentTraceStep[];
   [key: string]: unknown;
 }
 
@@ -64,6 +80,7 @@ export interface ChatAnswerV1 {
 }
 
 export type ChatStreamEvent =
+  | { type: "agent_step"; step: AgentTraceStep }
   | { type: "meta"; mode: ChatMode; sources: ChatSource[]; context_stats: ChatContextStats }
   | { type: "delta"; text: string }
   | { type: "done"; finish_reason?: string | null }
@@ -179,15 +196,33 @@ function parseAssistantCitationInfo(content: string): { content: string; sourceI
     return { content: "", sourceIds: [], hasFooter: false };
   }
 
-  const matched = lines[lastIndex].trim().match(CITATION_FOOTER_PATTERN);
-  if (!matched) {
+  const footerIds: string[] = [];
+  let footerCount = 0;
+  while (lastIndex >= 0) {
+    const matched = lines[lastIndex].trim().match(CITATION_FOOTER_PATTERN);
+    if (!matched) {
+      break;
+    }
+    for (const sourceId of extractUniqueSourceIds(matched[1] || "")) {
+      if (!footerIds.includes(sourceId)) {
+        footerIds.push(sourceId);
+      }
+    }
+    footerCount += 1;
+    lastIndex -= 1;
+    while (lastIndex >= 0 && !lines[lastIndex].trim()) {
+      lastIndex -= 1;
+    }
+  }
+
+  if (footerCount === 0) {
     return { content: raw, sourceIds: [], hasFooter: false };
   }
 
   const stripped = lines.slice(0, lastIndex).join("\n").replace(/[\s\n]+$/g, "");
   return {
     content: stripped,
-    sourceIds: extractUniqueSourceIds(matched[1] || ""),
+    sourceIds: footerIds,
     hasFooter: true,
   };
 }
