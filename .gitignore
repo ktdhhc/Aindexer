@@ -4,3 +4,25 @@ frontend-v3/.vite/
 frontend-v3/.turbo/
 frontend-v3/.cache/
 backend/frontend/v3/
+
+# Python / test caches
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Local tool caches
+.omocache/
+.octto/
+.sisyphus/
+.trae/
+sessions/
+
+# Build artifacts
+build/
+dist/
+
+# Local runtime data
+data/
+
+# Local archives
+*.zip
