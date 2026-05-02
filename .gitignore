@@ -1,0 +1,27 @@
+.env
+data/
+build/
+dist/
+sessions/
+
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Frontend local dependencies and caches
+frontend-v3/node_modules/
+frontend-v3/.vite/
+frontend-v3/.turbo/
+frontend-v3/.cache/
+
+# Local tools and private workspace files
+.omocache/
+.octto/
+.opencode/
+.sisyphus/
+.trae/
+
+# Local archives
+*.zip
