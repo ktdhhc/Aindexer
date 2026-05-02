@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 def _resolve_tutorial_path() -> Path:
     candidates = [
         BASE_DIR / "TUTORIAL.md",
+        BASE_DIR / "README.md",
         BASE_DIR / "_internal" / "TUTORIAL.md",
     ]
     for p in candidates:

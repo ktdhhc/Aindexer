@@ -9,14 +9,14 @@
 - 当前唯一正式前端入口：`/v3/workbench`
 - 当前唯一正式前端代码入口：`frontend-v3/`
 - 当前唯一正式静态构建输出：`backend/frontend/v3/`
-- 仓库中仍保留 `backend/frontend/v2/`、`backend/frontend/translator/`、部分旧测试与历史脚本，但它们已经弃用，不再作为当前产品入口或 README 支持范围
-- 部分历史文档仍保留迁移期描述；涉及入口和现状时，以代码和本 README 为准
+- 当前公开仓库只保留运行主应用所需的 `backend/`、`frontend-v3/` 与本 README
+- `backend/frontend/v2/`、`backend/frontend/translator/` 仍位于 `backend/` 内作为历史遗留实现保留，但不是当前正式入口
 
 ## 项目定位
 
 - 本地桌面式文献工作台，不是云端多用户系统
 - 以文献上传、结构化索引、检索预览、人工修订、翻译校对和问答探索为主链
-- UI 设计基线为 `docs/FRONTEND_DESIGN.md` 中定义的 **Editorial Lab**：暖色纸张感、阅读优先、编辑优先、低噪声工具界面
+- UI 方向为 **Editorial Lab**：暖色纸张感、阅读优先、编辑优先、低噪声工具界面
 
 ## 核心能力
 
@@ -66,15 +66,11 @@
 - 导出与备份：`data/exports/`
 - 运行日志：`data/logs/`
 
-## 仓库结构
+## 公开仓库结构
 
 ```text
 literature-indexer/
 |- README.md
-|- docs/
-|  |- CURRENT_STATE.md
-|  |- FRONTEND_DESIGN.md
-|  `- plans/
 |- frontend-v3/                # 当前唯一正式前端源码入口
 |- backend/
 |  |- app/                     # FastAPI、路由、服务、仓储、DB
@@ -85,11 +81,14 @@ literature-indexer/
 |  |- prompts/                 # 问答与抽取提示词
 |  |- tests/                   # 后端与翻译测试
 |  `- desktop_main.py          # 打包后桌面启动入口
-|- scripts/                    # 打包、辅助脚本
-|- data/                       # 本地运行数据
-|- demo/                       # 设计演示与视觉基线
-`- octto/                      # 独立子项目
 ```
+
+运行时目录如 `data/` 由程序在本地自动创建，不作为公开源码目录。
+
+## 运行说明
+
+- 仓库中已包含当前 `backend/frontend/v3/` 构建产物，因此直接启动后端即可访问正式入口
+- 如果你修改了 `frontend-v3/` 源码，需要重新执行 `npm run build`，以刷新 `backend/frontend/v3/` 下的静态产物
 
 ## 关键后端接口
 
@@ -139,14 +138,21 @@ uvicorn app.main:app --reload
 
 ### 4. 启动方式
 
-构建后通过后端访问正式入口：
+直接启动后访问正式入口：
+
+```bash
+cd backend
+uvicorn app.main:app --reload
+```
+
+访问：`http://127.0.0.1:8000/v3/workbench`
+
+如果你修改了前端源码，再重新构建：
 
 ```bash
 cd frontend-v3
 npm run build
 ```
-
-访问：`http://127.0.0.1:8000/v3/workbench`
 
 前端开发模式：
 
@@ -191,23 +197,6 @@ cd frontend-v3
 npm run build
 ```
 
-## Windows 打包
-
-项目提供本地桌面式分发脚本，本质上是将后端和静态前端打包为本地启动程序，再通过浏览器访问本机服务。
-
-```bash
-python scripts/build_windows_onedir.py
-```
-
-输出目录通常位于：`dist/Aindexer/`
-
-打包脚本会：
-
-- 调用 PyInstaller 生成 `Aindexer.exe`
-- 打入 `backend/frontend/` 静态资源与 `backend/prompts/`
-- 生成 `start.bat` 与 `start_debug.bat`
-- 对 `http://127.0.0.1:8000/api/providers` 做基础 smoke test
-
 ## 设计与实现判断
 
 从代码结构看，这个项目当前已经形成比较清晰的 V3.5 主体能力：
@@ -220,8 +209,7 @@ python scripts/build_windows_onedir.py
 同时也能看到迁移痕迹仍然存在：
 
 - `backend/app/main.py` 仍会挂载历史静态目录
-- 仓库中仍有 `v2`、旧 translator 前端、相关 UI 测试和迁移期脚本
-- `docs/CURRENT_STATE.md` 仍保留部分多入口时期描述
+- `backend/` 中仍保留 `v2`、旧 translator 前端和相关测试，作为历史遗留参考
 
 因此，当前最合适的仓库认知是：
 
@@ -235,8 +223,7 @@ python scripts/build_windows_onedir.py
 - 翻译上传接口当前只接受 `PDF`
 - 问答与翻译都依赖可用的 Provider 配置；首次使用前应先完成配置页设置
 
-## 相关文档
+## 公开边界
 
-- 当前设计约束：`docs/FRONTEND_DESIGN.md`
-- 前端迁移方案：`docs/plans/frontend-v3-5-migration-plan.md`
-- 当前事实快照：`docs/CURRENT_STATE.md`
+- 本公开仓库不包含本地运行数据、历史打包产物、辅助脚本、设计推演文档和个人配置痕迹
+- 若你需要打包脚本、设计基线文档或其它内部材料，应在本地私有工作区自行维护
