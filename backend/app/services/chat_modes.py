@@ -12,6 +12,7 @@ from .file_parser import parse_file
 from .markdown_export import render_markdown
 from .prompt_store import get_required_prompt
 from .provider_client import ProviderClient, ProviderConfig
+from .usage_tracker import record_llm_usage
 
 ChatMode = Literal["wide", "deep", "agent"]
 
@@ -88,6 +89,14 @@ def run_chat(
         config=provider_cfg,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
+    )
+    record_llm_usage(
+        workspace_id=workspace_id,
+        feature="chat",
+        operation=f"chat_{mode_value}",
+        provider_cfg=provider_cfg,
+        input_text=system_prompt + "\n" + user_prompt,
+        output_text=answer,
     )
     return {
         "answer": answer.strip(),

@@ -27,3 +27,12 @@ def test_translation_health_endpoint() -> None:
     res = client.get("/api/translation/health")
     assert res.status_code == 200
     assert res.json() == {"ok": True}
+
+
+def test_usage_filters_endpoint() -> None:
+    app = create_app()
+    client = TestClient(app)
+    res = client.get("/api/usage/filters")
+    assert res.status_code == 200
+    data = res.json()
+    assert set(data.keys()) == {"providers", "models", "features", "api_keys"}

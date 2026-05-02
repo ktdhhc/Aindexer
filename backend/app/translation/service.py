@@ -14,6 +14,7 @@ from ..provider_registry import resolve_model_name_registry_entry
 from ..services.prompt_store import get_required_prompt
 from ..services.provider_client import ProviderClient
 from ..services.provider_client import ProviderConfig
+from ..services.usage_tracker import record_llm_usage
 from .errors import TranslationErrorOut, TranslatorErrorCode
 from .providers.base import (
     TranslationProviderError,
@@ -325,6 +326,17 @@ def execute_translation_request(
 
     cleaned_translated_text = sanitize_translated_text(result.translated_text)
     result.translated_text = cleaned_translated_text
+    record_llm_usage(
+        workspace_id=workspace_id,
+        feature="translation",
+        operation="translation_request",
+        provider_cfg=resolved.to_provider_config(),
+        input_text=system_prompt + "\n" + user_prompt,
+        output_text=cleaned_translated_text,
+        usage=result.usage,
+        duration_ms=result.total_duration_ms,
+        request_id=request_id,
+    )
 
     translation_repository.save_translation_result(
         request_id=request_id,
@@ -491,6 +503,16 @@ def stream_translation_request(payload: TranslationRequestIn):
 
         cleaned_translated_text = sanitize_translated_text(raw_text)
         total_duration_ms = (time.perf_counter() - started_at) * 1000.0
+        record_llm_usage(
+            workspace_id=workspace_id,
+            feature="translation",
+            operation="translation_stream",
+            provider_cfg=resolved.to_provider_config(),
+            input_text=system_prompt + "\n" + user_prompt,
+            output_text=cleaned_translated_text,
+            duration_ms=total_duration_ms,
+            request_id=request_id,
+        )
         translation_repository.save_translation_result(
             request_id=request_id,
             translated_text=cleaned_translated_text,

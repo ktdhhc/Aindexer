@@ -18,6 +18,7 @@ from ..services.chat_modes import (
 )
 from ..services.chat_v0 import run_chat_v0
 from ..services.provider_client import ProviderClient, ProviderConfig
+from ..services.usage_tracker import record_llm_usage
 from ._context import resolve_workspace_id
 
 router = APIRouter()
@@ -139,6 +140,7 @@ def ask_chat_stream(payload: ChatAskIn):
             }
             yield json.dumps(meta, ensure_ascii=False) + "\n"
             finish_reason_holder: dict[str, str | None] = {"value": None}
+            output_parts: list[str] = []
 
             def capture_finish_reason(reason: str | None) -> None:
                 finish_reason_holder["value"] = reason
@@ -150,7 +152,17 @@ def ask_chat_stream(payload: ChatAskIn):
                 on_finish=capture_finish_reason,
             ):
                 if chunk:
+                    output_parts.append(chunk)
                     yield json.dumps({"type": "delta", "text": chunk}, ensure_ascii=False) + "\n"
+            record_llm_usage(
+                workspace_id=workspace_id,
+                feature="chat",
+                operation=f"chat_{mode}",
+                provider_cfg=cfg,
+                input_text=system_prompt + "\n" + user_prompt,
+                output_text="".join(output_parts),
+                request_id=payload.session_id,
+            )
             yield json.dumps({"type": "done", "finish_reason": finish_reason_holder.get("value")}, ensure_ascii=False) + "\n"
         except RuntimeError as exc:
             yield json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False) + "\n"

@@ -274,6 +274,48 @@ def init_db() -> None:
                 claims,
                 custom_text
             );
+
+            CREATE TABLE IF NOT EXISTS llm_usage_events (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                feature TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                api_key_fingerprint TEXT,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                total_tokens INTEGER,
+                token_source TEXT NOT NULL,
+                estimated INTEGER NOT NULL DEFAULT 0,
+                cached INTEGER NOT NULL DEFAULT 0,
+                success INTEGER NOT NULL DEFAULT 1,
+                error_code TEXT,
+                duration_ms REAL,
+                request_id TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_llm_usage_events_created_at
+            ON llm_usage_events(created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_llm_usage_events_filters
+            ON llm_usage_events(workspace_id, feature, provider, model, api_key_fingerprint, created_at);
+
+            CREATE TABLE IF NOT EXISTS llm_pricing_rules (
+                id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                model TEXT,
+                api_key_fingerprint TEXT,
+                input_price_per_1m REAL NOT NULL DEFAULT 0,
+                output_price_per_1m REAL NOT NULL DEFAULT 0,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_llm_pricing_rules_lookup
+            ON llm_pricing_rules(provider, model, api_key_fingerprint);
             """
         )
         _migrate_schema(conn)

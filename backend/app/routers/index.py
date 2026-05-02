@@ -177,6 +177,8 @@ def _process_indexing(
             custom_fields=custom_fields,
             retries=retries,
             should_cancel=lambda: is_cancel_requested(doc_id),
+            workspace_id=str(doc.get("workspace_id") or DEFAULT_WORKSPACE_ID),
+            request_id=doc_id,
         )
         if _check_cancel(doc_id):
             return

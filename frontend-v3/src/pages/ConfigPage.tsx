@@ -31,10 +31,18 @@ import {
   listWorkspaces,
   updateWorkspace,
 } from "../shared/api/workspaces";
+import {
+  type UsageBreakdownBy,
+  type UsageBucket,
+  type UsagePeriod,
+  getUsageSummary,
+  listPricingRules,
+  savePricingRule,
+} from "../shared/api/usage";
 import { getModelDefaults, setModelDefaults, type ModelDefaults } from "../shared/lib/modelDefaults";
 import { buildAvailableProviderModelEntries, getProviderModels, setProviderModels } from "../shared/lib/providerModels";
 
-type ConfigSection = "providers" | "defaults" | "fields" | "workspaces";
+type ConfigSection = "providers" | "defaults" | "fields" | "workspaces" | "usage";
 
 interface ProviderDraft {
   baseUrl: string;
@@ -44,6 +52,11 @@ interface ProviderDraft {
   temperature: number;
   timeout: number;
   enabled: boolean;
+}
+
+interface PricingDraft {
+  inputPrice: string;
+  outputPrice: string;
 }
 
 function uniqueTrimmed(values: string[]): string[] {
@@ -112,6 +125,69 @@ function providerStatus(provider: ProviderSummary | null): string {
   return "可用";
 }
 
+function compactNumber(value?: number | null): string {
+  const numberValue = Number(value || 0);
+  if (numberValue >= 1_000_000) return `${(numberValue / 1_000_000).toFixed(1)}M`;
+  if (numberValue >= 1_000) return `${Math.round(numberValue / 1_000)}K`;
+  return new Intl.NumberFormat("zh-CN").format(numberValue);
+}
+
+function formatCost(value?: number | null): string {
+  return `￥${Number(value || 0).toFixed(4)}`;
+}
+
+function usageFeatureLabel(value: string): string {
+  if (value === "indexing") return "索引";
+  if (value === "translation") return "翻译";
+  if (value === "chat") return "问答";
+  return value || "全部";
+}
+
+function usageBreakdownLabel(value: UsageBreakdownBy): string {
+  if (value === "provider") return "Provider";
+  if (value === "model") return "模型";
+  if (value === "feature") return "功能";
+  return "API Key";
+}
+
+function usageDimensionValueLabel(dimension: UsageBreakdownBy, value: string): string {
+  if (dimension === "feature") {
+    return usageFeatureLabel(value);
+  }
+  if (dimension === "api_key_fingerprint") {
+    return value || "无 Key";
+  }
+  return value || "未设置";
+}
+
+function usageDimensionButtonLabel(value: UsageBreakdownBy): string {
+  if (value === "api_key_fingerprint") return "apikey";
+  return value;
+}
+
+const GLOBAL_PRICING_PROVIDER = "__global__";
+
+function pricingPayloadFromDraft(draft: PricingDraft) {
+  return {
+    provider: GLOBAL_PRICING_PROVIDER,
+    model: null,
+    api_key_fingerprint: null,
+    input_price_per_1m: Number(draft.inputPrice || 0),
+    output_price_per_1m: Number(draft.outputPrice || 0),
+    currency: "RMB",
+  };
+}
+
+const USAGE_BREAKDOWN_ORDER: UsageBreakdownBy[] = ["provider", "model", "feature", "api_key_fingerprint"];
+const USAGE_STACK_COLORS = [
+  "is-sand",
+  "is-copper",
+  "is-olive",
+  "is-slate",
+  "is-rosewood",
+  "is-ink",
+] as const;
+
 export function ConfigPage() {
   const queryClient = useQueryClient();
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
@@ -140,6 +216,15 @@ export function ConfigPage() {
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
   const [workspaceMessage, setWorkspaceMessage] = useState("准备就绪");
 
+  const [usagePeriod, setUsagePeriod] = useState<UsagePeriod>("day");
+  const [usageBreakdownBy, setUsageBreakdownBy] = useState<UsageBreakdownBy>("feature");
+  const [selectedUsageLegend, setSelectedUsageLegend] = useState("");
+  const [usageMessage, setUsageMessage] = useState("准备就绪");
+  const [pricingDraft, setPricingDraft] = useState<PricingDraft>({
+    inputPrice: "",
+    outputPrice: "",
+  });
+
   const providersQuery = useQuery({
     queryKey: ["providers"],
     queryFn: listProviders,
@@ -165,6 +250,20 @@ export function ConfigPage() {
     queryKey: ["provider-model-registry-resolve", providerModels],
     queryFn: () => resolveModelRegistryEntries(providerModels),
     enabled: providerModels.length > 0,
+  });
+
+  const usageSummaryQuery = useQuery({
+    queryKey: ["usage-summary", workspaceId, usagePeriod, usageBreakdownBy],
+    queryFn: () => getUsageSummary({
+      workspaceId,
+      period: usagePeriod,
+      breakdownBy: usageBreakdownBy,
+    }),
+  });
+
+  const pricingQuery = useQuery({
+    queryKey: ["usage-pricing"],
+    queryFn: listPricingRules,
   });
 
   const selectedProviderRow = useMemo(() => {
@@ -214,6 +313,40 @@ export function ConfigPage() {
     return buildAvailableProviderModelEntries(providersQuery.data ?? []);
   }, [providersQuery.data]);
 
+  const usageBuckets = usageSummaryQuery.data?.buckets ?? [];
+  const usageTotals = usageSummaryQuery.data?.totals ?? {
+    input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0,
+    request_count: 0,
+    estimated_cost: 0,
+    dimension_breakdown: {},
+    dimension_metrics: {},
+  };
+  const maxBucketTokens = Math.max(1, ...usageBuckets.map((item) => item.total_tokens));
+  const usageAxisTicks = [1, 0.75, 0.5, 0.25, 0].map((ratio) => ({
+    ratio,
+    value: Math.round(maxBucketTokens * ratio),
+  }));
+  const usageLegendItems = Object.entries(usageTotals.dimension_breakdown)
+    .sort((left, right) => right[1] - left[1])
+    .map(([value, tokens], index) => ({
+      value,
+      label: usageDimensionValueLabel(usageBreakdownBy, value),
+      tokens,
+      share: usageTotals.total_tokens > 0 ? tokens / usageTotals.total_tokens : 0,
+      colorClass: USAGE_STACK_COLORS[index % USAGE_STACK_COLORS.length],
+    }));
+  const activeUsageMetrics = selectedUsageLegend
+    ? usageTotals.dimension_metrics[selectedUsageLegend] ?? {
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        request_count: 0,
+        estimated_cost: 0,
+      }
+    : usageTotals;
+
   useEffect(() => {
     const providers = providersQuery.data;
     if (!providers || providers.length === 0) {
@@ -243,6 +376,29 @@ export function ConfigPage() {
     });
     setProviderModelRows(modelRows);
   }, [selectedProviderRow]);
+
+  useEffect(() => {
+    if (selectedUsageLegend && !usageLegendItems.some((item) => item.value === selectedUsageLegend)) {
+      setSelectedUsageLegend("");
+    }
+  }, [selectedUsageLegend, usageLegendItems]);
+
+  useEffect(() => {
+    setSelectedUsageLegend("");
+  }, [usageBreakdownBy, usagePeriod]);
+
+  useEffect(() => {
+    const globalRule = pricingQuery.data?.find(
+      (rule) => rule.provider === GLOBAL_PRICING_PROVIDER && !rule.model && !rule.api_key_fingerprint,
+    );
+    if (!globalRule) {
+      return;
+    }
+    setPricingDraft({
+      inputPrice: String(globalRule.input_price_per_1m || ""),
+      outputPrice: String(globalRule.output_price_per_1m || ""),
+    });
+  }, [pricingQuery.data]);
 
   useEffect(() => {
     const templates = templatesQuery.data;
@@ -564,6 +720,20 @@ export function ConfigPage() {
     },
   });
 
+  const savePricingMutation = useMutation({
+    mutationFn: async () => {
+      return savePricingRule(pricingPayloadFromDraft(pricingDraft));
+    },
+    onSuccess: async () => {
+      setUsageMessage("价格已保存");
+      await queryClient.invalidateQueries({ queryKey: ["usage-pricing"] });
+      await queryClient.invalidateQueries({ queryKey: ["usage-summary"] });
+    },
+    onError: (error) => {
+      setUsageMessage(error instanceof Error ? error.message : "保存失败");
+    },
+  });
+
   function updateProviderDraft(patch: Partial<ProviderDraft>) {
     setProviderDraft((current) => (current ? { ...current, ...patch } : current));
   }
@@ -624,7 +794,9 @@ export function ConfigPage() {
         ? defaultsMessage
         : section === "fields"
           ? fieldsMessage
-          : workspaceMessage;
+          : section === "workspaces"
+            ? workspaceMessage
+            : usageMessage;
   const activeField = fieldDrafts[activeFieldIndex] ?? null;
 
   return (
@@ -658,6 +830,10 @@ export function ConfigPage() {
           <button className={section === "workspaces" ? "is-active" : ""} type="button" onClick={() => setSection("workspaces")}>
             <strong>工作区</strong>
             <span>{currentWorkspaceRow?.name || workspaceId}</span>
+          </button>
+          <button className={section === "usage" ? "is-active" : ""} type="button" onClick={() => setSection("usage")}>
+            <strong>用量</strong>
+            <span>{compactNumber(usageTotals.total_tokens)} tokens</span>
           </button>
           <p className="v35-config-status">{currentSectionStatus}</p>
         </aside>
@@ -1002,6 +1178,97 @@ export function ConfigPage() {
                   <button className="v35-button v35-button-primary" type="button" disabled={!currentWorkspaceRow || renameWorkspaceMutation.isPending} onClick={() => void renameWorkspaceMutation.mutateAsync()}>保存名称</button>
                   <button className="v35-button" type="button" disabled={!currentWorkspaceRow || workspaceId === DEFAULT_WORKSPACE_ID || deleteWorkspaceMutation.isPending} onClick={() => void deleteWorkspaceMutation.mutateAsync()}>删除工作区</button>
                 </footer>
+              </article>
+            </section>
+          ) : null}
+
+          {section === "usage" ? (
+            <section className="v35-config-section v35-usage-section">
+              <div className="v35-config-list v35-usage-filters">
+                <div className="v35-usage-period-switch" aria-label="统计周期">
+                  <button className={usagePeriod === "day" ? "is-active" : ""} type="button" onClick={() => setUsagePeriod("day")}>日</button>
+                  <button className={usagePeriod === "month" ? "is-active" : ""} type="button" onClick={() => setUsagePeriod("month")}>月</button>
+                </div>
+                <div className="v35-usage-dimension-switch" aria-label="统计维度">
+                  {USAGE_BREAKDOWN_ORDER.map((dimension) => (
+                    <button className={usageBreakdownBy === dimension ? "is-active" : ""} key={dimension} type="button" onClick={() => setUsageBreakdownBy(dimension)}>
+                      {usageDimensionButtonLabel(dimension)}
+                    </button>
+                  ))}
+                </div>
+                <p className="v35-muted">点击维度，图例会显示该统计口径下各变量占比。</p>
+              </div>
+
+              <article className="v35-config-paper v35-usage-paper">
+                <header className="v35-config-paper-head">
+                  <div>
+                    <p>Usage & Budget</p>
+                    <h2>用量与预算</h2>
+                  </div>
+                  <span className="v35-status is-ok">{usageBreakdownLabel(usageBreakdownBy)}</span>
+                </header>
+
+                <div className="v35-usage-metrics">
+                  <div><span>输入</span><strong>{compactNumber(activeUsageMetrics.input_tokens)}</strong></div>
+                  <div><span>输出</span><strong>{compactNumber(activeUsageMetrics.output_tokens)}</strong></div>
+                  <div><span>请求</span><strong>{compactNumber(activeUsageMetrics.request_count)}</strong></div>
+                  <div><span>预算</span><strong>{formatCost(activeUsageMetrics.estimated_cost)}</strong></div>
+                </div>
+
+                <div className="v35-usage-legend" aria-label="维度图例">
+                  {usageLegendItems.map((item) => (
+                    <button className={`v35-usage-legend-item ${selectedUsageLegend === item.value ? "is-active" : ""}`} key={item.value} type="button" onClick={() => setSelectedUsageLegend((current) => current === item.value ? "" : item.value)}>
+                      <i className={`v35-usage-swatch ${item.colorClass}`} />
+                      <em>{item.label}</em>
+                      <strong>{Math.round(item.share * 100)}%</strong>
+                    </button>
+                  ))}
+                  {usageLegendItems.length === 0 ? <span className="v35-muted">暂无图例</span> : null}
+                </div>
+
+                <div className="v35-usage-chart-frame" onClick={(event) => {
+                  const target = event.target as HTMLElement;
+                  if (!target.closest(".v35-usage-bar-item")) {
+                    setSelectedUsageLegend("");
+                  }
+                }}>
+                  <div className="v35-usage-axis" aria-hidden="true">
+                    {usageAxisTicks.map((tick) => <span key={`${tick.ratio}_${tick.value}`}>{compactNumber(tick.value)}</span>)}
+                  </div>
+                  <div className="v35-usage-chart" aria-label="token 用量柱状图">
+                    {usageBuckets.map((bucket: UsageBucket) => {
+                      const totalHeight = Math.max(6, Math.round((bucket.total_tokens / maxBucketTokens) * 100));
+                      return (
+                        <div className="v35-usage-bar-item" key={bucket.bucket} title={`${bucket.bucket} · ${compactNumber(bucket.total_tokens)} tokens`}>
+                          <div className="v35-usage-bar-track">
+                            <div className="v35-usage-bar" style={{ height: `${totalHeight}%` }}>
+                              {usageLegendItems.filter((item) => Number(bucket.dimension_breakdown[item.value] || 0) > 0).map((item) => {
+                                const share = bucket.total_tokens > 0 ? Math.max(8, Math.round((Number(bucket.dimension_breakdown[item.value] || 0) / bucket.total_tokens) * 100)) : 0;
+                                const segmentClass = selectedUsageLegend
+                                  ? selectedUsageLegend === item.value
+                                    ? `${item.colorClass} is-highlighted`
+                                    : `${item.colorClass} is-dimmed`
+                                  : item.colorClass;
+                                return <span className={segmentClass} key={`${bucket.bucket}_${item.value}`} style={{ height: `${share}%` }} />;
+                              })}
+                            </div>
+                          </div>
+                          <strong>{usagePeriod === "month" ? bucket.bucket.slice(5) : bucket.bucket.slice(5).replace("-", "/")}</strong>
+                          <em>{compactNumber(bucket.total_tokens)}</em>
+                        </div>
+                      );
+                    })}
+                    {usageBuckets.length === 0 ? <p className="v35-muted">暂无记录。</p> : null}
+                  </div>
+                </div>
+
+                <section className="v35-usage-pricing">
+                  <div className="v35-usage-pricing-form">
+                    <input className="v35-input" type="number" min="0" step="0.0001" value={pricingDraft.inputPrice} onChange={(event) => setPricingDraft((current) => ({ ...current, inputPrice: event.target.value }))} placeholder="输入 / 1M" />
+                    <input className="v35-input" type="number" min="0" step="0.0001" value={pricingDraft.outputPrice} onChange={(event) => setPricingDraft((current) => ({ ...current, outputPrice: event.target.value }))} placeholder="输出 / 1M" />
+                    <button className="v35-button v35-button-primary" type="button" disabled={savePricingMutation.isPending} onClick={() => void savePricingMutation.mutateAsync()}>保存价格</button>
+                  </div>
+                </section>
               </article>
             </section>
           ) : null}

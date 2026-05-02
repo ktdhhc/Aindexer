@@ -22,6 +22,7 @@ from .routers import (
     providers,
     search,
     system,
+    usage,
     workspaces,
 )
 
@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(export.router, prefix="/api/export", tags=["export"])
     app.include_router(fields.router, prefix="/api/fields", tags=["fields"])
     app.include_router(providers.router, prefix="/api/providers", tags=["providers"])
+    app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
     app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
     app.include_router(system.router, prefix="/api/system", tags=["system"])
 

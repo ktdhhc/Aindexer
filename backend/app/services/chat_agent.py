@@ -21,6 +21,7 @@ from .chat_modes import (
 )
 from .prompt_store import get_required_prompt
 from .provider_client import ProviderClient, ProviderConfig
+from .usage_tracker import record_llm_usage
 
 
 AgentAction = Literal["answer", "read_metadata", "read_index", "read_paper", "not_found"]
@@ -352,6 +353,15 @@ def _plan_next_action(
             user_prompt=base_user_prompt + retry_suffix,
             should_cancel=should_cancel,
         )
+        record_llm_usage(
+            workspace_id=state.workspace_id,
+            feature="chat",
+            operation="chat_agent_planner",
+            provider_cfg=provider_cfg,
+            input_text=PLANNER_SYSTEM_PROMPT + "\n" + base_user_prompt + retry_suffix,
+            output_text=json.dumps(raw, ensure_ascii=False),
+            request_id=state.run_id,
+        )
         try:
             return _parse_decision(raw)
         except RuntimeError as exc:
@@ -387,6 +397,7 @@ def _stream_final_answer(
         context=context_result.context.strip() or "（没有读取到索引或原文内容）",
     )
     finish_reason_holder: dict[str, str | None] = {"value": None}
+    output_parts: list[str] = []
 
     def capture_finish_reason(reason: str | None) -> None:
         finish_reason_holder["value"] = reason
@@ -399,7 +410,17 @@ def _stream_final_answer(
         on_finish=capture_finish_reason,
     ):
         if chunk:
+            output_parts.append(chunk)
             yield {"type": "delta", "text": chunk}
+    record_llm_usage(
+        workspace_id=state.workspace_id,
+        feature="chat",
+        operation="chat_agent_final",
+        provider_cfg=provider_cfg,
+        input_text=FINAL_SYSTEM_PROMPT + "\n" + user_prompt,
+        output_text="".join(output_parts),
+        request_id=state.run_id,
+    )
     yield {"type": "done", "finish_reason": finish_reason_holder.get("value")}
 
 

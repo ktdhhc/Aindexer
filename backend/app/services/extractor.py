@@ -10,6 +10,7 @@ from typing import Any
 from ..schemas import ClaimItem, IndexRecordIn
 from .provider_client import ProviderClient, ProviderConfig
 from .prompt_store import get_required_prompt
+from .usage_tracker import record_llm_usage
 
 
 SYSTEM_PROMPT = get_required_prompt("index_system_prompt.txt")
@@ -54,6 +55,8 @@ def run_extraction(
     custom_fields: list[dict[str, Any]],
     retries: int = 3,
     should_cancel: Callable[[], bool] | None = None,
+    workspace_id: str | None = None,
+    request_id: str | None = None,
 ) -> IndexRecordIn:
     logger = logging.getLogger(__name__)
     last_error: Exception | None = None
@@ -76,6 +79,15 @@ def run_extraction(
                 SYSTEM_PROMPT,
                 user_prompt,
                 should_cancel=should_cancel,
+            )
+            record_llm_usage(
+                workspace_id=workspace_id,
+                feature="indexing",
+                operation="index_extract",
+                provider_cfg=provider_cfg,
+                input_text=SYSTEM_PROMPT + "\n" + user_prompt,
+                output_text=json.dumps(data, ensure_ascii=False),
+                request_id=request_id,
             )
             normalized = _normalize_output(data)
             page_count = _count_page_markers(text)
