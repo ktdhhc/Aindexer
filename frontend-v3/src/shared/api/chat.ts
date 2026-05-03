@@ -62,6 +62,7 @@ const CITATION_FOOTER_PATTERN = /^引用(?:来源|索引|原文)：(.*)$/i;
 export interface ChatAskV1Payload extends ChatAskPayload {
   mode: ChatMode;
   doc_ids?: string[];
+  include_index_context?: boolean;
   messages?: ChatHistoryMessage[];
   source_map?: Record<string, string>;
   session_id?: string;

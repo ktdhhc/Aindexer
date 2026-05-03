@@ -40,7 +40,7 @@ import {
   savePricingRule,
 } from "../shared/api/usage";
 import { getModelDefaults, setModelDefaults, type ModelDefaults } from "../shared/lib/modelDefaults";
-import { buildAvailableProviderModelEntries, getProviderModels, setProviderModels } from "../shared/lib/providerModels";
+import { setProviderModels, useAvailableProviderModelEntries, useProviderModels } from "../shared/lib/providerModels";
 
 type ConfigSection = "providers" | "defaults" | "fields" | "workspaces" | "usage";
 
@@ -269,6 +269,7 @@ export function ConfigPage() {
   const selectedProviderRow = useMemo(() => {
     return providersQuery.data?.find((item) => item.provider === selectedProvider) ?? null;
   }, [providersQuery.data, selectedProvider]);
+  const storedProviderModels = useProviderModels(selectedProviderRow?.provider ?? "", selectedProviderRow?.model);
 
   const baseUrlSuggestions = useMemo(() => {
     return uniqueTrimmed([
@@ -309,9 +310,7 @@ export function ConfigPage() {
     return workspacesQuery.data?.find((item) => item.id === workspaceId) ?? null;
   }, [workspaceId, workspacesQuery.data]);
 
-  const availableModelEntries = useMemo(() => {
-    return buildAvailableProviderModelEntries(providersQuery.data ?? []);
-  }, [providersQuery.data]);
+  const availableModelEntries = useAvailableProviderModelEntries(providersQuery.data ?? []);
 
   const usageBuckets = usageSummaryQuery.data?.buckets ?? [];
   const usageTotals = usageSummaryQuery.data?.totals ?? {
@@ -364,7 +363,6 @@ export function ConfigPage() {
       setProviderModelRows([]);
       return;
     }
-    const modelRows = getProviderModels(selectedProviderRow.provider, selectedProviderRow.model);
     setProviderDraft({
       baseUrl: String(selectedProviderRow.base_url || ""),
       model: String(selectedProviderRow.model || ""),
@@ -374,8 +372,8 @@ export function ConfigPage() {
       timeout: Number(selectedProviderRow.timeout ?? 120),
       enabled: Boolean(selectedProviderRow.enabled),
     });
-    setProviderModelRows(modelRows);
-  }, [selectedProviderRow]);
+    setProviderModelRows(storedProviderModels);
+  }, [selectedProviderRow, storedProviderModels]);
 
   useEffect(() => {
     if (selectedUsageLegend && !usageLegendItems.some((item) => item.value === selectedUsageLegend)) {
@@ -1203,7 +1201,7 @@ export function ConfigPage() {
                 <header className="v35-config-paper-head">
                   <div>
                     <p>Usage & Budget</p>
-                    <h2>用量与预算</h2>
+                    <h2>用量与预算（估计值）</h2>
                   </div>
                   <span className="v35-status is-ok">{usageBreakdownLabel(usageBreakdownBy)}</span>
                 </header>
@@ -1266,7 +1264,7 @@ export function ConfigPage() {
                   <div className="v35-usage-pricing-form">
                     <input className="v35-input" type="number" min="0" step="0.0001" value={pricingDraft.inputPrice} onChange={(event) => setPricingDraft((current) => ({ ...current, inputPrice: event.target.value }))} placeholder="输入 / 1M" />
                     <input className="v35-input" type="number" min="0" step="0.0001" value={pricingDraft.outputPrice} onChange={(event) => setPricingDraft((current) => ({ ...current, outputPrice: event.target.value }))} placeholder="输出 / 1M" />
-                    <button className="v35-button v35-button-primary" type="button" disabled={savePricingMutation.isPending} onClick={() => void savePricingMutation.mutateAsync()}>保存价格</button>
+                    <button className="v35-button v35-button-primary" type="button" disabled={savePricingMutation.isPending} onClick={() => void savePricingMutation.mutateAsync()}>保存</button>
                   </div>
                 </section>
               </article>

@@ -1,6 +1,9 @@
+import { useMemo, useSyncExternalStore } from "react";
+
 import type { ProviderSummary } from "../api/providers";
 
 const STORAGE_KEY = "aindexer_v35_provider_models";
+const CHANGE_EVENT = "aindexer_v35_provider_models_changed";
 
 type ProviderModelMap = Record<string, string[]>;
 
@@ -28,9 +31,52 @@ function readModelMap(): ProviderModelMap {
 function writeModelMap(map: ProviderModelMap): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
+    window.dispatchEvent(new CustomEvent(CHANGE_EVENT));
   } catch {
     // ignore storage failures
   }
+}
+
+function subscribeProviderModelMap(onStoreChange: () => void): () => void {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+
+  const handleStorage = (event: StorageEvent) => {
+    if (!event.key || event.key === STORAGE_KEY) {
+      onStoreChange();
+    }
+  };
+  const handleChange = () => {
+    onStoreChange();
+  };
+
+  window.addEventListener("storage", handleStorage);
+  window.addEventListener(CHANGE_EVENT, handleChange);
+  return () => {
+    window.removeEventListener("storage", handleStorage);
+    window.removeEventListener(CHANGE_EVENT, handleChange);
+  };
+}
+
+function getProviderModelMapSnapshot(): string {
+  return JSON.stringify(readModelMap());
+}
+
+function useProviderModelMap(): ProviderModelMap {
+  const snapshot = useSyncExternalStore(
+    subscribeProviderModelMap,
+    getProviderModelMapSnapshot,
+    () => "{}",
+  );
+  return useMemo(() => {
+    try {
+      const parsed = JSON.parse(snapshot) as ProviderModelMap;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }, [snapshot]);
 }
 
 export function getProviderModels(provider: string, configuredModel?: string | null): string[] {
@@ -100,4 +146,44 @@ export function buildAvailableProviderModelEntries(providers: ProviderSummary[])
   }
 
   return result;
+}
+
+export function useProviderModels(provider: string, configuredModel?: string | null): string[] {
+  const key = normalizeProvider(provider);
+  const map = useProviderModelMap();
+  return useMemo(() => uniqueModels([String(configuredModel || ""), ...(map[key] || [])]), [configuredModel, key, map]);
+}
+
+export function useAvailableProviderModelEntries(providers: ProviderSummary[]): ProviderModelEntry[] {
+  const map = useProviderModelMap();
+
+  return useMemo(() => {
+    const seen = new Set<string>();
+    const result: ProviderModelEntry[] = [];
+
+    for (const provider of providers) {
+      if (!provider.enabled) {
+        continue;
+      }
+
+      const configuredModel = String(provider.model || "").trim();
+      if (configuredModel) {
+        const key = `${provider.provider}::${configuredModel}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push({ provider: provider.provider, model: configuredModel });
+        }
+      }
+
+      for (const storedModel of map[normalizeProvider(provider.provider)] || []) {
+        const key = `${provider.provider}::${storedModel}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push({ provider: provider.provider, model: storedModel });
+        }
+      }
+    }
+
+    return result;
+  }, [map, providers]);
 }

@@ -756,10 +756,10 @@ def score_document_search_match(
         SequenceMatcher(None, q_lower, filename_lower).ratio(),
     )
     title_ratio = SequenceMatcher(None, q_lower, title_lower).ratio()
-    corpus_ratio = SequenceMatcher(None, q_lower, corpus_lower[:5000]).ratio()
-    fuzzy_ratio = max(filename_ratio, title_ratio, corpus_ratio)
+    fuzzy_ratio = max(filename_ratio, title_ratio)
 
-    matched = exact_hit or term_hits > 0 or fuzzy_ratio >= 0.42
+    allow_fuzzy = len(q_lower) >= 2 and not q_terms
+    matched = exact_hit or term_hits > 0 or (allow_fuzzy and fuzzy_ratio >= 0.72)
     if not matched:
         return None
 

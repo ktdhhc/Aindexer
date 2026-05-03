@@ -1,4 +1,3 @@
-import type { FileItem } from "../../shared/api/files";
 import type { SearchItem } from "../../shared/api/search";
 
 export function nextMessageId(): string {
@@ -171,10 +170,4 @@ export function renderMarkdownToHtml(markdown: string): string {
   }
   closeLists();
   return html.join("");
-}
-
-export function sortedQueueRows(rows: FileItem[]): FileItem[] {
-  return [...rows]
-    .filter((item) => item.status !== "indexed")
-    .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
 }

@@ -39,6 +39,7 @@ class ChatAskIn(BaseModel):
     workspace_id: str = DEFAULT_WORKSPACE_ID
     mode: str = "deep"
     doc_ids: list[str] = Field(default_factory=list)
+    include_index_context: bool = False
     messages: list[dict] = Field(default_factory=list)
     source_map: dict[str, str] = Field(default_factory=dict)
     session_id: str | None = None
@@ -72,6 +73,7 @@ def ask_chat(payload: ChatAskIn) -> dict:
             workspace_id=workspace_id,
             mode=payload.mode,  # type: ignore[arg-type]
             doc_ids=payload.doc_ids,
+            include_index_context=payload.include_index_context,
             history_messages=payload.messages,
             source_map=payload.source_map,
         )
@@ -122,6 +124,7 @@ def ask_chat_stream(payload: ChatAskIn):
                     model_name=cfg.model,
                     mode=mode,  # type: ignore[arg-type]
                     doc_ids=payload.doc_ids,
+                    include_index_context=payload.include_index_context,
                     source_map=payload.source_map,
                 )
 

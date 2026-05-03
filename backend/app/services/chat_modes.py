@@ -66,6 +66,7 @@ def run_chat(
     workspace_id: str = DEFAULT_WORKSPACE_ID,
     mode: ChatMode = "deep",
     doc_ids: list[str] | None = None,
+    include_index_context: bool = False,
     history_messages: list[dict[str, Any]] | None = None,
     source_map: dict[str, str] | None = None,
 ) -> dict:
@@ -76,6 +77,7 @@ def run_chat(
         model_name=provider_cfg.model,
         mode=mode_value,
         doc_ids=doc_ids or [],
+        include_index_context=include_index_context,
         source_map=source_map or {},
     )
     system_prompt, user_prompt = build_chat_prompt(
@@ -113,6 +115,7 @@ def build_chat_context(
     model_name: str,
     mode: ChatMode,
     doc_ids: list[str],
+    include_index_context: bool = False,
     source_map: dict[str, str] | None = None,
 ) -> ContextBuildResult:
     budget = _build_budget(model_name)
@@ -121,7 +124,13 @@ def build_chat_context(
     elif mode == "agent":
         result = _build_agent_context(workspace_id, question, budget, source_map or {})
     else:
-        result = _build_deep_context(workspace_id, doc_ids, budget, source_map or {})
+        result = _build_deep_context(
+            workspace_id,
+            doc_ids,
+            budget,
+            source_map or {},
+            include_index_context=include_index_context,
+        )
 
     return _finalize_context_result(result, budget)
 
@@ -283,6 +292,8 @@ def _build_deep_context(
     doc_ids: list[str],
     budget: dict[str, int],
     source_map: dict[str, str],
+    *,
+    include_index_context: bool,
 ) -> ContextBuildResult:
     unique_ids = []
     for doc_id in doc_ids:
@@ -292,12 +303,44 @@ def _build_deep_context(
     if not unique_ids:
         raise RuntimeError("精读模式需要先选择至少一篇文献")
 
-    items = [_load_document_context(doc_id, workspace_id, variant="original_full") for doc_id in unique_ids]
+    original_items = [_load_document_context(doc_id, workspace_id, variant="original_full") for doc_id in unique_ids]
+    if not include_index_context:
+        return ContextBuildResult(
+            context=_join_context_items(original_items, stable_source_ids=source_map, source_prefix="P"),
+            sources=[item["source"] for item in original_items],
+            stats={"deep_doc_ids": unique_ids},
+        )
+
+    index_items = [_load_document_context(doc_id, workspace_id, variant="index_full") for doc_id in unique_ids]
     return ContextBuildResult(
-        context=_join_context_items(items, stable_source_ids=source_map, source_prefix="P"),
-        sources=[item["source"] for item in items],
-        stats={"deep_doc_ids": unique_ids},
+        context=_join_deep_context(index_items, original_items, source_map),
+        sources=[item["source"] for item in [*index_items, *original_items]],
+        stats={
+            "deep_doc_ids": unique_ids,
+            "deep_include_index_context": True,
+            "read_index_count": len(index_items),
+            "read_original_count": len(original_items),
+        },
     )
+
+
+def _join_deep_context(
+    index_items: list[dict[str, Any]],
+    original_items: list[dict[str, Any]],
+    source_map: dict[str, str],
+) -> str:
+    sections: list[str] = []
+    if index_items:
+        sections.append(
+            "索引上下文：\n"
+            + _join_context_items(index_items, stable_source_ids=source_map, source_prefix="I")
+        )
+    if original_items:
+        sections.append(
+            "原文上下文：\n"
+            + _join_context_items(original_items, stable_source_ids=source_map, source_prefix="P")
+        )
+    return "\n\n===\n\n".join(section for section in sections if section.strip())
 
 
 def _build_agent_context(

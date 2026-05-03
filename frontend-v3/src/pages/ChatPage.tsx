@@ -14,8 +14,8 @@ import { listProviders } from "../shared/api/providers";
 import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
 import { renderMarkdownToHtml } from "../features/workbench/utils";
 import {
-  buildAvailableProviderModelEntries,
   type ProviderModelEntry,
+  useAvailableProviderModelEntries,
 } from "../shared/lib/providerModels";
 
 const CHAT_MODES: Array<{ mode: ChatMode; label: string; icon: "scan" | "focus" | "path" }> = [
@@ -135,9 +135,7 @@ export function ChatPage() {
 
   const chatDefault = parseModelDefaultKey(getModelDefault("chat"));
 
-  const modelOptions = useMemo<ProviderModelEntry[]>(() => {
-    return buildAvailableProviderModelEntries(providersQuery.data ?? []);
-  }, [providersQuery.data]);
+  const modelOptions = useAvailableProviderModelEntries(providersQuery.data ?? []);
 
   const selectedModelEntry = useMemo(() => parseModelKey(selectedModelKey), [selectedModelKey]);
   const activeSession = useMemo(
@@ -423,7 +421,7 @@ export function ChatPage() {
             {activeMessages.length === 0 ? (
               <div className="v35-chat-empty">
                 <span>Aindexer</span>
-                <h2>向当前工作区提问</h2>
+                <h2>Ask something...</h2>
               </div>
             ) : null}
 

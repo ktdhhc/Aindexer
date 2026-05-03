@@ -17,8 +17,7 @@ import {
 import { listProviders } from "../shared/api/providers";
 import { searchDocuments, type SearchItem } from "../shared/api/search";
 import {
-  buildAvailableProviderModelEntries,
-  type ProviderModelEntry,
+  useAvailableProviderModelEntries,
 } from "../shared/lib/providerModels";
 import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
 import { PdfViewer } from "../features/translator/PdfViewer";
@@ -170,9 +169,7 @@ export function TranslatorPage() {
 
   const translationDefault = parseModelDefaultKey(getModelDefault("translation"));
 
-  const modelOptions = useMemo<ProviderModelEntry[]>(() => {
-    return buildAvailableProviderModelEntries(providersQuery.data ?? []);
-  }, [providersQuery.data]);
+  const modelOptions = useAvailableProviderModelEntries(providersQuery.data ?? []);
 
   const selectedModelEntry = useMemo(() => {
     if (!selectedModelKey) return null;

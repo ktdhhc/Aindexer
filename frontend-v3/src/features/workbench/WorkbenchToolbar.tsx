@@ -13,10 +13,17 @@ interface WorkbenchToolbarProps {
   templates: FieldTemplate[];
   selectedTemplateId: string;
   onTemplateChange: (value: string) => void;
-  runAllPending: boolean;
-  onRunAll: () => void;
-  onRefresh: () => void;
   onUploadFiles: (files: File[]) => void;
+}
+
+function UploadIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M10 13V4" />
+      <path d="m6.5 7.5 3.5-3.5 3.5 3.5" />
+      <path d="M4 15.5h12" />
+    </svg>
+  );
 }
 
 export function WorkbenchToolbar({
@@ -29,13 +36,8 @@ export function WorkbenchToolbar({
   templates,
   selectedTemplateId,
   onTemplateChange,
-  runAllPending,
-  onRunAll,
-  onRefresh,
   onUploadFiles,
 }: WorkbenchToolbarProps) {
-  const disabledRunAll = runAllPending || !selectedProvider;
-
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
     if (files.length > 0) {
@@ -52,8 +54,9 @@ export function WorkbenchToolbar({
           <h2 className="v35-section-title">导入文献</h2>
           <p className="v35-muted">PDF / DOCX / TXT</p>
         </div>
-        <label className="v35-button v35-button-primary v35-file-label" htmlFor="v35UploadInput">
-          选择
+        <label className="v35-button v35-button-primary v35-button-compact v35-file-label" htmlFor="v35UploadInput">
+          <UploadIcon />
+          <span>导入</span>
         </label>
         <input
           id="v35UploadInput"
@@ -126,18 +129,6 @@ export function WorkbenchToolbar({
             ))}
           </select>
         </label>
-      </article>
-
-      <article className="v35-panel v35-toolbar-actions">
-        <button
-          className="v35-button v35-button-primary"
-          type="button"
-          disabled={disabledRunAll}
-          onClick={onRunAll}
-        >
-          {runAllPending ? "启动中..." : "生成索引"}
-        </button>
-        <button className="v35-button" type="button" onClick={onRefresh}>刷新</button>
       </article>
     </section>
   );

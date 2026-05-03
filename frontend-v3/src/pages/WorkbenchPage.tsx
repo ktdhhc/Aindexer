@@ -1,32 +1,29 @@
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { getWorkbenchChatSessionKey, useWorkbenchChatStore } from "../app/workbenchChatStore";
 import { useWorkspaceStore } from "../app/workspaceStore";
 import { CanvasPanel } from "../features/workbench/CanvasPanel";
 import { LibraryBanner } from "../features/workbench/LibraryBanner";
 import { LibraryPanel } from "../features/workbench/LibraryPanel";
 import { NotesPanel } from "../features/workbench/NotesPanel";
-import type { ChatMessage, PreviewMode, QueueItemView, WorkbenchStats } from "../features/workbench/types";
+import type { PreviewMode, WorkbenchStats } from "../features/workbench/types";
 import { WorkbenchToolbar } from "../features/workbench/WorkbenchToolbar";
 import {
   compactAuthors,
   extractTopKeywords,
-  formatQueueStatus,
   isRunningStatus,
-  nextMessageId,
   renderMarkdownToHtml,
-  sortedQueueRows,
 } from "../features/workbench/utils";
-import { askChatV0 } from "../shared/api/chat";
 import { listFieldTemplates } from "../shared/api/fields";
-import { buildOriginalFileUrl, listFiles, uploadFile } from "../shared/api/files";
+import { buildOriginalFileUrl, deleteFile, listFiles, uploadFile } from "../shared/api/files";
 import type { FileItem } from "../shared/api/files";
 import { buildExportMarkdownUrl } from "../shared/api/export";
-import { getIndexMarkdown, runAllIndexes, runIndex, cancelIndex } from "../shared/api/index";
+import { getIndexDetail, getIndexMarkdown, runAllIndexes, runIndex, cancelIndex, updateIndexEditor } from "../shared/api/index";
 import { listProviders } from "../shared/api/providers";
 import { searchDocuments } from "../shared/api/search";
 import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
-import { getProviderModels } from "../shared/lib/providerModels";
+import { type ProviderModelEntry, useProviderModels } from "../shared/lib/providerModels";
 
 function buildStats(totalRows: FileItem[]): WorkbenchStats {
   let indexed = 0;
@@ -55,6 +52,33 @@ function buildStats(totalRows: FileItem[]): WorkbenchStats {
   };
 }
 
+function normalizeLibrarySearchText(value: string | number | null | undefined): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function matchesLibrarySearch(
+  row: Awaited<ReturnType<typeof searchDocuments>>[number],
+  query: string,
+): boolean {
+  const normalizedQuery = normalizeLibrarySearchText(query);
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  const metadata = [
+    row.display_name,
+    row.filename,
+    row.title,
+    row.year ? String(row.year) : "",
+    ...(row.authors || []),
+    ...(row.keywords || []),
+  ]
+    .map((value) => normalizeLibrarySearchText(value))
+    .filter(Boolean);
+
+  return metadata.some((value) => value.includes(normalizedQuery));
+}
+
 export function WorkbenchPage() {
   const queryClient = useQueryClient();
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
@@ -63,12 +87,22 @@ export function WorkbenchPage() {
   const [model, setModel] = useState("");
   const [templateId, setTemplateId] = useState("tpl_default");
   const [searchInput, setSearchInput] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchSortField, setSearchSortField] = useState<"display_name" | "authors" | "year" | "modified_at">("modified_at");
+  const [searchSortDirection, setSearchSortDirection] = useState<"asc" | "desc">("desc");
   const [selectedDocId, setSelectedDocId] = useState("");
   const [previewMode, setPreviewMode] = useState<PreviewMode>("rendered");
+  const [isEditingPreview, setIsEditingPreview] = useState(false);
+  const [previewDraft, setPreviewDraft] = useState("");
+  const [previewDisplayNameDraft, setPreviewDisplayNameDraft] = useState("");
+  const [previewTitleDraft, setPreviewTitleDraft] = useState("");
+  const [previewYearDraft, setPreviewYearDraft] = useState("");
   const [chatQuestion, setChatQuestion] = useState("");
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [statusText, setStatusText] = useState("准备就绪");
+  const ensureChatSession = useWorkbenchChatStore((state) => state.ensureSession);
+  const submitChatQuestion = useWorkbenchChatStore((state) => state.submitQuestion);
+  const stopChatGeneration = useWorkbenchChatStore((state) => state.stopGeneration);
+  const resetChatSession = useWorkbenchChatStore((state) => state.resetSession);
+  const deferredSearchQuery = useDeferredValue(searchInput.trim());
 
   const providersQuery = useQuery({
     queryKey: ["providers"],
@@ -86,13 +120,20 @@ export function WorkbenchPage() {
   });
 
   const searchQueryResult = useQuery({
-    queryKey: ["search", workspaceId, searchQuery],
-    queryFn: () => searchDocuments(workspaceId, searchQuery),
+    queryKey: ["search", workspaceId],
+    queryFn: () => searchDocuments(workspaceId, ""),
   });
 
   const previewQuery = useQuery({
     queryKey: ["index-markdown", workspaceId, selectedDocId],
     queryFn: () => getIndexMarkdown(selectedDocId, workspaceId),
+    enabled: Boolean(selectedDocId),
+    retry: false,
+  });
+
+  const indexDetailQuery = useQuery({
+    queryKey: ["index-detail", workspaceId, selectedDocId],
+    queryFn: () => getIndexDetail(selectedDocId, workspaceId),
     enabled: Boolean(selectedDocId),
     retry: false,
   });
@@ -169,22 +210,87 @@ export function WorkbenchPage() {
     },
   });
 
-  const chatMutation = useMutation({
-    mutationFn: askChatV0,
+  const deleteMutation = useMutation({
+    mutationFn: async (docId: string) => deleteFile(docId, workspaceId),
+    onSuccess: async (_, docId) => {
+      setStatusText("文献已删除");
+      if (selectedDocId === docId) {
+        setSelectedDocId("");
+        setIsEditingPreview(false);
+        setPreviewDraft("");
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
+      ]);
+    },
+    onError: (error) => {
+      setStatusText(error instanceof Error ? error.message : "删除失败");
+    },
+  });
+
+  const savePreviewMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedDocId) {
+        throw new Error("未选择文献");
+      }
+      const trimmedYear = previewYearDraft.trim();
+      const nextYear = trimmedYear ? Number.parseInt(trimmedYear, 10) : null;
+      if (trimmedYear && !Number.isFinite(nextYear)) {
+        throw new Error("年份格式不正确");
+      }
+      return updateIndexEditor(selectedDocId, workspaceId, {
+        display_name: previewDisplayNameDraft.trim(),
+        title: previewTitleDraft.trim(),
+        year: Number.isFinite(nextYear) ? nextYear : null,
+        generated_at: indexDetailQuery.data?.updated_at || null,
+        markdown: previewDraft,
+      });
+    },
+    onSuccess: async () => {
+      setStatusText("索引内容已保存");
+      setIsEditingPreview(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["index-markdown", workspaceId, selectedDocId] }),
+        queryClient.invalidateQueries({ queryKey: ["index-detail", workspaceId, selectedDocId] }),
+        queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
+      ]);
+    },
+    onError: (error) => {
+      setStatusText(error instanceof Error ? error.message : "保存失败");
+    },
   });
 
   const fileRows = filesQuery.data ?? [];
   const providerRows = providersQuery.data ?? [];
   const indexingDefault = parseModelDefaultKey(getModelDefault("indexing"));
-
-  const modelOptions = useMemo(() => {
-    const row = providerRows.find((item) => item.provider === provider);
-    return getProviderModels(provider, row?.model);
+  const configuredProviderRow = useMemo(() => {
+    return providerRows.find((item) => item.provider === provider) ?? null;
   }, [provider, providerRows]);
 
+  const modelOptions = useProviderModels(provider, configuredProviderRow?.model);
+
   const searchRows = useMemo(() => {
-    return [...(searchQueryResult.data ?? [])].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
-  }, [searchQueryResult.data]);
+    const rows = (searchQueryResult.data ?? []).filter((row) => matchesLibrarySearch(row, deferredSearchQuery));
+    const factor = searchSortDirection === "asc" ? 1 : -1;
+    return [...rows].sort((left, right) => {
+      if (searchSortField === "modified_at") {
+        return factor * String(left.created_at || "").localeCompare(String(right.created_at || ""));
+      }
+      if (searchSortField === "year") {
+        return factor * ((left.year || 0) - (right.year || 0));
+      }
+      if (searchSortField === "authors") {
+        const leftAuthors = (left.authors ?? []).join(", ") || "~";
+        const rightAuthors = (right.authors ?? []).join(", ") || "~";
+        return factor * leftAuthors.localeCompare(rightAuthors, "zh-Hans-CN");
+      }
+      const leftName = left.display_name || left.title || left.filename || left.doc_id;
+      const rightName = right.display_name || right.title || right.filename || right.doc_id;
+      return factor * leftName.localeCompare(rightName, "zh-Hans-CN");
+    });
+  }, [deferredSearchQuery, searchQueryResult.data, searchSortDirection, searchSortField]);
 
   const filesById = useMemo(() => {
     return new Map(fileRows.map((row) => [row.id, row]));
@@ -201,18 +307,13 @@ export function WorkbenchPage() {
   const stats = useMemo(() => buildStats(fileRows), [fileRows]);
   const topKeywords = useMemo(() => extractTopKeywords(searchRows, 10), [searchRows]);
 
-  const queueRows = useMemo<QueueItemView[]>(() => {
-    return sortedQueueRows(fileRows)
-      .slice(0, 5)
-      .map((row) => {
-        const statusMeta = formatQueueStatus(row.status, row.stage);
-        return {
-          row,
-          running: isRunningStatus(row.status, row.stage),
-          label: statusMeta.label,
-          tone: statusMeta.tone,
-        };
-      });
+  const indexableCount = useMemo(() => {
+    return fileRows.filter((row) => {
+      if (isRunningStatus(row.status, row.stage)) {
+        return false;
+      }
+      return ["uploaded", "needs_review", "failed", "cancelled"].includes(row.status);
+    }).length;
   }, [fileRows]);
 
   const previewMarkdown = previewQuery.data?.markdown || "";
@@ -234,6 +335,18 @@ export function WorkbenchPage() {
     const year = selectedSearchRow?.year || "-";
     return `${sourceDocId} · ${authors} · ${year} · ${status}/${stage}`;
   }, [selectedFileRow, selectedSearchRow]);
+
+  const canEditPreview = Boolean(selectedDocId && previewMarkdown && !previewQuery.isLoading && !previewQuery.isError);
+  const chatSessionKey = selectedDocId ? getWorkbenchChatSessionKey(workspaceId, selectedDocId) : "";
+  const selectedModelEntry = useMemo<ProviderModelEntry | null>(() => {
+    if (!provider) return null;
+    return { provider, model: model.trim() || "" };
+  }, [model, provider]);
+  const activeChatSession = useWorkbenchChatStore((state) => (chatSessionKey ? state.sessions[chatSessionKey] : undefined));
+  const chatPending = useWorkbenchChatStore((state) => (chatSessionKey ? Boolean(state.sendingBySession[chatSessionKey]) : false));
+  const chatStatus = useWorkbenchChatStore((state) => (chatSessionKey ? state.statusBySession[chatSessionKey] ?? "Ready" : "Idle"));
+  const chatMessages = activeChatSession?.messages ?? [];
+  const chatAvailable = Boolean(selectedDocId && selectedFileRow?.status === "indexed" && selectedModelEntry?.provider);
 
   useEffect(() => {
     if (providerRows.length === 0) {
@@ -277,12 +390,35 @@ export function WorkbenchPage() {
   useEffect(() => {
     if (searchRows.length === 0) {
       setSelectedDocId("");
+      setIsEditingPreview(false);
+      setPreviewDraft("");
+      setPreviewDisplayNameDraft("");
+      setPreviewTitleDraft("");
+      setPreviewYearDraft("");
       return;
     }
     if (!selectedDocId || !searchRows.some((row) => row.doc_id === selectedDocId)) {
       setSelectedDocId(searchRows[0].doc_id);
     }
   }, [searchRows, selectedDocId]);
+
+  useEffect(() => {
+    setChatQuestion("");
+    if (!selectedDocId) {
+      return;
+    }
+    ensureChatSession(workspaceId, selectedDocId);
+  }, [ensureChatSession, selectedDocId, workspaceId]);
+
+  useEffect(() => {
+    if (isEditingPreview) {
+      return;
+    }
+    setPreviewDraft(previewMarkdown);
+    setPreviewDisplayNameDraft(selectedFileRow?.display_name || selectedSearchRow?.display_name || "");
+    setPreviewTitleDraft(indexDetailQuery.data?.title || selectedSearchRow?.title || "");
+    setPreviewYearDraft(indexDetailQuery.data?.year ? String(indexDetailQuery.data.year) : selectedSearchRow?.year ? String(selectedSearchRow.year) : "");
+  }, [indexDetailQuery.data?.title, indexDetailQuery.data?.year, isEditingPreview, previewMarkdown, selectedDocId, selectedFileRow?.display_name, selectedSearchRow?.display_name, selectedSearchRow?.title, selectedSearchRow?.year]);
 
   useEffect(() => {
     const hasRunning = fileRows.some((item) => isRunningStatus(item.status, item.stage));
@@ -300,9 +436,7 @@ export function WorkbenchPage() {
 
   const selectedTitle = selectedSearchRow?.display_name || selectedSearchRow?.title || selectedFileRow?.display_name || "未选择文献";
 
-  const handleSearchSubmit = () => {
-    setSearchQuery(searchInput.trim());
-  };
+  const handleSearchSubmit = () => {};
 
   const handleCopy = async () => {
     if (!previewMarkdown) {
@@ -325,51 +459,39 @@ export function WorkbenchPage() {
     setStatusText("已刷新");
   };
 
+  const handleStartEdit = () => {
+    if (!canEditPreview) {
+      return;
+    }
+    setPreviewDraft(previewMarkdown);
+    setPreviewDisplayNameDraft(selectedFileRow?.display_name || selectedSearchRow?.display_name || "");
+    setPreviewTitleDraft(indexDetailQuery.data?.title || selectedSearchRow?.title || "");
+    setPreviewYearDraft(indexDetailQuery.data?.year ? String(indexDetailQuery.data.year) : selectedSearchRow?.year ? String(selectedSearchRow.year) : "");
+    setPreviewMode("raw");
+    setIsEditingPreview(true);
+  };
+
+  const handleCancelEdit = () => {
+    setPreviewDraft(previewMarkdown);
+    setPreviewDisplayNameDraft(selectedFileRow?.display_name || selectedSearchRow?.display_name || "");
+    setPreviewTitleDraft(indexDetailQuery.data?.title || selectedSearchRow?.title || "");
+    setPreviewYearDraft(indexDetailQuery.data?.year ? String(indexDetailQuery.data.year) : selectedSearchRow?.year ? String(selectedSearchRow.year) : "");
+    setIsEditingPreview(false);
+    setStatusText("已取消编辑");
+  };
+
   const handleAskChat = async () => {
     const question = chatQuestion.trim();
-    if (!question) {
+    if (!question || !selectedDocId) {
       return;
     }
-    if (!provider) {
-      setChatMessages((current) => [
-        ...current,
-        { id: nextMessageId(), role: "system", content: "没有可用 Provider，请先完成 Provider 配置。" },
-      ]);
-      return;
-    }
-
-    setChatMessages((current) => [
-      ...current,
-      { id: nextMessageId(), role: "user", content: question },
-    ]);
     setChatQuestion("");
-
-    try {
-      const result = await chatMutation.mutateAsync({
-        question,
-        provider,
-        model: model.trim() || null,
-        workspace_id: workspaceId,
-      });
-      setChatMessages((current) => [
-        ...current,
-        {
-          id: nextMessageId(),
-          role: "assistant",
-          content: result.answer,
-          meta: `来源：${result.display_name} (${result.doc_id})`,
-        },
-      ]);
-    } catch (error) {
-      setChatMessages((current) => [
-        ...current,
-        {
-          id: nextMessageId(),
-          role: "system",
-          content: error instanceof Error ? error.message : "Chat 请求失败",
-        },
-      ]);
-    }
+    await submitChatQuestion({
+      workspaceId,
+      docId: selectedDocId,
+      question,
+      selectedModelEntry,
+    });
   };
 
   return (
@@ -382,22 +504,15 @@ export function WorkbenchPage() {
       />
 
       <WorkbenchToolbar
-        providers={providersQuery.data ?? []}
-        selectedProvider={provider}
+          providers={providersQuery.data ?? []}
+          selectedProvider={provider}
         onProviderChange={setProvider}
         modelOptions={modelOptions}
         selectedModel={model}
         onModelChange={setModel}
-        templates={templatesQuery.data ?? []}
-        selectedTemplateId={templateId}
-        onTemplateChange={setTemplateId}
-        runAllPending={runAllMutation.isPending}
-        onRunAll={() => {
-          void runAllMutation.mutateAsync();
-        }}
-        onRefresh={() => {
-          void handleRefresh();
-        }}
+          templates={templatesQuery.data ?? []}
+          selectedTemplateId={templateId}
+          onTemplateChange={setTemplateId}
         onUploadFiles={(files) => {
           void uploadMutation.mutateAsync(files);
         }}
@@ -411,18 +526,34 @@ export function WorkbenchPage() {
           searchInput={searchInput}
           onSearchInputChange={setSearchInput}
           onSearchSubmit={handleSearchSubmit}
+          sortField={searchSortField}
+          sortDirection={searchSortDirection}
+          onSortFieldChange={setSearchSortField}
+          onSortDirectionChange={setSearchSortDirection}
+          onRefresh={() => {
+            void handleRefresh();
+          }}
           onSelect={setSelectedDocId}
+          indexableCount={indexableCount}
+          runAllDisabled={runAllMutation.isPending || !provider || indexableCount === 0}
+          onRunAll={() => {
+            void runAllMutation.mutateAsync();
+          }}
           onRun={(docId) => {
             void runMutation.mutateAsync(docId);
           }}
           onCancel={(docId) => {
             void cancelMutation.mutateAsync(docId);
           }}
+          onDelete={(docId) => {
+            void deleteMutation.mutateAsync(docId);
+          }}
           isLoading={searchQueryResult.isLoading}
           isFetching={searchQueryResult.isFetching}
           isError={searchQueryResult.isError}
           runPending={runMutation.isPending}
           cancelPending={cancelMutation.isPending}
+          deletePending={deleteMutation.isPending}
         />
 
         <CanvasPanel
@@ -433,6 +564,20 @@ export function WorkbenchPage() {
           previewHtml={previewHtml}
           previewMode={previewMode}
           onPreviewModeChange={setPreviewMode}
+          isEditing={isEditingPreview}
+          previewDraft={previewDraft}
+          onPreviewDraftChange={setPreviewDraft}
+          previewDisplayNameDraft={previewDisplayNameDraft}
+          onPreviewDisplayNameDraftChange={setPreviewDisplayNameDraft}
+          previewTitleDraft={previewTitleDraft}
+          onPreviewTitleDraftChange={setPreviewTitleDraft}
+          previewYearDraft={previewYearDraft}
+          onPreviewYearDraftChange={setPreviewYearDraft}
+          onEditStart={handleStartEdit}
+          onEditCancel={handleCancelEdit}
+          onEditSave={() => {
+            void savePreviewMutation.mutateAsync();
+          }}
           onRefresh={() => {
             void previewQuery.refetch();
           }}
@@ -453,26 +598,34 @@ export function WorkbenchPage() {
           }}
           isLoading={previewQuery.isLoading}
           isError={previewQuery.isError}
+          canEdit={canEditPreview}
+          savePending={savePreviewMutation.isPending}
         />
 
         <NotesPanel
-          stats={stats}
-          queueRows={queueRows}
-          onRun={(docId) => {
-            void runMutation.mutateAsync(docId);
-          }}
-          onCancel={(docId) => {
-            void cancelMutation.mutateAsync(docId);
-          }}
-          runPending={runMutation.isPending}
-          cancelPending={cancelMutation.isPending}
+          selectedDocId={selectedDocId}
           chatMessages={chatMessages}
           chatQuestion={chatQuestion}
+          chatStatus={chatStatus}
+          chatPending={chatPending}
+          chatAvailable={chatAvailable}
           onChatQuestionChange={setChatQuestion}
           onChatSubmit={() => {
             void handleAskChat();
           }}
-          chatPending={chatMutation.isPending}
+          onChatStop={() => {
+            if (!selectedDocId) {
+              return;
+            }
+            stopChatGeneration(workspaceId, selectedDocId);
+          }}
+          onChatReset={() => {
+            if (!selectedDocId) {
+              return;
+            }
+            setChatQuestion("");
+            resetChatSession(workspaceId, selectedDocId);
+          }}
         />
       </div>
     </section>

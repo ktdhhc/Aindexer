@@ -4,6 +4,9 @@ import type { FileItem } from "../../shared/api/files";
 import type { SearchItem } from "../../shared/api/search";
 import { compactAuthors, formatQueueStatus, isRunningStatus } from "./utils";
 
+type LibrarySortField = "display_name" | "authors" | "year" | "modified_at";
+type LibrarySortDirection = "asc" | "desc";
+
 interface LibraryPanelProps {
   rows: SearchItem[];
   filesById: Map<string, FileItem>;
@@ -11,14 +14,80 @@ interface LibraryPanelProps {
   searchInput: string;
   onSearchInputChange: (value: string) => void;
   onSearchSubmit: () => void;
+  sortField: LibrarySortField;
+  sortDirection: LibrarySortDirection;
+  onSortFieldChange: (value: LibrarySortField) => void;
+  onSortDirectionChange: (value: LibrarySortDirection) => void;
+  onRefresh: () => void;
   onSelect: (docId: string) => void;
+  indexableCount: number;
+  runAllDisabled: boolean;
+  onRunAll: () => void;
   onRun: (docId: string) => void;
   onCancel: (docId: string) => void;
+  onDelete: (docId: string) => void;
   isLoading: boolean;
   isFetching: boolean;
   isError: boolean;
   runPending: boolean;
   cancelPending: boolean;
+  deletePending: boolean;
+}
+
+function BatchRunIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M4.5 10h6" />
+      <path d="m8 6.5 3.5 3.5L8 13.5" />
+      <path d="M4.5 5h11" />
+      <path d="M4.5 15h11" />
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M16 10a6 6 0 1 1-1.6-4.1" />
+      <path d="M16 4.5v3.8h-3.8" />
+    </svg>
+  );
+}
+
+function RunIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="m7 5 7 5-7 5z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function RegenerateIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M15 10a5 5 0 1 1-1.4-3.5" />
+      <path d="M15 5.5v3.2h-3.2" />
+    </svg>
+  );
+}
+
+function CancelIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M6 6l8 8" />
+      <path d="m14 6-8 8" />
+    </svg>
+  );
+}
+
+function DeleteIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M5.5 6.5h9" />
+      <path d="M8 6.5V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5" />
+      <path d="M7 6.5l.6 8a1 1 0 0 0 1 .9h2.8a1 1 0 0 0 1-.9l.6-8" />
+    </svg>
+  );
 }
 
 export function LibraryPanel({
@@ -28,14 +97,24 @@ export function LibraryPanel({
   searchInput,
   onSearchInputChange,
   onSearchSubmit,
+  sortField,
+  sortDirection,
+  onSortFieldChange,
+  onSortDirectionChange,
+  onRefresh,
   onSelect,
+  indexableCount,
+  runAllDisabled,
+  onRunAll,
   onRun,
   onCancel,
+  onDelete,
   isLoading,
   isFetching,
   isError,
   runPending,
   cancelPending,
+  deletePending,
 }: LibraryPanelProps) {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -47,7 +126,28 @@ export function LibraryPanel({
       <header className="v35-column-header">
         <div>
           <h2 className="v35-section-title">Library</h2>
-          <p className="v35-muted">按最近更新时间排序</p>
+          <p className="v35-muted">{indexableCount} 待索引</p>
+        </div>
+        <div className="v35-column-actions">
+          <button
+            type="button"
+            className="v35-button v35-button-compact v35-workbench-icon-button"
+            title="刷新文库"
+            aria-label="刷新文库"
+            onClick={onRefresh}
+          >
+            <RefreshIcon />
+          </button>
+          <button
+            type="button"
+            className="v35-button v35-button-primary v35-button-compact v35-workbench-icon-button"
+            title="一键生成全部未索引文献"
+            aria-label="一键生成全部未索引文献"
+            disabled={runAllDisabled}
+            onClick={onRunAll}
+          >
+            <BatchRunIcon />
+          </button>
         </div>
       </header>
 
@@ -62,6 +162,38 @@ export function LibraryPanel({
         />
       </form>
 
+      <div className="v35-library-sortbar" aria-label="文献排序">
+        <label className="v35-field" htmlFor="v35LibrarySortField">
+          <select
+            id="v35LibrarySortField"
+            className="v35-input"
+            value={sortField}
+            onChange={(event) => {
+              onSortFieldChange(event.target.value as LibrarySortField);
+            }}
+          >
+            <option value="display_name">显示名</option>
+            <option value="authors">作者</option>
+            <option value="year">年份</option>
+            <option value="modified_at">修改时间</option>
+          </select>
+        </label>
+
+        <label className="v35-field" htmlFor="v35LibrarySortDirection">
+          <select
+            id="v35LibrarySortDirection"
+            className="v35-input"
+            value={sortDirection}
+            onChange={(event) => {
+              onSortDirectionChange(event.target.value as LibrarySortDirection);
+            }}
+          >
+            <option value="asc">顺序</option>
+            <option value="desc">逆序</option>
+          </select>
+        </label>
+      </div>
+
       <div className="v35-library-list">
         {isLoading ? <p className="v35-muted">正在加载文献...</p> : null}
         {isFetching && !isLoading ? <p className="v35-muted">搜索中...</p> : null}
@@ -72,9 +204,10 @@ export function LibraryPanel({
           const fileRow = filesById.get(row.doc_id);
           const status = fileRow?.status || row.status;
           const stage = fileRow?.stage || "uploaded";
-          const stageMessage = fileRow?.stage_message || "";
+          const stageMessage = fileRow?.stage_message === "索引生成完成" ? "" : (fileRow?.stage_message || "");
           const running = isRunningStatus(status, stage);
           const statusMeta = formatQueueStatus(status, stage);
+          const runTitle = status === "uploaded" ? "生成索引" : "重新生成索引";
 
           return (
             <article
@@ -102,27 +235,46 @@ export function LibraryPanel({
                 {running ? (
                   <button
                     type="button"
-                    className="v35-button"
+                    className="v35-button v35-button-compact v35-workbench-icon-button"
                     disabled={cancelPending}
+                    title="取消索引"
+                    aria-label="取消索引"
                     onClick={(event) => {
                       event.stopPropagation();
                       onCancel(row.doc_id);
                     }}
                   >
-                    取消
+                    <CancelIcon />
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    className="v35-button"
-                    disabled={runPending}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onRun(row.doc_id);
-                    }}
-                  >
-                    索引
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="v35-button v35-button-primary v35-button-compact v35-workbench-icon-button"
+                      disabled={runPending}
+                      title={runTitle}
+                      aria-label={runTitle}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRun(row.doc_id);
+                      }}
+                    >
+                      {status === "uploaded" ? <RunIcon /> : <RegenerateIcon />}
+                    </button>
+                    <button
+                      type="button"
+                      className="v35-button v35-button-compact v35-workbench-icon-button v35-button-danger"
+                      disabled={deletePending}
+                      title="删除文献"
+                      aria-label="删除文献"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDelete(row.doc_id);
+                      }}
+                    >
+                      <DeleteIcon />
+                    </button>
+                  </>
                 )}
               </div>
             </article>

@@ -209,6 +209,46 @@ def test_deep_context_keeps_session_source_ids(monkeypatch: pytest.MonkeyPatch) 
     assert "[P-05] Doc C | Title doc_c" in result.context
 
 
+def test_deep_context_can_include_index_and_original_with_stable_positions(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        chat_modes,
+        "get_document",
+        lambda doc_id, workspace_id: {
+            "id": doc_id,
+            "display_name": f"Doc {doc_id[-1].upper()}",
+            "filename": f"{doc_id}.pdf",
+            "file_path": f"D:/fake/{doc_id}.pdf",
+            "file_type": "pdf",
+            "status": "indexed",
+        },
+    )
+    monkeypatch.setattr(chat_modes, "get_index", lambda doc_id: _record(doc_id, f"summary {doc_id}"))
+    monkeypatch.setattr(chat_modes, "markdown_path", lambda doc_id: SimpleNamespace(exists=lambda: False))
+    monkeypatch.setattr(chat_modes, "render_markdown", lambda doc_id, record: f"markdown {doc_id}")
+    monkeypatch.setattr(chat_modes, "parse_file", lambda path, file_type: f"original {path.stem}")
+    monkeypatch.setattr(chat_modes.Path, "exists", lambda self: True)
+
+    result = chat_modes.build_chat_context(
+        question="问题",
+        workspace_id="ws_default",
+        model_name="unknown-model",
+        mode="deep",
+        doc_ids=["doc_a", "doc_b"],
+        include_index_context=True,
+        source_map={"index:doc_a": "I-08", "paper:doc_a": "P-03", "paper:doc_b": "P-04"},
+    )
+
+    assert [source.source_id for source in result.sources] == ["I-08", "I-09", "P-03", "P-04"]
+    assert [source.source_kind for source in result.sources] == ["index", "index", "paper", "paper"]
+    assert "索引上下文：" in result.context
+    assert "原文上下文：" in result.context
+    assert "markdown doc_a" in result.context
+    assert "original doc_a" in result.context
+    assert result.stats["deep_include_index_context"] is True
+    assert result.stats["read_index_count"] == 2
+    assert result.stats["read_original_count"] == 2
+
+
 def test_agent_context_reads_index_and_original_with_split_prefixes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(chat_modes, "resolve_model_context_window", lambda _model: 128_000)
     monkeypatch.setattr(
