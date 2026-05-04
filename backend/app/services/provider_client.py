@@ -80,6 +80,7 @@ class ProviderClient:
         system_prompt: str,
         user_prompt: str,
         should_cancel: Callable[[], bool] | None = None,
+        on_thinking: Callable[[str], None] | None = None,
     ) -> dict:
         payload = {
             "model": config.model,
@@ -108,6 +109,7 @@ class ProviderClient:
                     payload=payload,
                     timeout=config.timeout,
                     should_cancel=should_cancel,
+                    on_thinking=on_thinking,
                 )
                 text = stream_result.text
                 try:
@@ -181,6 +183,7 @@ class ProviderClient:
         user_prompt: str,
         should_cancel: Callable[[], bool] | None = None,
         on_finish: Callable[[str | None], None] | None = None,
+        on_thinking: Callable[[str], None] | None = None,
     ) -> Iterator[str]:
         payload = {
             "model": config.model,
@@ -205,6 +208,40 @@ class ProviderClient:
                 timeout=config.timeout,
                 should_cancel=should_cancel,
                 on_finish=on_finish,
+                on_thinking=on_thinking,
+            )
+        except UnicodeError as exc:
+            raise RuntimeError(_format_url_error(config.base_url, exc)) from exc
+
+    @staticmethod
+    def stream_events(
+        config: ProviderConfig,
+        system_prompt: str,
+        user_prompt: str,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Iterator[dict[str, str | None]]:
+        payload = {
+            "model": config.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": _effective_temperature(config.model, config.temperature),
+            "max_tokens": _chat_max_tokens(config.model),
+            "stream": True,
+        }
+        url = config.base_url.rstrip("/") + "/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {config.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            yield from stream_chat_completion_events(
+                url=url,
+                headers=headers,
+                payload=payload,
+                timeout=config.timeout,
+                should_cancel=should_cancel,
             )
         except UnicodeError as exc:
             raise RuntimeError(_format_url_error(config.base_url, exc)) from exc
@@ -216,6 +253,7 @@ def stream_chat_completion_with_metrics(
     payload: dict,
     timeout: int,
     should_cancel: Callable[[], bool] | None = None,
+    on_thinking: Callable[[str], None] | None = None,
 ) -> StreamChatCompletionResult:
     timeout_cfg = httpx.Timeout(
         connect=min(timeout, 30), read=None, write=timeout, pool=timeout
@@ -271,6 +309,9 @@ def stream_chat_completion_with_metrics(
                     finish_reason = (
                         _extract_stream_finish_reason(chunk) or finish_reason
                     )
+                    thinking_text = _extract_stream_reasoning_text(chunk)
+                    if thinking_text and on_thinking:
+                        on_thinking(thinking_text)
                     delta_text = _extract_stream_delta_text(chunk)
                     if delta_text:
                         if first_token_ms is None:
@@ -293,6 +334,9 @@ def stream_chat_completion_with_metrics(
                 if joined.startswith("{"):
                     try:
                         body = json.loads(joined)
+                        thinking_text = _extract_body_reasoning_text(body)
+                        if thinking_text and on_thinking:
+                            on_thinking(thinking_text)
                         return StreamChatCompletionResult(
                             text=_extract_assistant_text(body),
                             usage=body.get("usage")
@@ -348,7 +392,35 @@ def stream_chat_completion_chunks(
     timeout: int,
     should_cancel: Callable[[], bool] | None = None,
     on_finish: Callable[[str | None], None] | None = None,
+    on_thinking: Callable[[str], None] | None = None,
 ) -> Iterator[str]:
+    for event in stream_chat_completion_events(
+        url=url,
+        headers=headers,
+        payload=payload,
+        timeout=timeout,
+        should_cancel=should_cancel,
+    ):
+        if event["type"] == "thinking":
+            if on_thinking and event.get("text"):
+                on_thinking(str(event["text"]))
+            continue
+        if event["type"] == "text":
+            yield str(event.get("text") or "")
+            continue
+        if event["type"] == "finish":
+            if on_finish:
+                on_finish(str(event.get("finish_reason")) if event.get("finish_reason") else None)
+            return
+
+
+def stream_chat_completion_events(
+    url: str,
+    headers: dict[str, str],
+    payload: dict,
+    timeout: int,
+    should_cancel: Callable[[], bool] | None = None,
+) -> Iterator[dict[str, str | None]]:
     timeout_cfg = httpx.Timeout(
         connect=min(timeout, 30), read=None, write=timeout, pool=timeout
     )
@@ -387,14 +459,17 @@ def stream_chat_completion_chunks(
                     raise RuntimeError(f"LLM stream error code={err_code}: {err_msg}")
 
                 finish_reason = _extract_stream_finish_reason(chunk) or finish_reason
+                thinking_text = _extract_stream_reasoning_text(chunk)
+                if thinking_text:
+                    yielded = True
+                    yield {"type": "thinking", "text": thinking_text}
                 delta_text = _extract_stream_delta_text(chunk)
                 if delta_text:
                     yielded = True
-                    yield delta_text
+                    yield {"type": "text", "text": delta_text}
 
             if yielded:
-                if on_finish:
-                    on_finish(finish_reason)
+                yield {"type": "finish", "finish_reason": finish_reason}
                 return
 
             if raw_lines:
@@ -406,10 +481,15 @@ def stream_chat_completion_chunks(
                         body = None
                     if isinstance(body, dict):
                         text = _extract_assistant_text(body)
+                        thinking_text = _extract_body_reasoning_text(body)
+                        if thinking_text:
+                            yield {"type": "thinking", "text": thinking_text}
                         if text:
-                            if on_finish:
-                                on_finish(_extract_body_finish_reason(body))
-                            yield text
+                            yield {"type": "text", "text": text}
+                            yield {
+                                "type": "finish",
+                                "finish_reason": _extract_body_finish_reason(body),
+                            }
                             return
 
     raise RuntimeError(
@@ -446,6 +526,35 @@ def _extract_stream_delta_text(chunk: dict) -> str:
     return ""
 
 
+def _extract_stream_reasoning_text(chunk: dict) -> str:
+    choices = chunk.get("choices") or []
+    if not choices:
+        return ""
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    delta = first.get("delta") or {}
+    if isinstance(delta, dict):
+        direct = _string_from_reasoning_fields(delta)
+        if direct:
+            return direct
+        content = delta.get("content")
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                item_type = str(item.get("type") or "").lower()
+                if item_type in {"reasoning", "thinking", "reasoning_content"}:
+                    text = str(item.get("text") or item.get("content") or "")
+                    if text:
+                        parts.append(text)
+            if parts:
+                return "".join(parts)
+    msg = first.get("message") or {}
+    if isinstance(msg, dict):
+        return _string_from_reasoning_fields(msg)
+    return ""
+
+
 def _extract_stream_finish_reason(chunk: dict) -> str | None:
     choices = chunk.get("choices") or []
     if not choices or not isinstance(choices[0], dict):
@@ -474,6 +583,43 @@ def _extract_body_finish_reason(data: dict) -> str | None:
         if finish_reason:
             return str(finish_reason)
     return None
+
+
+def _extract_body_reasoning_text(data: dict) -> str:
+    choices = data.get("choices") or []
+    if choices and isinstance(choices[0], dict):
+        msg = choices[0].get("message") or {}
+        if isinstance(msg, dict):
+            direct = _string_from_reasoning_fields(msg)
+            if direct:
+                return direct
+            content = msg.get("content")
+            if isinstance(content, list):
+                parts = [
+                    str(item.get("text") or item.get("content") or "")
+                    for item in content
+                    if isinstance(item, dict)
+                    and str(item.get("type") or "").lower() in {"reasoning", "thinking", "reasoning_content"}
+                    and (item.get("text") or item.get("content"))
+                ]
+                return "".join(parts)
+    return ""
+
+
+def _string_from_reasoning_fields(payload: dict) -> str:
+    for key in ("reasoning_content", "reasoning", "thinking"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+        if isinstance(value, list):
+            parts = [str(item) for item in value if isinstance(item, str) and item]
+            if parts:
+                return "".join(parts)
+        if isinstance(value, dict):
+            text = value.get("text") or value.get("content")
+            if isinstance(text, str) and text:
+                return text
+    return ""
 
 
 def _parse_json_strict(text: str) -> dict:

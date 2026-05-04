@@ -34,6 +34,13 @@ export interface ChatHistoryMessage {
   sources?: ChatSource[];
 }
 
+export interface ChatThinkingBlock {
+  id: string;
+  label: string;
+  content: string;
+  completed: boolean;
+}
+
 export interface ChatContextStats {
   doc_count: number;
   model_context_window?: number;
@@ -86,6 +93,9 @@ export type ChatStreamEvent =
   | { type: "agent_run"; run_id: string; max_iterations: number; paper_top_k: number }
   | { type: "agent_step"; step: AgentTraceStep }
   | { type: "meta"; mode: ChatMode; sources: ChatSource[]; context_stats: ChatContextStats }
+  | { type: "thinking_start"; thinking_id: string; label: string }
+  | { type: "thinking_delta"; thinking_id: string; text: string }
+  | { type: "thinking_end"; thinking_id: string }
   | { type: "delta"; text: string }
   | { type: "done"; finish_reason?: string | null }
   | { type: "error"; message: string };

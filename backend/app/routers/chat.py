@@ -144,19 +144,40 @@ def ask_chat_stream(payload: ChatAskIn):
             yield json.dumps(meta, ensure_ascii=False) + "\n"
             finish_reason_holder: dict[str, str | None] = {"value": None}
             output_parts: list[str] = []
+            thinking_id = f"chat_{mode}_thinking"
+            thinking_started = False
+            thinking_finished = False
 
-            def capture_finish_reason(reason: str | None) -> None:
-                finish_reason_holder["value"] = reason
-
-            for chunk in ProviderClient.stream_text(
+            for event in ProviderClient.stream_events(
                 config=cfg,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                on_finish=capture_finish_reason,
             ):
-                if chunk:
-                    output_parts.append(chunk)
-                    yield json.dumps({"type": "delta", "text": chunk}, ensure_ascii=False) + "\n"
+                if event["type"] == "thinking":
+                    if not thinking_started:
+                        yield json.dumps(
+                            {"type": "thinking_start", "thinking_id": thinking_id, "label": "思考"},
+                            ensure_ascii=False,
+                        ) + "\n"
+                        thinking_started = True
+                    yield json.dumps(
+                        {"type": "thinking_delta", "thinking_id": thinking_id, "text": event.get("text") or ""},
+                        ensure_ascii=False,
+                    ) + "\n"
+                    continue
+                if event["type"] == "text":
+                    if thinking_started and not thinking_finished:
+                        yield json.dumps({"type": "thinking_end", "thinking_id": thinking_id}, ensure_ascii=False) + "\n"
+                        thinking_finished = True
+                    text = str(event.get("text") or "")
+                    if text:
+                        output_parts.append(text)
+                        yield json.dumps({"type": "delta", "text": text}, ensure_ascii=False) + "\n"
+                    continue
+                if event["type"] == "finish":
+                    finish_reason_holder["value"] = str(event.get("finish_reason") or "") or None
+            if thinking_started and not thinking_finished:
+                yield json.dumps({"type": "thinking_end", "thinking_id": thinking_id}, ensure_ascii=False) + "\n"
             record_llm_usage(
                 workspace_id=workspace_id,
                 feature="chat",

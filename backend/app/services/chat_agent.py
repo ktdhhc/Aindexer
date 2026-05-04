@@ -20,7 +20,7 @@ from .chat_modes import (
     estimate_tokens,
 )
 from .prompt_store import get_required_prompt
-from .provider_client import ProviderClient, ProviderConfig
+from .provider_client import JSON_SCHEMA_HINT, ProviderClient, ProviderConfig, _parse_json_strict
 from .usage_tracker import record_llm_usage
 
 
@@ -168,7 +168,7 @@ def _stream_agent_chat_registered(
         metadata_visible = metadata_visible_next
         metadata_visible_next = False
         retry_steps: list[dict[str, Any]] = []
-        decision = _plan_next_action(
+        decision = yield from _plan_next_action(
             provider_cfg=provider_cfg,
             state=state,
             history=history,
@@ -325,12 +325,13 @@ def _plan_next_action(
     config: AgentRunConfig,
     should_cancel: Callable[[], bool],
     on_retry: Callable[[int, int], None] | None = None,
-) -> AgentDecision:
+) -> Iterator[dict[str, Any]]:
     base_user_prompt = PLANNER_USER_PROMPT.format(
         iteration=iteration,
         max_iterations=config.max_iterations,
         remaining_iterations=max(0, config.max_iterations - iteration),
         metadata_visible="是" if metadata_visible else "否",
+        metadata_count=len(state.metadata_items),
         paper_top_k=config.paper_top_k,
         question=state.question.strip(),
         history=history,
@@ -340,6 +341,9 @@ def _plan_next_action(
         paper_context=_context_for_items(state.paper_items, state.source_map, "P", budget),
     )
     last_error: RuntimeError | None = None
+    thinking_id = f"agent_planner_{iteration}"
+    thinking_started = False
+
     for attempt in range(1, PLANNER_DECISION_RETRIES + 1):
         retry_suffix = ""
         if attempt > 1:
@@ -347,12 +351,29 @@ def _plan_next_action(
                 "\n\n上一次输出无效：action 为空或不在允许集合中。"
                 "本次必须返回合法 action，且只能是 answer / read_metadata / read_index / read_paper / not_found。"
             )
-        raw = ProviderClient.generate_json(
+        response_parts: list[str] = []
+        for event in ProviderClient.stream_events(
             config=provider_cfg,
-            system_prompt=PLANNER_SYSTEM_PROMPT,
+            system_prompt=PLANNER_SYSTEM_PROMPT + "\n" + JSON_SCHEMA_HINT,
             user_prompt=base_user_prompt + retry_suffix,
             should_cancel=should_cancel,
-        )
+        ):
+            if event["type"] == "thinking":
+                if not thinking_started:
+                    yield {"type": "thinking_start", "thinking_id": thinking_id, "label": f"规划 {iteration}"}
+                    thinking_started = True
+                yield {"type": "thinking_delta", "thinking_id": thinking_id, "text": event.get("text") or ""}
+                continue
+            if event["type"] == "text":
+                if thinking_started:
+                    yield {"type": "thinking_end", "thinking_id": thinking_id}
+                    thinking_started = False
+                response_parts.append(str(event.get("text") or ""))
+                continue
+        if thinking_started:
+            yield {"type": "thinking_end", "thinking_id": thinking_id}
+            thinking_started = False
+        raw = _parse_json_strict("".join(response_parts))
         record_llm_usage(
             workspace_id=state.workspace_id,
             feature="chat",
@@ -398,20 +419,35 @@ def _stream_final_answer(
     )
     finish_reason_holder: dict[str, str | None] = {"value": None}
     output_parts: list[str] = []
+    thinking_id = f"agent_final_{state.run_id}"
+    thinking_started = False
+    thinking_finished = False
 
-    def capture_finish_reason(reason: str | None) -> None:
-        finish_reason_holder["value"] = reason
-
-    for chunk in ProviderClient.stream_text(
+    for event in ProviderClient.stream_events(
         config=provider_cfg,
         system_prompt=FINAL_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         should_cancel=should_cancel,
-        on_finish=capture_finish_reason,
     ):
-        if chunk:
-            output_parts.append(chunk)
-            yield {"type": "delta", "text": chunk}
+        if event["type"] == "thinking":
+            if not thinking_started:
+                yield {"type": "thinking_start", "thinking_id": thinking_id, "label": "回答前思考"}
+                thinking_started = True
+            yield {"type": "thinking_delta", "thinking_id": thinking_id, "text": event.get("text") or ""}
+            continue
+        if event["type"] == "text":
+            if thinking_started and not thinking_finished:
+                yield {"type": "thinking_end", "thinking_id": thinking_id}
+                thinking_finished = True
+            text = str(event.get("text") or "")
+            if text:
+                output_parts.append(text)
+                yield {"type": "delta", "text": text}
+            continue
+        if event["type"] == "finish":
+            finish_reason_holder["value"] = str(event.get("finish_reason") or "") or None
+    if thinking_started and not thinking_finished:
+        yield {"type": "thinking_end", "thinking_id": thinking_id}
     record_llm_usage(
         workspace_id=state.workspace_id,
         feature="chat",

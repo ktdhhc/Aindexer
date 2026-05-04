@@ -1529,6 +1529,50 @@ body {
   color: var(--v35-text-secondary);
 }
 
+.v35-chat-thinking-list {
+  display: grid;
+  gap: 6px;
+}
+
+.v35-chat-thinking {
+  max-width: min(560px, 100%);
+}
+
+.v35-chat-thinking-toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 2px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #4b4742;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.v35-chat-thinking-toggle span {
+  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-style: italic;
+  font-weight: 700;
+}
+
+.v35-chat-thinking-toggle em {
+  color: #6b645c;
+  font-style: normal;
+}
+
+.v35-chat-thinking p {
+  margin: 0;
+  padding: 0 0 6px;
+  color: #4b4742;
+  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-style: italic;
+  font-size: 12px;
+  line-height: 21px;
+}
+
 .v35-chat-turn footer {
   min-height: 24px;
 }

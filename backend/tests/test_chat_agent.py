@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+import json
+import itertools
 
 import pytest
 
@@ -68,6 +70,20 @@ def _collect(events):
     return list(events)
 
 
+def _patch_stream_events(monkeypatch: pytest.MonkeyPatch, decisions, prompts: list[str] | None = None) -> None:
+    def fake_stream_events(*, config, system_prompt, user_prompt, should_cancel=None):
+        if system_prompt.startswith(chat_agent.PLANNER_SYSTEM_PROMPT):
+            if prompts is not None:
+                prompts.append(user_prompt)
+            yield {"type": "text", "text": json.dumps(next(decisions), ensure_ascii=False)}
+            yield {"type": "finish", "finish_reason": "stop"}
+            return
+        yield {"type": "text", "text": "final answer"}
+        yield {"type": "finish", "finish_reason": "stop"}
+
+    monkeypatch.setattr(chat_agent.ProviderClient, "stream_events", fake_stream_events)
+
+
 def test_agent_loop_does_not_repeat_full_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_docs(monkeypatch)
     _patch_context_loader(monkeypatch)
@@ -81,8 +97,7 @@ def test_agent_loop_does_not_repeat_full_metadata(monkeypatch: pytest.MonkeyPatc
         prompts.append(user_prompt)
         return next(decisions)
 
-    monkeypatch.setattr(chat_agent.ProviderClient, "generate_json", fake_generate_json)
-    monkeypatch.setattr(chat_agent.ProviderClient, "stream_text", lambda **kwargs: iter(["final answer"]))
+    _patch_stream_events(monkeypatch, decisions, prompts)
 
     events = _collect(chat_agent.stream_agent_chat(
         question="问题",
@@ -109,8 +124,7 @@ def test_agent_session_followup_does_not_auto_inject_metadata(monkeypatch: pytes
         prompts.append(user_prompt)
         return next(decisions)
 
-    monkeypatch.setattr(chat_agent.ProviderClient, "generate_json", fake_generate_json)
-    monkeypatch.setattr(chat_agent.ProviderClient, "stream_text", lambda **kwargs: iter(["final answer"]))
+    _patch_stream_events(monkeypatch, decisions, prompts)
 
     events = _collect(chat_agent.stream_agent_chat(
         question="继续比较上一轮提到的两篇文献",
@@ -141,8 +155,7 @@ def test_agent_session_followup_reuses_history_sources(monkeypatch: pytest.Monke
         prompts.append(user_prompt)
         return next(decisions)
 
-    monkeypatch.setattr(chat_agent.ProviderClient, "generate_json", fake_generate_json)
-    monkeypatch.setattr(chat_agent.ProviderClient, "stream_text", lambda **kwargs: iter(["final answer"]))
+    _patch_stream_events(monkeypatch, decisions, prompts)
 
     _collect(chat_agent.stream_agent_chat(
         question="继续分析上一轮引用的文献",
@@ -177,8 +190,7 @@ def test_agent_loop_reinjects_metadata_when_requested(monkeypatch: pytest.Monkey
         prompts.append(user_prompt)
         return next(decisions)
 
-    monkeypatch.setattr(chat_agent.ProviderClient, "generate_json", fake_generate_json)
-    monkeypatch.setattr(chat_agent.ProviderClient, "stream_text", lambda **kwargs: iter(["final answer"]))
+    _patch_stream_events(monkeypatch, decisions, prompts)
 
     _collect(chat_agent.stream_agent_chat(
         question="问题",
@@ -198,8 +210,7 @@ def test_agent_paper_read_respects_top_k(monkeypatch: pytest.MonkeyPatch) -> Non
         {"action": "read_paper", "reason": "need paper", "doc_ids": ["doc_a", "doc_b", "doc_c"]},
         {"action": "answer", "reason": "enough", "answer": "draft"},
     ])
-    monkeypatch.setattr(chat_agent.ProviderClient, "generate_json", lambda **kwargs: next(decisions))
-    monkeypatch.setattr(chat_agent.ProviderClient, "stream_text", lambda **kwargs: iter(["final answer"]))
+    _patch_stream_events(monkeypatch, decisions)
 
     _collect(chat_agent.stream_agent_chat(
         question="问题",
@@ -223,8 +234,7 @@ def test_agent_retries_when_planner_returns_empty_action(monkeypatch: pytest.Mon
         prompts.append(user_prompt)
         return next(decisions)
 
-    monkeypatch.setattr(chat_agent.ProviderClient, "generate_json", fake_generate_json)
-    monkeypatch.setattr(chat_agent.ProviderClient, "stream_text", lambda **kwargs: iter(["final answer"]))
+    _patch_stream_events(monkeypatch, decisions, prompts)
 
     events = _collect(chat_agent.stream_agent_chat(
         question="问题",
@@ -246,8 +256,7 @@ def test_agent_retries_when_planner_returns_empty_action(monkeypatch: pytest.Mon
 def test_agent_falls_back_when_planner_keeps_returning_empty_action(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_docs(monkeypatch)
     index_calls = _patch_context_loader(monkeypatch)
-    monkeypatch.setattr(chat_agent.ProviderClient, "generate_json", lambda **kwargs: {"action": "", "reason": "bad"})
-    monkeypatch.setattr(chat_agent.ProviderClient, "stream_text", lambda **kwargs: iter(["final answer"]))
+    _patch_stream_events(monkeypatch, itertools.repeat({"action": "", "reason": "bad"}))
 
     events = _collect(chat_agent.stream_agent_chat(
         question="问题",

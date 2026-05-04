@@ -116,6 +116,7 @@ export function ChatPage() {
   const [editingSessionTitle, setEditingSessionTitle] = useState("");
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [expandedTraceByMessage, setExpandedTraceByMessage] = useState<Record<string, boolean>>({});
+  const [expandedThinkingByBlock, setExpandedThinkingByBlock] = useState<Record<string, boolean>>({});
 
   const threadRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -378,6 +379,13 @@ export function ChatPage() {
     }));
   }
 
+  function toggleThinking(blockId: string) {
+    setExpandedThinkingByBlock((current) => ({
+      ...current,
+      [blockId]: !current[blockId],
+    }));
+  }
+
   const canSend = Boolean(
     question.trim()
     && selectedModelEntry?.provider
@@ -431,6 +439,7 @@ export function ChatPage() {
               const traceSteps = message.agentTrace ?? [];
               const traceExpanded = expandedTraceByMessage[message.id] ?? !displayContent.trim();
               const isLiveAssistant = message.role === "assistant" && isSending && latestAssistantMessage?.id === message.id;
+              const thinkingBlocks = message.thinkingBlocks ?? [];
               return (
                 <article className={`v35-chat-turn role-${message.role}`} key={message.id} ref={(node) => { messageRefs.current[message.id] = node; }}>
                   <header>
@@ -440,6 +449,22 @@ export function ChatPage() {
                     </span>
                     <time>{formatTime(message.createdAt)}</time>
                   </header>
+                  {message.role === "assistant" && thinkingBlocks.length > 0 ? (
+                    <div className="v35-chat-thinking-list">
+                      {thinkingBlocks.map((block) => {
+                        const thinkingExpanded = expandedThinkingByBlock[block.id] ?? !block.completed;
+                        return (
+                          <div className={`v35-chat-thinking ${thinkingExpanded ? "is-expanded" : "is-collapsed"}`} key={block.id}>
+                            <button className="v35-chat-thinking-toggle" type="button" onClick={() => toggleThinking(block.id)}>
+                              <span>{block.label}</span>
+                              <em>{thinkingExpanded ? "收起" : "展开"}</em>
+                            </button>
+                            {thinkingExpanded ? <p>{block.content}</p> : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   {message.role === "assistant" && traceSteps.length > 0 ? (
                     <div className={`v35-chat-inline-trace ${traceExpanded ? "is-expanded" : "is-collapsed"}`}>
                       <button className="v35-chat-inline-trace-toggle" type="button" onClick={() => toggleTrace(message.id)}>

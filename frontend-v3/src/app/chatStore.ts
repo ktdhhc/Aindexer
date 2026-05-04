@@ -4,6 +4,7 @@ import {
   askChatWithSignal,
   cancelChatRun,
   type AgentTraceStep,
+  type ChatThinkingBlock,
   normalizeSourceId,
   resolveAssistantCitedSources,
   streamChatWithSignal,
@@ -20,6 +21,8 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
+  thinkingBlocks?: ChatThinkingBlock[];
+  activeThinkingId?: string | null;
   createdAt: string;
   sources?: ChatSource[];
   contextStats?: ChatContextStats;
@@ -107,10 +110,50 @@ function createAssistantPlaceholder(id: string): ChatMessage {
     id,
     role: "assistant",
     content: "",
+    thinkingBlocks: [],
+    activeThinkingId: null,
     sources: [],
     agentTrace: [],
     createdAt: new Date().toISOString(),
   };
+}
+
+function upsertThinkingBlock(
+  blocks: ChatThinkingBlock[] | undefined,
+  thinkingId: string,
+  label: string,
+): ChatThinkingBlock[] {
+  const next = [...(blocks ?? [])];
+  const index = next.findIndex((block) => block.id === thinkingId);
+  if (index >= 0) {
+    next[index] = { ...next[index], label };
+    return next;
+  }
+  next.push({ id: thinkingId, label, content: "", completed: false })
+  return next;
+}
+
+function appendThinkingBlockText(
+  blocks: ChatThinkingBlock[] | undefined,
+  thinkingId: string,
+  text: string,
+): ChatThinkingBlock[] {
+  return [...(blocks ?? [])].map((block) => (
+    block.id === thinkingId
+      ? { ...block, content: `${block.content}${text}` }
+      : block
+  ));
+}
+
+function completeThinkingBlock(
+  blocks: ChatThinkingBlock[] | undefined,
+  thinkingId: string,
+): ChatThinkingBlock[] {
+  return [...(blocks ?? [])].map((block) => (
+    block.id === thinkingId
+      ? { ...block, completed: true }
+      : block
+  ));
 }
 
 function createEmptySession(mode: ChatMode = "deep"): ChatSession {
@@ -231,6 +274,8 @@ function normalizeSession(raw: ChatSession): ChatSession {
           source_id: normalizeSourceId(source.source_id) || source.source_id,
         })),
         agentTrace: Array.isArray(message.agentTrace) ? message.agentTrace : [],
+        thinkingBlocks: Array.isArray(message.thinkingBlocks) ? message.thinkingBlocks : [],
+        activeThinkingId: message.activeThinkingId ?? null,
       }))
     : [];
   const injectedDocIds = Array.isArray((raw as ChatSession & { injectedDocIds?: string[] }).injectedDocIds)
@@ -515,7 +560,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const nextMessages = session.messages.filter((message, index) => {
           const isLast = index === session.messages.length - 1;
           if (!isLast || message.role !== "assistant") return true;
-          return Boolean(message.content.trim()) || (message.agentTrace?.length ?? 0) > 0;
+          return Boolean(message.content.trim()) || (message.agentTrace?.length ?? 0) > 0 || (message.thinkingBlocks?.length ?? 0) > 0;
         });
         return {
           ...session,
@@ -693,6 +738,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 id: assistantMessageId,
                 role: "assistant",
                 content: "",
+                thinkingBlocks: [],
+                activeThinkingId: null,
                 sources: event.sources,
                 contextStats: event.context_stats,
                 agentTrace: (event.context_stats.agent_trace as AgentTraceStep[] | undefined) ?? [],
@@ -741,7 +788,74 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   updatedAt: new Date().toISOString(),
                   messages: session.messages.map((message) => (
                     message.id === assistantMessageId
-                      ? { ...message, content: `${message.content}${event.text}` }
+                      ? {
+                          ...message,
+                          activeThinkingId: message.activeThinkingId,
+                          content: `${message.content}${event.text}`,
+                        }
+                      : message
+                  )),
+                };
+              })));
+              return;
+            }
+            if (event.type === "thinking_start") {
+              streamStarted = true;
+              set((current) => updateSessionsForWorkspace(current, workspaceId, (sessions) => sessions.map((session) => {
+                if (session.id !== currentSessionId) return session;
+                return {
+                  ...session,
+                  updatedAt: new Date().toISOString(),
+                  messages: session.messages.map((message) => (
+                    message.id === assistantMessageId
+                      ? {
+                          ...message,
+                          activeThinkingId: event.thinking_id,
+                          thinkingBlocks: upsertThinkingBlock(message.thinkingBlocks, event.thinking_id, event.label),
+                        }
+                      : message
+                  )),
+                };
+              })));
+              return;
+            }
+            if (event.type === "thinking_delta") {
+              streamStarted = true;
+              set((current) => updateSessionsForWorkspace(current, workspaceId, (sessions) => sessions.map((session) => {
+                if (session.id !== currentSessionId) return session;
+                return {
+                  ...session,
+                  updatedAt: new Date().toISOString(),
+                  messages: session.messages.map((message) => (
+                    message.id === assistantMessageId
+                      ? {
+                          ...message,
+                          thinkingBlocks: appendThinkingBlockText(
+                            message.thinkingBlocks,
+                            event.thinking_id,
+                            event.text,
+                          ),
+                        }
+                      : message
+                  )),
+                };
+              })));
+              return;
+            }
+            if (event.type === "thinking_end") {
+              streamStarted = true;
+              set((current) => updateSessionsForWorkspace(current, workspaceId, (sessions) => sessions.map((session) => {
+                if (session.id !== currentSessionId) return session;
+                return {
+                  ...session,
+                  updatedAt: new Date().toISOString(),
+                  messages: session.messages.map((message) => (
+                    message.id === assistantMessageId
+                      ? {
+                          ...message,
+                          activeThinkingId: message.activeThinkingId === event.thinking_id ? null : message.activeThinkingId,
+                          thinkingBlocks: completeThinkingBlock(message.thinkingBlocks, event.thinking_id),
+                        }
                       : message
                   )),
                 };
@@ -839,7 +953,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 updatedAt: new Date().toISOString(),
                 messages: [
                   ...session.messages.filter((message) => (
-                    message.id !== assistantMessageId || Boolean(message.content.trim()) || (message.agentTrace?.length ?? 0) > 0
+                    message.id !== assistantMessageId || Boolean(message.content.trim()) || (message.agentTrace?.length ?? 0) > 0 || (message.thinkingBlocks?.length ?? 0) > 0
                   )),
                   createMessage("system", error instanceof Error ? error.message : "Chat 请求失败"),
                 ],
