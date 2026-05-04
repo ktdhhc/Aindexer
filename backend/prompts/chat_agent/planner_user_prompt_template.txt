@@ -41,8 +41,7 @@
   "action": "answer | read_metadata | read_index | read_paper | not_found",
   "reason": "一句话说明",
   "doc_ids": ["doc_id"],
-  "answer": "如果 action 是 answer/not_found，可给出草稿，否则留空",
-  "citations": {{"index": ["I-01"], "paper": ["P-01"]}}
+  "answer": "如果 action 是 answer/not_found，可给出草稿，否则留空"
 }}
 
 再次检查：

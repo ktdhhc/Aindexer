@@ -71,7 +71,6 @@ export interface ChatAskV1Payload extends ChatAskPayload {
   doc_ids?: string[];
   include_index_context?: boolean;
   messages?: ChatHistoryMessage[];
-  source_map?: Record<string, string>;
   session_id?: string;
   run_id?: string;
 }

@@ -70,12 +70,27 @@ function escapeHtml(value: string): string {
 }
 
 function renderInlineMarkdown(raw: string): string {
-  const escaped = escapeHtml(raw);
-  return escaped
+  const mathPlaceholders: string[] = [];
+  const withPlaceholders = raw.replace(/\$\$[\s\S]+?\$\$|\$[^$\n]+\$/g, (match) => {
+    const idx = mathPlaceholders.length;
+    mathPlaceholders.push(match);
+    return `%%MATH_${idx}%%`;
+  });
+  const escaped = escapeHtml(withPlaceholders);
+  let result = escaped
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>")
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  for (let i = 0; i < mathPlaceholders.length; i++) {
+    const math = mathPlaceholders[i];
+    if (math.startsWith("$$")) {
+      result = result.replace(`%%MATH_${i}%%`, `<span class="v35-math-display">${escapeHtml(math.slice(2, -2))}</span>`);
+    } else {
+      result = result.replace(`%%MATH_${i}%%`, `<span class="v35-math-inline">${escapeHtml(math.slice(1, -1))}</span>`);
+    }
+  }
+  return result;
 }
 
 export function renderMarkdownToHtml(markdown: string): string {

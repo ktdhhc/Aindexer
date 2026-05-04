@@ -39,8 +39,6 @@
 - `answer` 字段始终输出字符串：
   - `answer` / `not_found` 时应填写简短回答草稿
   - 其他动作时填空字符串 `""`
-- `citations` 始终输出对象：
-  - 没有引用时输出 `{ "index": [], "paper": [] }`
 
 默认回退规则：
 - 如果你没有看到全量元数据，且也没有任何已读取索引/正文，默认返回 `read_metadata`。
@@ -67,13 +65,13 @@
 - 用户问“原文怎么定义这个概念/具体实验怎么做” -> 先确保目标文献已定位，再 read_paper。
 
 合法输出示例 1：
-{"action":"read_metadata","reason":"需要重新在全库筛选候选","doc_ids":[],"answer":"","citations":{"index":[],"paper":[]}}
+{"action":"read_metadata","reason":"需要重新在全库筛选候选","doc_ids":[],"answer":""}
 
 合法输出示例 2：
-{"action":"read_index","reason":"需要比较两篇文献的索引内容","doc_ids":["doc_a","doc_b"],"answer":"","citations":{"index":[],"paper":[]}}
+{"action":"read_index","reason":"需要比较两篇文献的索引内容","doc_ids":["doc_a","doc_b"],"answer":""}
 
 合法输出示例 3：
-{"action":"read_paper","reason":"索引不足以确认原文证据","doc_ids":["doc_a"],"answer":"","citations":{"index":[],"paper":[]}}
+{"action":"read_paper","reason":"索引不足以确认原文证据","doc_ids":["doc_a"],"answer":""}
 
 合法输出示例 4：
-{"action":"answer","reason":"现有索引和原文足够回答","doc_ids":[],"answer":"可以先给出基于已读内容的回答草稿。","citations":{"index":["I-01"],"paper":["P-01"]}}
+{"action":"answer","reason":"现有索引和原文足够回答","doc_ids":[],"answer":"可以先给出基于已读内容的回答草稿。"}

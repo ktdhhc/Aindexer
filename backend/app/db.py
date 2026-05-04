@@ -363,6 +363,12 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE documents ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0"
         )
+    if "seq_num" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN seq_num INTEGER")
+    _backfill_seq_num(conn)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_documents_seq_num ON documents(workspace_id, seq_num)"
+    )
     idx_cols = {
         row[1] for row in conn.execute("PRAGMA table_info(index_records)").fetchall()
     }
@@ -432,6 +438,26 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     _migrate_translation_document_hash_scope(conn)
     _migrate_provider_api_keys_to_plain(conn)
     _migrate_translation_requests_fk(conn)
+
+
+def _backfill_seq_num(conn: sqlite3.Connection) -> None:
+    workspaces = {row[0] for row in conn.execute("SELECT DISTINCT workspace_id FROM documents WHERE seq_num IS NULL").fetchall()}
+    for workspace_id in workspaces:
+        existing = {row[0] for row in conn.execute(
+            "SELECT seq_num FROM documents WHERE workspace_id = ? AND seq_num IS NOT NULL",
+            (workspace_id,),
+        ).fetchall()}
+        null_docs = conn.execute(
+            "SELECT id FROM documents WHERE workspace_id = ? AND seq_num IS NULL ORDER BY created_at ASC",
+            (workspace_id,),
+        ).fetchall()
+        seq = 1
+        for row in null_docs:
+            while seq in existing:
+                seq += 1
+            conn.execute("UPDATE documents SET seq_num = ? WHERE id = ?", (seq, row[0]))
+            existing.add(seq)
+            seq += 1
 
 
 def _migrate_document_hash_scope(conn: sqlite3.Connection) -> None:

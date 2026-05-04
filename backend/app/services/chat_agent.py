@@ -58,7 +58,6 @@ class AgentRunState:
     workspace_id: str
     question: str
     metadata_items: list[dict[str, Any]]
-    source_map: dict[str, str]
     index_items: list[dict[str, Any]] = field(default_factory=list)
     paper_items: list[dict[str, Any]] = field(default_factory=list)
     trace: list[dict[str, Any]] = field(default_factory=list)
@@ -100,7 +99,6 @@ def stream_agent_chat(
     workspace_id: str,
     provider_cfg: ProviderConfig,
     history_messages: list[dict[str, Any]] | None = None,
-    source_map: dict[str, str] | None = None,
     run_id: str | None = None,
     config: AgentRunConfig | None = None,
 ) -> Iterator[dict[str, Any]]:
@@ -118,7 +116,6 @@ def stream_agent_chat(
             workspace_id=workspace_id,
             provider_cfg=provider_cfg,
             history_messages=history_messages or [],
-            source_map=source_map or {},
             run_id=resolved_run_id,
             should_cancel=should_cancel,
             config=cfg,
@@ -133,7 +130,6 @@ def _stream_agent_chat_registered(
     workspace_id: str,
     provider_cfg: ProviderConfig,
     history_messages: list[dict[str, Any]],
-    source_map: dict[str, str],
     run_id: str,
     should_cancel: Callable[[], bool],
     config: AgentRunConfig,
@@ -146,7 +142,6 @@ def _stream_agent_chat_registered(
         workspace_id=workspace_id,
         question=question,
         metadata_items=load_metadata_layer(workspace_id),
-        source_map=dict(source_map),
     )
     if not state.metadata_items:
         raise RuntimeError("当前工作区暂无可用索引")
@@ -337,10 +332,12 @@ def _plan_next_action(
         history=history,
         trace=_format_trace_for_prompt(state.trace),
         metadata_context=_format_metadata_layer(state.metadata_items) if metadata_visible else "（本轮未注入；如需重新筛选全库，请返回 read_metadata）",
-        index_context=_context_for_items(state.index_items, state.source_map, "I", budget),
-        paper_context=_context_for_items(state.paper_items, state.source_map, "P", budget),
+        index_context=_context_for_items(state.index_items, "I", budget),
+        paper_context=_context_for_items(state.paper_items, "P", budget),
     )
     last_error: RuntimeError | None = None
+    last_error_text: str = ""
+    same_error_count = 0
     thinking_id = f"agent_planner_{iteration}"
     thinking_started = False
 
@@ -348,8 +345,9 @@ def _plan_next_action(
         retry_suffix = ""
         if attempt > 1:
             retry_suffix = (
-                "\n\n上一次输出无效：action 为空或不在允许集合中。"
-                "本次必须返回合法 action，且只能是 answer / read_metadata / read_index / read_paper / not_found。"
+                f"\n\n你上一次输出存在错误：{last_error_text}"
+                "\n请严格检查输出格式后重新返回。"
+                "只能返回合法 JSON，action 只能是 answer / read_metadata / read_index / read_paper / not_found。"
             )
         response_parts: list[str] = []
         for event in ProviderClient.stream_events(
@@ -373,7 +371,21 @@ def _plan_next_action(
         if thinking_started:
             yield {"type": "thinking_end", "thinking_id": thinking_id}
             thinking_started = False
-        raw = _parse_json_strict("".join(response_parts))
+        try:
+            raw = _parse_json_strict("".join(response_parts))
+        except RuntimeError as exc:
+            last_error = exc
+            error_msg = str(exc)
+            if error_msg == last_error_text:
+                same_error_count += 1
+            else:
+                same_error_count = 1
+            last_error_text = error_msg
+            if same_error_count >= 2:
+                break
+            if on_retry and attempt < PLANNER_DECISION_RETRIES:
+                on_retry(attempt, PLANNER_DECISION_RETRIES)
+            continue
         record_llm_usage(
             workspace_id=state.workspace_id,
             feature="chat",
@@ -387,6 +399,14 @@ def _plan_next_action(
             return _parse_decision(raw)
         except RuntimeError as exc:
             last_error = exc
+            error_msg = str(exc)
+            if error_msg == last_error_text:
+                same_error_count += 1
+            else:
+                same_error_count = 1
+            last_error_text = error_msg
+            if same_error_count >= 2:
+                break
             if on_retry and attempt < PLANNER_DECISION_RETRIES:
                 on_retry(attempt, PLANNER_DECISION_RETRIES)
     return _fallback_decision(state, metadata_visible, last_error)
@@ -464,9 +484,9 @@ def _finalize_agent_context(state: AgentRunState, budget: dict[str, int]) -> Con
     _refresh_source_ids(state)
     sections: list[str] = []
     if state.index_items:
-        sections.append("索引层：\n" + _join_context_items(state.index_items, stable_source_ids=state.source_map, source_prefix="I"))
+        sections.append("索引层：\n" + _join_context_items(state.index_items, source_prefix="I"))
     if state.paper_items:
-        sections.append("正文层：\n" + _join_context_items(state.paper_items, stable_source_ids=state.source_map, source_prefix="P"))
+        sections.append("正文层：\n" + _join_context_items(state.paper_items, source_prefix="P"))
     context = "\n\n===\n\n".join(sections)
     sources = [item["source"] for item in [*state.index_items, *state.paper_items]]
     result = ContextBuildResult(
@@ -488,23 +508,15 @@ def _finalize_agent_context(state: AgentRunState, budget: dict[str, int]) -> Con
 
 def _refresh_source_ids(state: AgentRunState) -> None:
     if state.index_items:
-        _join_context_items(state.index_items, stable_source_ids=state.source_map, source_prefix="I")
-    for item in state.index_items:
-        source: ChatSource = item["source"]
-        if source.source_id:
-            state.source_map[f"index:{source.doc_id}"] = source.source_id
+        _join_context_items(state.index_items, source_prefix="I")
     if state.paper_items:
-        _join_context_items(state.paper_items, stable_source_ids=state.source_map, source_prefix="P")
-    for item in state.paper_items:
-        source = item["source"]
-        if source.source_id:
-            state.source_map[f"paper:{source.doc_id}"] = source.source_id
+        _join_context_items(state.paper_items, source_prefix="P")
 
 
-def _context_for_items(items: list[dict[str, Any]], source_map: dict[str, str], prefix: Literal["I", "P"], budget: dict[str, int]) -> str:
+def _context_for_items(items: list[dict[str, Any]], prefix: Literal["I", "P"], budget: dict[str, int]) -> str:
     if not items:
         return "（无）"
-    context = _join_context_items(items, stable_source_ids=source_map, source_prefix=prefix)
+    context = _join_context_items(items, source_prefix=prefix)
     max_tokens = max(1_000, int(budget.get("hard_limit_threshold") or 12_000))
     compressed, _truncated = _compress_context(context, max_tokens)
     return compressed

@@ -68,7 +68,6 @@ def run_chat(
     doc_ids: list[str] | None = None,
     include_index_context: bool = False,
     history_messages: list[dict[str, Any]] | None = None,
-    source_map: dict[str, str] | None = None,
 ) -> dict:
     mode_value = _normalize_mode(mode)
     context_result = build_chat_context(
@@ -78,7 +77,6 @@ def run_chat(
         mode=mode_value,
         doc_ids=doc_ids or [],
         include_index_context=include_index_context,
-        source_map=source_map or {},
     )
     system_prompt, user_prompt = build_chat_prompt(
         question=question,
@@ -116,19 +114,17 @@ def build_chat_context(
     mode: ChatMode,
     doc_ids: list[str],
     include_index_context: bool = False,
-    source_map: dict[str, str] | None = None,
 ) -> ContextBuildResult:
     budget = _build_budget(model_name)
     if mode == "wide":
-        result = _build_wide_context(workspace_id, question, budget, source_map or {})
+        result = _build_wide_context(workspace_id, question, budget)
     elif mode == "agent":
-        result = _build_agent_context(workspace_id, question, budget, source_map or {})
+        result = _build_agent_context(workspace_id, question, budget)
     else:
         result = _build_deep_context(
             workspace_id,
             doc_ids,
             budget,
-            source_map or {},
             include_index_context=include_index_context,
         )
 
@@ -224,14 +220,13 @@ def _build_wide_context(
     workspace_id: str,
     question: str,
     budget: dict[str, int],
-    source_map: dict[str, str],
 ) -> ContextBuildResult:
     docs = [item for item in list_documents(workspace_id=workspace_id) if item.get("status") == "indexed"]
     if not docs:
         raise RuntimeError("当前工作区暂无可用索引")
 
     full_items = [_load_document_context(str(doc["id"]), workspace_id, variant="index_full") for doc in docs]
-    full_context = _join_context_items(full_items, stable_source_ids=source_map, source_prefix="I")
+    full_context = _join_context_items(full_items, source_prefix="I")
     full_tokens = estimate_tokens(full_context)
     if full_tokens <= int(budget["model_context_window"] * FULL_INDEX_RATIO):
         return ContextBuildResult(
@@ -248,7 +243,7 @@ def _build_wide_context(
         )
 
     summary_items = [_load_document_context(str(doc["id"]), workspace_id, variant="summary") for doc in docs]
-    summary_context = _join_context_items(summary_items, stable_source_ids=source_map, source_prefix="I")
+    summary_context = _join_context_items(summary_items, source_prefix="I")
     all_summary_tokens = estimate_tokens(summary_context)
     ranked_candidate_count = 0
     wide_ranked_fallback = False
@@ -266,7 +261,7 @@ def _build_wide_context(
         keep_ids = {str(item["doc_id"]) for item in ranked[: min(12, len(ranked))]}
         if keep_ids:
             summary_items = [item for item in summary_items if item["source"].doc_id in keep_ids]
-            summary_context = _join_context_items(summary_items, stable_source_ids=source_map, source_prefix="I")
+            summary_context = _join_context_items(summary_items, source_prefix="I")
             wide_ranked_fallback = True
 
     return ContextBuildResult(
@@ -291,7 +286,6 @@ def _build_deep_context(
     workspace_id: str,
     doc_ids: list[str],
     budget: dict[str, int],
-    source_map: dict[str, str],
     *,
     include_index_context: bool,
 ) -> ContextBuildResult:
@@ -306,14 +300,14 @@ def _build_deep_context(
     original_items = [_load_document_context(doc_id, workspace_id, variant="original_full") for doc_id in unique_ids]
     if not include_index_context:
         return ContextBuildResult(
-            context=_join_context_items(original_items, stable_source_ids=source_map, source_prefix="P"),
+            context=_join_context_items(original_items, source_prefix="P"),
             sources=[item["source"] for item in original_items],
             stats={"deep_doc_ids": unique_ids},
         )
 
     index_items = [_load_document_context(doc_id, workspace_id, variant="index_full") for doc_id in unique_ids]
     return ContextBuildResult(
-        context=_join_deep_context(index_items, original_items, source_map),
+        context=_join_deep_context(index_items, original_items),
         sources=[item["source"] for item in [*index_items, *original_items]],
         stats={
             "deep_doc_ids": unique_ids,
@@ -327,18 +321,17 @@ def _build_deep_context(
 def _join_deep_context(
     index_items: list[dict[str, Any]],
     original_items: list[dict[str, Any]],
-    source_map: dict[str, str],
 ) -> str:
     sections: list[str] = []
     if index_items:
         sections.append(
             "索引上下文：\n"
-            + _join_context_items(index_items, stable_source_ids=source_map, source_prefix="I")
+            + _join_context_items(index_items, source_prefix="I")
         )
     if original_items:
         sections.append(
             "原文上下文：\n"
-            + _join_context_items(original_items, stable_source_ids=source_map, source_prefix="P")
+            + _join_context_items(original_items, source_prefix="P")
         )
     return "\n\n===\n\n".join(section for section in sections if section.strip())
 
@@ -347,7 +340,6 @@ def _build_agent_context(
     workspace_id: str,
     question: str,
     budget: dict[str, int],
-    source_map: dict[str, str],
 ) -> ContextBuildResult:
     ranked = _agent_search_candidates(workspace_id, question)
     index_items = _agent_load_index_items(ranked, workspace_id)
@@ -358,7 +350,6 @@ def _build_agent_context(
         ranked=ranked,
         index_items=index_items,
         original_items=original_items,
-        source_map=source_map,
         trace=trace,
     )
 
@@ -368,7 +359,6 @@ def iter_agent_context_events(
     question: str,
     workspace_id: str,
     model_name: str,
-    source_map: dict[str, str],
 ) -> Any:
     budget = _build_budget(model_name)
     ranked = _agent_search_candidates(workspace_id, question)
@@ -384,7 +374,6 @@ def iter_agent_context_events(
         ranked=ranked,
         index_items=index_items,
         original_items=original_items,
-        source_map=source_map,
         trace=trace,
     )
     return _finalize_context_result(result, budget)
@@ -491,19 +480,18 @@ def _compose_agent_context_result(
     ranked: list[dict[str, Any]],
     index_items: list[dict[str, Any]],
     original_items: list[dict[str, Any]],
-    source_map: dict[str, str],
     trace: list[dict[str, Any]],
 ) -> ContextBuildResult:
     sections: list[str] = []
     if index_items:
         sections.append(
             "候选索引上下文：\n"
-            + _join_context_items(index_items, stable_source_ids=source_map, source_prefix="I")
+            + _join_context_items(index_items, source_prefix="I")
         )
     if original_items:
         sections.append(
             "原文核对上下文：\n"
-            + _join_context_items(original_items, stable_source_ids=source_map, source_prefix="P")
+            + _join_context_items(original_items, source_prefix="P")
         )
     context = "\n\n===\n\n".join(section for section in sections if section.strip())
     return ContextBuildResult(
@@ -538,6 +526,7 @@ def _load_document_context(
     source_kind: Literal["index", "paper"] = (
         "paper" if variant in {"original_full", "original_excerpt"} else "index"
     )
+    seq_num = doc.get("seq_num")
     source = ChatSource(
         source_id="",
         doc_id=doc_id,
@@ -556,7 +545,7 @@ def _load_document_context(
         body = _build_original_excerpt(_load_original_document_content(doc), question)
     else:
         body = _render_structured_summary(record)
-    return {"source": source, "body": body.strip()}
+    return {"source": source, "body": body.strip(), "source_seq_num": int(seq_num or 0)}
 
 
 def _load_original_document_content(doc: dict[str, Any]) -> str:
@@ -657,7 +646,6 @@ def _build_original_excerpt(raw: str, question: str, max_chars: int = 14_000) ->
 
 def _join_context_items(
     items: list[dict[str, Any]],
-    stable_source_ids: dict[str, str] | None = None,
     source_prefix: Literal["I", "P"] = "I",
 ) -> str:
     if not items:
@@ -665,16 +653,18 @@ def _join_context_items(
     manifest_lines = ["可用文献顺序："]
     blocks: list[str] = []
     used_ids: set[str] = set()
-    next_index = _next_source_index(stable_source_ids or {}, source_prefix)
+    fallback_index = 1
     for item in items:
         source: ChatSource = item["source"]
-        candidate = _normalize_source_id(
-            _lookup_stable_source_id(stable_source_ids or {}, source),
-            source_prefix,
-        )
-        if not candidate or candidate in used_ids:
-            candidate = f"{source_prefix}-{next_index:02d}"
-            next_index += 1
+        seq_num = int(item.get("source_seq_num") or 0)
+        if seq_num > 0:
+            candidate = f"{source_prefix}-{seq_num:02d}"
+        else:
+            candidate = f"{source_prefix}-{fallback_index:02d}"
+            fallback_index += 1
+        while candidate in used_ids:
+            fallback_index += 1
+            candidate = f"{source_prefix}-{fallback_index:02d}"
         source.source_id = candidate
         used_ids.add(candidate)
         title = source.display_name if not source.title or source.title == source.display_name else f"{source.display_name} | {source.title}"
@@ -748,25 +738,6 @@ def _normalize_source_id(value: Any, prefix: str | None = None) -> str | None:
         return None
     digits = match.group(2)
     return f"{resolved_prefix}-{digits}"
-
-
-def _source_map_key(doc_id: str, source_kind: str) -> str:
-    return f"{source_kind}:{doc_id}"
-
-
-def _lookup_stable_source_id(source_map: dict[str, str], source: ChatSource) -> str | None:
-    contextual_key = _source_map_key(source.doc_id, source.source_kind)
-    return source_map.get(contextual_key) or source_map.get(source.doc_id)
-
-
-def _next_source_index(source_map: dict[str, str], prefix: Literal["I", "P"]) -> int:
-    highest = 0
-    for value in source_map.values():
-        candidate = _normalize_source_id(value, prefix)
-        if not candidate:
-            continue
-        highest = max(highest, int(candidate.split("-", 1)[1]))
-    return highest + 1 if highest > 0 else 1
 
 
 def _compression_level(estimated: int, budget: int) -> str:

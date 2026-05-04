@@ -193,6 +193,36 @@ def delete_workspace(workspace_id: str) -> dict[str, Any] | None:
     }
 
 
+def _next_doc_seq_num(conn: sqlite3.Connection, workspace_id: str) -> int:
+    existing = {row[0] for row in conn.execute(
+        "SELECT seq_num FROM documents WHERE workspace_id = ? AND seq_num IS NOT NULL",
+        (workspace_id,),
+    ).fetchall()}
+    seq = 1
+    while seq in existing:
+        seq += 1
+    return seq
+
+
+def get_doc_seq_num(doc_id: str, workspace_id: str | None = None) -> int | None:
+    with get_conn() as conn:
+        if workspace_id is None:
+            row = conn.execute(
+                "SELECT seq_num FROM documents WHERE id = ?",
+                (doc_id,),
+            ).fetchone()
+        else:
+            workspace = normalize_workspace_id(workspace_id)
+            row = conn.execute(
+                "SELECT seq_num FROM documents WHERE id = ? AND workspace_id = ?",
+                (doc_id, workspace),
+            ).fetchone()
+        if not row:
+            return None
+        value = row["seq_num"]
+        return int(value) if value is not None else None
+
+
 def create_document(
     filename: str,
     file_type: str,
@@ -206,12 +236,13 @@ def create_document(
     workspace = normalize_workspace_id(workspace_id)
     template = normalize_field_template_id(field_template_id)
     with get_conn() as conn:
+        seq_num = _next_doc_seq_num(conn, workspace)
         conn.execute(
             """
             INSERT INTO documents (
-              id, workspace_id, field_template_id, filename, display_name, file_type, file_hash, file_path, status, stage, stage_message, cancel_requested, created_at, updated_at
+              id, workspace_id, field_template_id, filename, display_name, file_type, file_hash, file_path, status, stage, stage_message, cancel_requested, seq_num, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', 'uploaded', '文件上传完成，等待生成索引', 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', 'uploaded', '文件上传完成，等待生成索引', 0, ?, ?, ?)
             """,
             (
                 doc_id,
@@ -222,6 +253,7 @@ def create_document(
                 file_type,
                 file_hash,
                 file_path,
+                seq_num,
                 now,
                 now,
             ),

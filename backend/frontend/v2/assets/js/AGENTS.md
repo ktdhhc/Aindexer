@@ -1,7 +1,7 @@
 # V2 JS DOMAIN
 
 ## OVERVIEW
-`backend/frontend/v2/assets/js/` 是 V2 前端逻辑层，按 `api/pages/shared/adapters` 分层。
+`backend/frontend/v2/assets/js/` 是 legacy V2 前端逻辑层，按 `api/pages/shared/adapters` 分层。该域当前仅用于兼容或历史参考，不再是正式前端默认实现。
 
 ## STRUCTURE
 ```text
@@ -31,7 +31,9 @@ backend/frontend/v2/assets/js/
 - 不要把 CSS/HTML 细节写入 JS 域文档主体。
 - 不要在页面层重复定义 API 地址和请求逻辑。
 - 不要把与 `octto/` 子项目相关实现混入本域说明。
+- 未经用户明确要求，不要把新需求默认落到本域。
 
 ## NOTES
 - 页面入口文件见 `backend/frontend/v2/index.html`、`backend/frontend/v2/provider-config.html`。
 - 后端 API 边界见 `backend/app/routers/`；前端这里是消费层。
+- 当前正式前端默认在 `frontend-v3/`；只有用户明确要求修补 legacy 路径或兼容问题时才应优先修改本域。

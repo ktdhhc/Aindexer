@@ -41,7 +41,6 @@ class ChatAskIn(BaseModel):
     doc_ids: list[str] = Field(default_factory=list)
     include_index_context: bool = False
     messages: list[dict] = Field(default_factory=list)
-    source_map: dict[str, str] = Field(default_factory=dict)
     session_id: str | None = None
     run_id: str | None = None
 
@@ -75,7 +74,6 @@ def ask_chat(payload: ChatAskIn) -> dict:
             doc_ids=payload.doc_ids,
             include_index_context=payload.include_index_context,
             history_messages=payload.messages,
-            source_map=payload.source_map,
         )
         logger.info(
             "chat success mode=%s sources=%s answer_chars=%s",
@@ -112,7 +110,6 @@ def ask_chat_stream(payload: ChatAskIn):
                     workspace_id=workspace_id,
                     provider_cfg=cfg,
                     history_messages=payload.messages,
-                    source_map=payload.source_map,
                     run_id=payload.run_id,
                 ):
                     yield json.dumps(event, ensure_ascii=False) + "\n"
@@ -125,7 +122,6 @@ def ask_chat_stream(payload: ChatAskIn):
                     mode=mode,  # type: ignore[arg-type]
                     doc_ids=payload.doc_ids,
                     include_index_context=payload.include_index_context,
-                    source_map=payload.source_map,
                 )
 
             system_prompt, user_prompt = build_chat_prompt(

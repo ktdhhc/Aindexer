@@ -245,7 +245,7 @@ def test_agent_retries_when_planner_returns_empty_action(monkeypatch: pytest.Mon
 
     assert any(event["type"] == "done" for event in events)
     assert len(prompts) == 2
-    assert "上一次输出无效" in prompts[1]
+    assert "上一次输出无效" in prompts[1] or "你上一次输出存在错误" in prompts[1]
     retry_steps = [
         event for event in events
         if event["type"] == "agent_step" and event["step"]["label"] == "规划"

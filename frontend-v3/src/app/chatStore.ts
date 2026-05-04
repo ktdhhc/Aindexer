@@ -36,7 +36,6 @@ export interface ChatSession {
   locked: boolean;
   injectedDocIds: string[];
   selectedDocIds: string[];
-  sourceMap: Record<string, string>;
   createdAt: string;
   updatedAt: string;
   lastQuestion: string;
@@ -165,22 +164,12 @@ function createEmptySession(mode: ChatMode = "deep"): ChatSession {
     locked: false,
     injectedDocIds: [],
     selectedDocIds: [],
-    sourceMap: {},
     createdAt: now,
     updatedAt: now,
     lastQuestion: "",
     agentTrace: [],
     messages: [],
   };
-}
-
-function sourceMapKey(docId: string, sourceKind: ChatSource["source_kind"]): string {
-  const kind = sourceKind === "paper" ? "paper" : sourceKind === "index" ? "index" : "";
-  return kind ? `${kind}:${docId}` : docId;
-}
-
-function sourceMapKeyFromSource(source: ChatSource): string {
-  return sourceMapKey(source.doc_id, source.source_kind);
 }
 
 function readSessionStore(): ChatSessionStore {
@@ -206,62 +195,6 @@ function persistWorkspaceSessions(workspaceId: string, sessions: ChatSession[]):
   const store = readSessionStore();
   store[workspaceId] = sessions;
   writeSessionStore(store);
-}
-
-function isValidSourceId(value: string): boolean {
-  return Boolean(normalizeSourceId(value));
-}
-
-function nextSourceIndex(sourceMap: Record<string, string>, prefix: "I" | "P"): number {
-  return Object.values(sourceMap).reduce((highest, value) => {
-    const normalized = normalizeSourceId(value);
-    if (!isValidSourceId(normalized) || !normalized.startsWith(prefix)) return highest;
-    return Math.max(highest, Number.parseInt(normalized.split("-")[1], 10) || 0);
-  }, 0) + 1;
-}
-
-function mergeSourceMap(sourceMap: Record<string, string>, sources?: ChatSource[]): Record<string, string> {
-  const next = { ...sourceMap };
-  for (const source of sources ?? []) {
-    const sourceId = normalizeSourceId(source.source_id);
-    if (!source.doc_id || !isValidSourceId(sourceId)) continue;
-    next[sourceMapKeyFromSource(source)] = sourceId;
-  }
-  return next;
-}
-
-function extendSourceMap(
-  sourceMap: Record<string, string>,
-  docIds: string[],
-  prefix: "I" | "P",
-  sourceKind: ChatSource["source_kind"],
-): Record<string, string> {
-  const next = { ...sourceMap };
-  let cursor = nextSourceIndex(next, prefix);
-  for (const docId of docIds) {
-    const existingKey = sourceMapKey(docId, sourceKind);
-    const existing = normalizeSourceId(next[existingKey]);
-    if (isValidSourceId(existing) && existing.startsWith(prefix)) continue;
-    next[existingKey] = `${prefix}-${String(cursor).padStart(2, "0")}`;
-    cursor += 1;
-  }
-  return next;
-}
-
-function normalizeSourceMap(rawSourceMap: unknown, messages: ChatMessage[]): Record<string, string> {
-  let next: Record<string, string> = {};
-  if (rawSourceMap && typeof rawSourceMap === "object" && !Array.isArray(rawSourceMap)) {
-    for (const [docId, sourceId] of Object.entries(rawSourceMap as Record<string, unknown>)) {
-      const normalized = normalizeSourceId(String(sourceId || ""));
-      if (docId && isValidSourceId(normalized)) {
-        next[docId] = normalized;
-      }
-    }
-  }
-  for (const message of messages) {
-    next = mergeSourceMap(next, message.sources);
-  }
-  return next;
 }
 
 function normalizeSession(raw: ChatSession): ChatSession {
@@ -291,7 +224,6 @@ function normalizeSession(raw: ChatSession): ChatSession {
     selectedDocIds: Array.isArray((raw as ChatSession & { injectedDocIds?: string[] }).injectedDocIds)
       ? (Array.isArray(raw.selectedDocIds) ? raw.selectedDocIds : [])
       : [],
-    sourceMap: normalizeSourceMap((raw as ChatSession & { sourceMap?: Record<string, string> }).sourceMap, messages),
     agentTrace: Array.isArray((raw as ChatSession & { agentTrace?: AgentTraceStep[] }).agentTrace)
       ? (raw as ChatSession & { agentTrace?: AgentTraceStep[] }).agentTrace ?? []
       : [],
@@ -303,22 +235,18 @@ function modeLabel(mode: ChatMode): string {
   return mode === "wide" ? "全景" : mode === "agent" ? "探索" : "精读";
 }
 
-function shouldPersistSourceMap(mode: ChatMode): boolean {
-  return mode === "deep" || mode === "wide" || mode === "agent";
-}
-
 function buildSessionTitle(question: string): string {
   const normalized = question.replace(/\s+/g, " ").trim();
   if (!normalized) return "新会话";
   return normalized.length > 24 ? `${normalized.slice(0, 24)}...` : normalized;
 }
 
-function buildSourceSnapshot(docIds: string[], files: FileItem[], sourceMap: Record<string, string>): ChatSource[] {
+function buildSourceSnapshot(docIds: string[], files: FileItem[]): ChatSource[] {
   const map = new Map(files.map((item) => [item.id, item]));
   return docIds.map((docId) => {
     const item = map.get(docId);
     return {
-      source_id: normalizeSourceId(sourceMap[sourceMapKey(docId, "paper")]) || sourceMap[sourceMapKey(docId, "paper")],
+      source_id: "",
       doc_id: docId,
       display_name: item?.display_name || item?.filename || docId,
       source_kind: "paper",
@@ -592,10 +520,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const injectedDocIds = activeSession?.injectedDocIds ?? [];
     const selectedDocIds = activeSession?.selectedDocIds ?? [];
     const currentDocIds = [...new Set([...injectedDocIds, ...selectedDocIds])];
-    const nextSourceMap = currentMode === "deep"
-      ? extendSourceMap(activeSession?.sourceMap ?? {}, selectedDocIds, "P", "paper")
-      : (activeSession?.sourceMap ?? {});
-    const currentSources = buildSourceSnapshot(selectedDocIds, indexedFiles, nextSourceMap);
+    const currentSources = buildSourceSnapshot(selectedDocIds, indexedFiles);
     const historyMessages = buildHistoryPayload(activeSession?.messages ?? []);
     if (!trimmedQuestion || state.sendingByWorkspace[workspaceId] || !currentSessionId) return;
     if (!selectedModelEntry?.provider) {
@@ -679,7 +604,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         mode: currentMode,
         doc_ids: currentDocIds,
         messages: historyMessages,
-        source_map: nextSourceMap,
         session_id: currentSessionId,
         run_id: runId,
       };
@@ -752,7 +676,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   ...session,
                   injectedDocIds: [...new Set([...session.injectedDocIds, ...selectedDocIds])],
                   selectedDocIds: session.id === currentSessionId ? [] : session.selectedDocIds,
-                  sourceMap: shouldPersistSourceMap(currentMode) ? mergeSourceMap(nextSourceMap, event.sources) : session.sourceMap,
                   agentTrace: currentMode === "agent"
                     ? ((event.context_stats.agent_trace as AgentTraceStep[] | undefined) ?? session.agentTrace)
                     : session.agentTrace,
@@ -919,7 +842,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 ...session,
                 injectedDocIds: [...new Set([...session.injectedDocIds, ...selectedDocIds])],
                 selectedDocIds: [],
-                sourceMap: shouldPersistSourceMap(currentMode) ? mergeSourceMap(nextSourceMap, response.sources) : session.sourceMap,
+
                 agentTrace: currentMode === "agent"
                   ? ((response.context_stats.agent_trace as AgentTraceStep[] | undefined) ?? session.agentTrace)
                   : session.agentTrace,

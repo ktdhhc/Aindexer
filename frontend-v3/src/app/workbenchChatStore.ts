@@ -29,7 +29,6 @@ interface WorkbenchChatSession {
   workspaceId: string;
   docId: string;
   messages: WorkbenchChatMessage[];
-  sourceMap: Record<string, string>;
   updatedAt: string;
 }
 
@@ -102,24 +101,8 @@ function createEmptySession(workspaceId: string, docId: string): WorkbenchChatSe
     workspaceId,
     docId,
     messages: [],
-    sourceMap: {},
     updatedAt: new Date().toISOString(),
   };
-}
-
-function sourceMapKey(docId: string, sourceKind: ChatSource["source_kind"]): string {
-  const kind = sourceKind === "paper" ? "paper" : sourceKind === "index" ? "index" : "";
-  return kind ? `${kind}:${docId}` : docId;
-}
-
-function mergeSourceMap(sourceMap: Record<string, string>, sources?: ChatSource[]): Record<string, string> {
-  const next = { ...sourceMap };
-  for (const source of sources ?? []) {
-    const sourceId = normalizeSourceId(source.source_id);
-    if (!source.doc_id || !sourceId) continue;
-    next[sourceMapKey(source.doc_id, source.source_kind)] = sourceId;
-  }
-  return next;
 }
 
 function buildHistoryPayload(messages: WorkbenchChatMessage[]): ChatHistoryMessage[] {
@@ -179,7 +162,6 @@ function normalizeSession(raw: WorkbenchChatSession, workspaceId: string, docId:
     workspaceId,
     docId,
     messages,
-    sourceMap: typeof raw.sourceMap === "object" && raw.sourceMap ? raw.sourceMap : {},
     updatedAt: raw.updatedAt || new Date().toISOString(),
   };
 }
@@ -360,7 +342,6 @@ export const useWorkbenchChatStore = create<WorkbenchChatState>((set, get) => ({
         doc_ids: [docId],
         include_index_context: true,
         messages: historyMessages,
-        source_map: session.sourceMap,
         session_id: `workbench:${key}`,
         run_id: runId,
       };
@@ -374,7 +355,6 @@ export const useWorkbenchChatStore = create<WorkbenchChatState>((set, get) => ({
               set((current) => ({
                 ...upsertSessionRecord(current, workspaceId, docId, (currentSession) => ({
                   ...currentSession,
-                  sourceMap: mergeSourceMap(currentSession.sourceMap, event.sources),
                   updatedAt: new Date().toISOString(),
                   messages: currentSession.messages.map((message) => (
                     message.id === assistantMessageId
@@ -445,7 +425,6 @@ export const useWorkbenchChatStore = create<WorkbenchChatState>((set, get) => ({
       set((current) => ({
         ...upsertSessionRecord(current, workspaceId, docId, (currentSession) => ({
           ...currentSession,
-          sourceMap: mergeSourceMap(currentSession.sourceMap, response.sources),
           updatedAt: new Date().toISOString(),
           messages: currentSession.messages.map((message) => (
             message.id === assistantMessageId

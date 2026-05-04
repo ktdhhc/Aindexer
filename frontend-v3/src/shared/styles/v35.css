@@ -1529,6 +1529,31 @@ body {
   color: var(--v35-text-secondary);
 }
 
+.v35-math-inline {
+  font-family: "JetBrains Mono", "SF Mono", "Courier New", monospace;
+  font-size: 0.9em;
+  font-style: italic;
+  background: rgba(166, 95, 43, 0.06);
+  border-radius: 4px;
+  padding: 1px 4px;
+  white-space: nowrap;
+  color: var(--v35-text-primary);
+}
+
+.v35-math-display {
+  font-family: "JetBrains Mono", "SF Mono", "Courier New", monospace;
+  font-size: 15px;
+  font-style: italic;
+  text-align: center;
+  padding: 10px 14px;
+  margin: 8px 0;
+  border: 1px solid rgba(36, 28, 22, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 252, 243, 0.5);
+  white-space: pre-wrap;
+  color: var(--v35-text-primary);
+}
+
 .v35-chat-thinking-list {
   display: grid;
   gap: 6px;
