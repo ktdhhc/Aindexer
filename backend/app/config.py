@@ -5,7 +5,16 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-DATA_DIR = BASE_DIR / "data"
+
+
+def _resolve_data_dir() -> Path:
+    override = os.getenv("AINDEXER_DATA_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+    return BASE_DIR / "data"
+
+
+DATA_DIR = _resolve_data_dir()
 LOG_DIR = DATA_DIR / "logs"
 UPLOAD_DIR = DATA_DIR / "uploads"
 INDEX_DIR = DATA_DIR / "indexes"

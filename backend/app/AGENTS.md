@@ -47,6 +47,7 @@ pytest tests/test_api_smoke.py tests/test_security.py
 
 ## NOTES
 - 当前静态前端目录是 `backend/frontend/`，由 `main.py` 统一挂载；正式前端源码位于 `frontend-v3/`。
+- V4 桌面端使用 `backend/desktop_v4_sidecar.py` 启动本地 FastAPI，并可通过 `AINDEXER_DATA_DIR` 切换桌面运行数据目录。
 - `documents` 现有稳定字段包括 `workspace_id`、`field_template_id`、`seq_num`；`seq_num` 会影响聊天来源编号的稳定性。
 - V4 桌面端过程中优先在桌面壳、bridge、打包层解决问题；如果确需改动本域，应补充针对性测试并验证 V3.5 核心功能不受影响。
 - 子目录细节请看 `backend/app/routers/AGENTS.md` 和 `backend/app/services/AGENTS.md`。

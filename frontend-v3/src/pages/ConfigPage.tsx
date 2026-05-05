@@ -39,8 +39,10 @@ import {
   listPricingRules,
   savePricingRule,
 } from "../shared/api/usage";
+import { UI_LAYOUT_SIZE_OPTIONS, useShellStore, type UiLayoutSize } from "../app/shellStore";
 import { getModelDefaults, setModelDefaults, type ModelDefaults } from "../shared/lib/modelDefaults";
 import { setProviderModels, useAvailableProviderModelEntries, useProviderModels } from "../shared/lib/providerModels";
+import { isDesktopShell } from "../shared/lib/runtime";
 
 type ConfigSection = "providers" | "defaults" | "fields" | "workspaces" | "usage";
 
@@ -188,8 +190,27 @@ const USAGE_STACK_COLORS = [
   "is-ink",
 ] as const;
 
+function ConfigSectionIcon({ section }: { section: ConfigSection }) {
+  if (section === "providers") {
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12" /><path d="M4 10h12" /><path d="M4 14h8" /><circle cx="14.5" cy="14" r="1.5" fill="currentColor" stroke="none" /></svg>;
+  }
+  if (section === "defaults") {
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.2v2.2" /><path d="M10 13.6v2.2" /><path d="m5.9 5.9 1.6 1.6" /><path d="m12.5 12.5 1.6 1.6" /><path d="M4.2 10h2.2" /><path d="M13.6 10h2.2" /><path d="m5.9 14.1 1.6-1.6" /><path d="m12.5 7.5 1.6-1.6" /><circle cx="10" cy="10" r="2.6" /></svg>;
+  }
+  if (section === "fields") {
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5h10" /><path d="M5 10h10" /><path d="M5 15h6" /><path d="M13 13.5h2.5V16" /></svg>;
+  }
+  if (section === "workspaces") {
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.8 6.2A1.2 1.2 0 0 1 5 5h10a1.2 1.2 0 0 1 1.2 1.2v7.6A1.2 1.2 0 0 1 15 15H5a1.2 1.2 0 0 1-1.2-1.2Z" /><path d="M6.5 5V3.8h7V5" /></svg>;
+  }
+  return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 14h2.8" /><path d="M8.8 14h2.4" /><path d="M12.2 14H15" /><path d="M6.2 10.5h1.6v3H6.2z" /><path d="M9.2 8.5h1.6V14H9.2z" /><path d="M12.2 6.5h1.6V14h-1.6z" /></svg>;
+}
+
 export function ConfigPage() {
+  const desktopShell = isDesktopShell();
   const queryClient = useQueryClient();
+  const uiLayoutSize = useShellStore((state) => state.uiLayoutSize);
+  const setUiLayoutSize = useShellStore((state) => state.setUiLayoutSize);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const setWorkspaceId = useWorkspaceStore((state) => state.setWorkspaceId);
 
@@ -814,24 +835,39 @@ export function ConfigPage() {
       <div className="v35-config-shell">
         <aside className="v35-config-nav" aria-label="配置分区">
           <button className={section === "providers" ? "is-active" : ""} type="button" onClick={() => setSection("providers")}>
-            <strong>Provider</strong>
-            <span>{providerStatus(selectedProviderRow)}</span>
+            <span className="v35-config-nav-icon" aria-hidden="true"><ConfigSectionIcon section="providers" /></span>
+            <span className="v35-config-nav-copy">
+              <strong>Provider</strong>
+              <span>{providerStatus(selectedProviderRow)}</span>
+            </span>
           </button>
           <button className={section === "defaults" ? "is-active" : ""} type="button" onClick={() => setSection("defaults")}>
-            <strong>默认配置</strong>
-            <span>索引 / 翻译 / 对话</span>
+            <span className="v35-config-nav-icon" aria-hidden="true"><ConfigSectionIcon section="defaults" /></span>
+            <span className="v35-config-nav-copy">
+              <strong>默认配置</strong>
+              <span>{desktopShell ? "3 workflows" : "索引 / 翻译 / 对话"}</span>
+            </span>
           </button>
           <button className={section === "fields" ? "is-active" : ""} type="button" onClick={() => setSection("fields")}>
-            <strong>字段模板</strong>
-            <span>{selectedTemplateRow?.name || "未选择"}</span>
+            <span className="v35-config-nav-icon" aria-hidden="true"><ConfigSectionIcon section="fields" /></span>
+            <span className="v35-config-nav-copy">
+              <strong>字段模板</strong>
+              <span>{selectedTemplateRow?.name || "未选择"}</span>
+            </span>
           </button>
           <button className={section === "workspaces" ? "is-active" : ""} type="button" onClick={() => setSection("workspaces")}>
-            <strong>工作区</strong>
-            <span>{currentWorkspaceRow?.name || workspaceId}</span>
+            <span className="v35-config-nav-icon" aria-hidden="true"><ConfigSectionIcon section="workspaces" /></span>
+            <span className="v35-config-nav-copy">
+              <strong>工作区</strong>
+              <span>{currentWorkspaceRow?.name || workspaceId}</span>
+            </span>
           </button>
           <button className={section === "usage" ? "is-active" : ""} type="button" onClick={() => setSection("usage")}>
-            <strong>用量</strong>
-            <span>{compactNumber(usageTotals.total_tokens)} tokens</span>
+            <span className="v35-config-nav-icon" aria-hidden="true"><ConfigSectionIcon section="usage" /></span>
+            <span className="v35-config-nav-copy">
+              <strong>用量</strong>
+              <span>{compactNumber(usageTotals.total_tokens)} tokens</span>
+            </span>
           </button>
           <p className="v35-config-status">{currentSectionStatus}</p>
         </aside>
@@ -964,22 +1000,48 @@ export function ConfigPage() {
           {section === "defaults" ? (
             <section className="v35-config-section">
               <div className="v35-config-list">
-                <button className="v35-config-list-item is-active" type="button">
+                <div className="v35-config-list-item is-active">
                   <strong>默认模型</strong>
                   <span>{availableModelEntries.length} available</span>
                   <em>本地偏好</em>
-                </button>
+                </div>
+                <div className="v35-config-list-item is-active">
+                  <strong>界面尺寸</strong>
+                  <span>{UI_LAYOUT_SIZE_OPTIONS.find((option) => option.value === uiLayoutSize)?.label ?? "大"}</span>
+                  <em>当前布局</em>
+                </div>
               </div>
 
               <article className="v35-config-paper">
                 <header className="v35-config-paper-head">
                   <div>
                     <p>Defaults</p>
-                    <h2>指定三个工作流的默认模型</h2>
+                    <h2>指定默认模型与界面尺寸</h2>
                   </div>
                 </header>
 
                 <div className="v35-config-form-grid">
+                  <div className="v35-field v35-span-2">
+                    <span>字体布局大小</span>
+                    <div className="v35-ui-size-switch" role="radiogroup" aria-label="字体布局大小">
+                      {UI_LAYOUT_SIZE_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          className={uiLayoutSize === option.value ? "is-active" : ""}
+                          type="button"
+                          role="radio"
+                          aria-checked={uiLayoutSize === option.value}
+                          onClick={() => {
+                            setUiLayoutSize(option.value as UiLayoutSize);
+                            setDefaultsMessage(`界面尺寸已切换为${option.label}`);
+                          }}
+                        >
+                          <strong>{option.label}</strong>
+                          <span>{option.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <label className="v35-field v35-span-2">
                     <span>生成索引</span>
                     <select className="v35-input" value={modelDefaultsDraft.indexing} onChange={(event) => setModelDefaultsDraft((current) => ({ ...current, indexing: event.target.value }))}>

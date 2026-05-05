@@ -1,4 +1,5 @@
 import type { SearchItem } from "../../shared/api/search";
+import type { KeywordStat } from "./types";
 
 export function nextMessageId(): string {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -43,7 +44,7 @@ export function compactAuthors(authors: string[] | undefined): string {
   return authors.slice(0, 3).join(" / ");
 }
 
-export function extractTopKeywords(rows: SearchItem[], limit: number): string[] {
+export function extractTopKeywords(rows: SearchItem[], limit: number): KeywordStat[] {
   const countMap = new Map<string, number>();
   for (const row of rows) {
     for (const keyword of row.keywords || []) {
@@ -57,7 +58,7 @@ export function extractTopKeywords(rows: SearchItem[], limit: number): string[] 
   return [...countMap.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, limit)
-    .map(([keyword]) => keyword);
+    .map(([keyword, count]) => ({ keyword, count }));
 }
 
 function escapeHtml(value: string): string {

@@ -15,6 +15,9 @@ frontend-v3/node_modules/
 frontend-v3/.vite/
 frontend-v3/.turbo/
 frontend-v3/.cache/
+desktop-v4/node_modules/
+desktop-v4/src-tauri/gen/
+desktop-v4/src-tauri/target/
 
 # Local tools and private workspace files
 .omocache/

@@ -5,4 +5,9 @@ export interface WorkbenchStats {
   review: number;
 }
 
+export interface KeywordStat {
+  keyword: string;
+  count: number;
+}
+
 export type PreviewMode = "rendered" | "raw";

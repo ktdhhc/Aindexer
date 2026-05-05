@@ -503,58 +503,60 @@ export function WorkbenchPage() {
         statusText={statusText}
       />
 
-      <WorkbenchToolbar
-          providers={providersQuery.data ?? []}
-          selectedProvider={provider}
-        onProviderChange={setProvider}
-        modelOptions={modelOptions}
-        selectedModel={model}
-        onModelChange={setModel}
-          templates={templatesQuery.data ?? []}
-          selectedTemplateId={templateId}
-          onTemplateChange={setTemplateId}
-        onUploadFiles={(files) => {
-          void uploadMutation.mutateAsync(files);
-        }}
-      />
-
       <div className="v35-editorial-grid">
-        <LibraryPanel
-          rows={searchRows}
-          filesById={filesById}
-          selectedDocId={selectedDocId}
-          searchInput={searchInput}
-          onSearchInputChange={setSearchInput}
-          onSearchSubmit={handleSearchSubmit}
-          sortField={searchSortField}
-          sortDirection={searchSortDirection}
-          onSortFieldChange={setSearchSortField}
-          onSortDirectionChange={setSearchSortDirection}
-          onRefresh={() => {
-            void handleRefresh();
-          }}
-          onSelect={setSelectedDocId}
-          indexableCount={indexableCount}
-          runAllDisabled={runAllMutation.isPending || !provider || indexableCount === 0}
-          onRunAll={() => {
-            void runAllMutation.mutateAsync();
-          }}
-          onRun={(docId) => {
-            void runMutation.mutateAsync(docId);
-          }}
-          onCancel={(docId) => {
-            void cancelMutation.mutateAsync(docId);
-          }}
-          onDelete={(docId) => {
-            void deleteMutation.mutateAsync(docId);
-          }}
-          isLoading={searchQueryResult.isLoading}
-          isFetching={searchQueryResult.isFetching}
-          isError={searchQueryResult.isError}
-          runPending={runMutation.isPending}
-          cancelPending={cancelMutation.isPending}
-          deletePending={deleteMutation.isPending}
-        />
+        <div className="v35-library-stack">
+          <WorkbenchToolbar
+            providers={providersQuery.data ?? []}
+            selectedProvider={provider}
+            onProviderChange={setProvider}
+            modelOptions={modelOptions}
+            selectedModel={model}
+            onModelChange={setModel}
+            templates={templatesQuery.data ?? []}
+            selectedTemplateId={templateId}
+            onTemplateChange={setTemplateId}
+            onUploadFiles={(files) => {
+              void uploadMutation.mutateAsync(files);
+            }}
+          />
+
+          <LibraryPanel
+            rows={searchRows}
+            filesById={filesById}
+            selectedDocId={selectedDocId}
+            searchInput={searchInput}
+            onSearchInputChange={setSearchInput}
+            onSearchSubmit={handleSearchSubmit}
+            sortField={searchSortField}
+            sortDirection={searchSortDirection}
+            onSortFieldChange={setSearchSortField}
+            onSortDirectionChange={setSearchSortDirection}
+            onRefresh={() => {
+              void handleRefresh();
+            }}
+            onSelect={setSelectedDocId}
+            indexableCount={indexableCount}
+            runAllDisabled={runAllMutation.isPending || !provider || indexableCount === 0}
+            onRunAll={() => {
+              void runAllMutation.mutateAsync();
+            }}
+            onRun={(docId) => {
+              void runMutation.mutateAsync(docId);
+            }}
+            onCancel={(docId) => {
+              void cancelMutation.mutateAsync(docId);
+            }}
+            onDelete={(docId) => {
+              void deleteMutation.mutateAsync(docId);
+            }}
+            isLoading={searchQueryResult.isLoading}
+            isFetching={searchQueryResult.isFetching}
+            isError={searchQueryResult.isError}
+            runPending={runMutation.isPending}
+            cancelPending={cancelMutation.isPending}
+            deletePending={deleteMutation.isPending}
+          />
+        </div>
 
         <CanvasPanel
           selectedDocId={selectedDocId}

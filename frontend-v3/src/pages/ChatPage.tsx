@@ -17,6 +17,7 @@ import {
   type ProviderModelEntry,
   useAvailableProviderModelEntries,
 } from "../shared/lib/providerModels";
+import { isDesktopShell } from "../shared/lib/runtime";
 
 const CHAT_MODES: Array<{ mode: ChatMode; label: string; icon: "scan" | "focus" | "path" }> = [
   { mode: "wide", label: "全景", icon: "scan" },
@@ -58,6 +59,14 @@ function ModeIcon({ icon }: { icon: "scan" | "focus" | "path" }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18c5 0 4-12 9-12 2.5 0 4 1.8 5 4M15 6h-3M15 6v3M19 18H9" /></svg>;
 }
 
+function CopyIcon() {
+  return <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="5" width="8" height="10" rx="1.5" /><path d="M5.5 12.5H5A2 2 0 0 1 3 10.5v-6A2 2 0 0 1 5 2.5h6A2 2 0 0 1 13 4.5V5" /></svg>;
+}
+
+function RetryIcon() {
+  return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15 10a5 5 0 1 1-1.4-3.5" /><path d="M15 5.5v3.2h-3.2" /></svg>;
+}
+
 function formatCompression(stats?: ChatContextStats): string {
   if (!stats) return "";
   const level = String(stats.compression_level || "none");
@@ -94,6 +103,7 @@ function isThreadNearBottom(node: HTMLDivElement): boolean {
 }
 
 export function ChatPage() {
+  const desktopShell = isDesktopShell();
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const ensureWorkspace = useChatStore((state) => state.ensureWorkspace);
   const sessions = useChatStore((state) => state.sessionsByWorkspace[workspaceId] ?? []);
@@ -429,7 +439,7 @@ export function ChatPage() {
             {activeMessages.length === 0 ? (
               <div className="v35-chat-empty">
                 <span>Aindexer</span>
-                <h2>Ask something...</h2>
+                <h2>{desktopShell ? "开始提问" : "Ask something..."}</h2>
               </div>
             ) : null}
 
@@ -516,13 +526,28 @@ export function ChatPage() {
                       </button>
                     ))}
                     {message.contextStats ? <span className="v35-chat-context-stat">{formatCompression(message.contextStats)}</span> : null}
-                    <button className="v35-chat-text-action" type="button" onClick={() => void navigator.clipboard?.writeText(displayContent)}>
-                      复制
-                    </button>
-                    {message.role === "user" ? (
-                      <button className="v35-chat-text-action" type="button" disabled={isSending} onClick={() => void submitQuestion(message.content)}>
-                        重试
+                    {desktopShell ? (
+                      <div className="v35-chat-footer-actions">
+                        <button className="v35-icon-button" type="button" aria-label="复制回答" title="复制回答" onClick={() => void navigator.clipboard?.writeText(displayContent)}>
+                          <CopyIcon />
+                        </button>
+                        {message.role === "user" ? (
+                          <button className="v35-icon-button" type="button" aria-label="重试提问" title="重试提问" disabled={isSending} onClick={() => void submitQuestion(message.content)}>
+                            <RetryIcon />
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <button className="v35-chat-text-action" type="button" onClick={() => void navigator.clipboard?.writeText(displayContent)}>
+                        复制
                       </button>
+                    )}
+                    {message.role === "user" ? (
+                      desktopShell ? null : (
+                        <button className="v35-chat-text-action" type="button" disabled={isSending} onClick={() => void submitQuestion(message.content)}>
+                          重试
+                        </button>
+                      )
                     ) : null}
                   </footer>
                 </article>

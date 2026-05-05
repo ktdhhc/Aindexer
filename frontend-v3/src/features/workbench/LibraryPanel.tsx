@@ -2,7 +2,8 @@ import type { FormEvent } from "react";
 
 import type { FileItem } from "../../shared/api/files";
 import type { SearchItem } from "../../shared/api/search";
-import { compactAuthors, formatQueueStatus, isRunningStatus } from "./utils";
+import { isDesktopShell } from "../../shared/lib/runtime";
+import { formatQueueStatus, isRunningStatus } from "./utils";
 
 type LibrarySortField = "display_name" | "authors" | "year" | "modified_at";
 type LibrarySortDirection = "asc" | "desc";
@@ -116,6 +117,7 @@ export function LibraryPanel({
   cancelPending,
   deletePending,
 }: LibraryPanelProps) {
+  const desktopShell = isDesktopShell();
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     onSearchSubmit();
@@ -158,7 +160,7 @@ export function LibraryPanel({
           onChange={(event) => {
             onSearchInputChange(event.target.value);
           }}
-          placeholder="搜索文献、作者、关键词"
+          placeholder={desktopShell ? "搜文献 / 作者 / 关键词" : "搜索文献、作者、关键词"}
         />
       </form>
 
@@ -229,7 +231,6 @@ export function LibraryPanel({
                 <h3>{row.display_name || row.filename || row.doc_id}</h3>
                 <span className={`v35-status is-${statusMeta.tone}`}>{statusMeta.label}</span>
               </div>
-              <p>{compactAuthors(row.authors)} · {row.year || "-"}</p>
               {stageMessage ? <p className="v35-row-stage">{stageMessage}</p> : null}
               <div className="v35-row-actions">
                 {running ? (

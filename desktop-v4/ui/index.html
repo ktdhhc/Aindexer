@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aindexer V4</title>
+    <style>
+      :root {
+        color: #3c3128;
+        background: #f6efe4;
+        font-family: Inter, "Noto Sans SC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at 28% 20%, rgba(181, 99, 48, 0.12), transparent 28%),
+          linear-gradient(135deg, #f8f0e3 0%, #efe2d1 100%);
+      }
+
+      main {
+        width: min(520px, calc(100vw - 48px));
+        padding: 32px;
+        border: 1px solid rgba(94, 67, 43, 0.18);
+        border-radius: 28px;
+        background: rgba(255, 250, 242, 0.78);
+        box-shadow: 0 24px 80px rgba(92, 59, 31, 0.16);
+      }
+
+      .kicker {
+        color: #a05f2f;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 12px 0 10px;
+        font-family: Georgia, "Noto Serif SC", serif;
+        font-size: 34px;
+        line-height: 1.08;
+      }
+
+      p {
+        margin: 0;
+        color: rgba(60, 49, 40, 0.72);
+        line-height: 1.7;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="kicker">Aindexer V4</div>
+      <h1>正在启动 Editorial Lab</h1>
+      <p>桌面壳正在启动本地 FastAPI sidecar，随后会进入 V3.5 Workbench。</p>
+    </main>
+  </body>
+</html>

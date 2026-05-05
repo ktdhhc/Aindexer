@@ -2,6 +2,7 @@ import type { ChangeEvent } from "react";
 
 import type { FieldTemplate } from "../../shared/api/fields";
 import type { ProviderSummary } from "../../shared/api/providers";
+import { isDesktopShell } from "../../shared/lib/runtime";
 
 interface WorkbenchToolbarProps {
   providers: ProviderSummary[];
@@ -38,6 +39,7 @@ export function WorkbenchToolbar({
   onTemplateChange,
   onUploadFiles,
 }: WorkbenchToolbarProps) {
+  const desktopShell = isDesktopShell();
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
     if (files.length > 0) {
@@ -47,16 +49,21 @@ export function WorkbenchToolbar({
   };
 
   return (
-    <section className="v35-toolbar" aria-label="编辑台工具栏">
-      <article className="v35-panel v35-upload-tool">
+    <section className="v35-panel v35-toolbar" aria-label="编辑台工具栏">
+      <div className="v35-upload-tool">
         <div className="v35-upload-mark">+</div>
         <div>
-          <h2 className="v35-section-title">导入文献</h2>
-          <p className="v35-muted">PDF / DOCX / TXT</p>
+          <h2 className="v35-section-title">{desktopShell ? "导入" : "导入文献"}</h2>
+          <p className="v35-muted">{desktopShell ? "PDF DOCX TXT" : "PDF / DOCX / TXT"}</p>
         </div>
-        <label className="v35-button v35-button-primary v35-button-compact v35-file-label" htmlFor="v35UploadInput">
+        <label
+          className={`v35-button v35-button-primary v35-button-compact v35-file-label${desktopShell ? " is-icon-only" : ""}`}
+          htmlFor="v35UploadInput"
+          aria-label="上传文献"
+          title="上传文献"
+        >
           <UploadIcon />
-          <span>导入</span>
+          {desktopShell ? null : <span>导入</span>}
         </label>
         <input
           id="v35UploadInput"
@@ -66,10 +73,10 @@ export function WorkbenchToolbar({
           multiple
           onChange={handleFileChange}
         />
-      </article>
+      </div>
 
-      <article className="v35-panel v35-tool-grid">
-        <label className="v35-field" htmlFor="v35ProviderSelect">
+      <div className="v35-tool-grid">
+        <label className="v35-field v35-field-inline" htmlFor="v35ProviderSelect">
           <span>Provider</span>
           <select
             id="v35ProviderSelect"
@@ -88,7 +95,7 @@ export function WorkbenchToolbar({
           </select>
         </label>
 
-        <label className="v35-field" htmlFor="v35ModelSelect">
+        <label className="v35-field v35-field-inline" htmlFor="v35ModelSelect">
           <span>Model</span>
           <select
             id="v35ModelSelect"
@@ -111,7 +118,7 @@ export function WorkbenchToolbar({
           </select>
         </label>
 
-        <label className="v35-field" htmlFor="v35TemplateSelect">
+        <label className="v35-field v35-field-inline" htmlFor="v35TemplateSelect">
           <span>编辑模板</span>
           <select
             id="v35TemplateSelect"
@@ -129,7 +136,7 @@ export function WorkbenchToolbar({
             ))}
           </select>
         </label>
-      </article>
+      </div>
     </section>
   );
 }

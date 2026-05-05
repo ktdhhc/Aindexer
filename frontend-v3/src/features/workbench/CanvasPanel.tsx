@@ -1,4 +1,5 @@
 import type { PreviewMode } from "./types";
+import { isDesktopShell } from "../../shared/lib/runtime";
 
 interface CanvasPanelProps {
   selectedDocId: string;
@@ -124,6 +125,7 @@ export function CanvasPanel({
   canEdit,
   savePending,
 }: CanvasPanelProps) {
+  const desktopShell = isDesktopShell();
   const hasPreview = Boolean(previewMarkdown);
 
   return (
@@ -131,7 +133,7 @@ export function CanvasPanel({
       <header className="v35-column-header">
         <div>
           <h2 className="v35-section-title">Document Canvas</h2>
-          <p className="v35-muted">索引预览 · 可进入修订</p>
+          <p className="v35-muted">{desktopShell ? "索引" : "索引预览 · 可进入修订"}</p>
         </div>
         <div className="v35-canvas-toolbar">
           <div className="v35-mode-group" role="tablist" aria-label="预览模式">

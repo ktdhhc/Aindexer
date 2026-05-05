@@ -9,6 +9,7 @@
 - 当前唯一正式前端入口：`/v3/workbench`
 - 当前唯一正式前端代码入口：`frontend-v3/`
 - 当前唯一正式静态构建输出：`backend/frontend/v3/`
+- V4 桌面端壳层入口：`desktop-v4/`
 - 当前公开仓库只保留运行主应用所需的 `backend/`、`frontend-v3/` 与本 README
 - `backend/frontend/v2/`、`backend/frontend/translator/` 仍位于 `backend/` 内作为历史遗留实现保留，但不是当前正式入口
 
@@ -47,6 +48,7 @@
 - 框架：FastAPI
 - 应用入口：`backend/app/main.py`
 - 启动封装：`backend/desktop_main.py`
+- V4 sidecar：`backend/desktop_v4_sidecar.py`
 - 路由层：`backend/app/routers/`
 - 翻译域：`backend/app/translation/`
 - 持久化：`backend/app/db.py` + `backend/app/repository.py`
@@ -65,6 +67,7 @@
 - 索引 Markdown：`data/indexes/`
 - 导出与备份：`data/exports/`
 - 运行日志：`data/logs/`
+- V4 桌面端可通过 `AINDEXER_DATA_DIR` 将数据目录切到用户 AppData 下
 
 ## 公开仓库结构
 
@@ -72,6 +75,7 @@
 literature-indexer/
 |- README.md
 |- frontend-v3/                # 当前唯一正式前端源码入口
+|- desktop-v4/                 # V4 Tauri 桌面壳层
 |- backend/
 |  |- app/                     # FastAPI、路由、服务、仓储、DB
 |  |- frontend/
@@ -80,7 +84,8 @@ literature-indexer/
 |  |  `- translator/           # 历史遗留，已弃用
 |  |- prompts/                 # 问答与抽取提示词
 |  |- tests/                   # 后端与翻译测试
-|  `- desktop_main.py          # 打包后桌面启动入口
+|  |- desktop_main.py          # 历史桌面启动入口
+|  `- desktop_v4_sidecar.py    # V4 桌面 sidecar 入口
 ```
 
 运行时目录如 `data/` 由程序在本地自动创建，不作为公开源码目录。
@@ -164,6 +169,16 @@ npm run dev
 访问：`http://127.0.0.1:5173/v3/workbench`
 
 说明：前端开发服务器会将 `/api` 代理到 `http://127.0.0.1:8000`，因此开发模式下后端仍需先启动。
+
+### 5. V4 桌面壳开发模式
+
+```bash
+cd desktop-v4
+npm install
+npm run dev
+```
+
+桌面壳会启动 `backend/desktop_v4_sidecar.py`，选择动态端口，并加载 `/v3/workbench`。修改 `frontend-v3/` 后，仍需先重新运行 `npm run build` 以刷新 `backend/frontend/v3/`。
 
 ## 验证命令
 
