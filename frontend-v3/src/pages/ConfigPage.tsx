@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { getDefaultConfigPageSession, usePageSessionStore, type ConfigPageSection } from "../app/pageSessionStore";
 import { DEFAULT_WORKSPACE_ID, useWorkspaceStore } from "../app/workspaceStore";
 import {
   type FieldDefinition,
@@ -44,7 +45,7 @@ import { getModelDefaults, setModelDefaults, type ModelDefaults } from "../share
 import { setProviderModels, useAvailableProviderModelEntries, useProviderModels } from "../shared/lib/providerModels";
 import { isDesktopShell } from "../shared/lib/runtime";
 
-type ConfigSection = "providers" | "defaults" | "fields" | "workspaces" | "usage";
+type ConfigSection = ConfigPageSection;
 
 interface ProviderDraft {
   baseUrl: string;
@@ -213,9 +214,41 @@ export function ConfigPage() {
   const setUiLayoutSize = useShellStore((state) => state.setUiLayoutSize);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const setWorkspaceId = useWorkspaceStore((state) => state.setWorkspaceId);
+  const configSession = usePageSessionStore((state) => state.configByWorkspace[workspaceId] ?? getDefaultConfigPageSession());
+  const ensureConfigSession = usePageSessionStore((state) => state.ensureConfigSession);
+  const updateConfigSession = usePageSessionStore((state) => state.updateConfigSession);
 
-  const [section, setSection] = useState<ConfigSection>("providers");
-  const [selectedProvider, setSelectedProvider] = useState("");
+  const section = configSession.section;
+  const selectedProvider = configSession.selectedProvider;
+  const selectedTemplateId = configSession.selectedTemplateId;
+  const activeFieldIndex = configSession.activeFieldIndex;
+  const usagePeriod = configSession.usagePeriod;
+  const usageBreakdownBy = configSession.usageBreakdownBy;
+  const selectedUsageLegend = configSession.selectedUsageLegend;
+  const setSection = useCallback((next: ConfigSection) => {
+    updateConfigSession(workspaceId, { section: next });
+  }, [updateConfigSession, workspaceId]);
+  const setSelectedProvider = useCallback((next: string) => {
+    updateConfigSession(workspaceId, { selectedProvider: next });
+  }, [updateConfigSession, workspaceId]);
+  const setSelectedTemplateId = useCallback((next: string) => {
+    updateConfigSession(workspaceId, { selectedTemplateId: next });
+  }, [updateConfigSession, workspaceId]);
+  const setActiveFieldIndex = useCallback((next: number) => {
+    updateConfigSession(workspaceId, { activeFieldIndex: next });
+  }, [updateConfigSession, workspaceId]);
+  const setUsagePeriod = useCallback((next: UsagePeriod) => {
+    updateConfigSession(workspaceId, { usagePeriod: next, selectedUsageLegend: "" });
+  }, [updateConfigSession, workspaceId]);
+  const setUsageBreakdownBy = useCallback((next: UsageBreakdownBy) => {
+    updateConfigSession(workspaceId, { usageBreakdownBy: next, selectedUsageLegend: "" });
+  }, [updateConfigSession, workspaceId]);
+  const setSelectedUsageLegend = useCallback((next: string | ((current: string) => string)) => {
+    updateConfigSession(workspaceId, (current) => ({
+      selectedUsageLegend: typeof next === "function" ? next(current.selectedUsageLegend) : next,
+    }));
+  }, [updateConfigSession, workspaceId]);
+
   const [newProviderName, setNewProviderName] = useState("");
   const [providerDraft, setProviderDraft] = useState<ProviderDraft | null>(null);
   const [providerModels, setProviderModelRows] = useState<string[]>([]);
@@ -225,21 +258,16 @@ export function ConfigPage() {
   const [modelDefaultsDraft, setModelDefaultsDraft] = useState<ModelDefaults>(() => getModelDefaults());
   const [defaultsMessage, setDefaultsMessage] = useState("准备就绪");
 
-  const [selectedTemplateId, setSelectedTemplateId] = useState("tpl_default");
   const [newTemplateName, setNewTemplateName] = useState("");
   const [templateNameDraft, setTemplateNameDraft] = useState("");
   const [templateDescriptionDraft, setTemplateDescriptionDraft] = useState("");
   const [fieldDrafts, setFieldDrafts] = useState<FieldDefinition[]>([]);
-  const [activeFieldIndex, setActiveFieldIndex] = useState(0);
   const [fieldsMessage, setFieldsMessage] = useState("准备就绪");
 
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
   const [workspaceMessage, setWorkspaceMessage] = useState("准备就绪");
 
-  const [usagePeriod, setUsagePeriod] = useState<UsagePeriod>("day");
-  const [usageBreakdownBy, setUsageBreakdownBy] = useState<UsageBreakdownBy>("feature");
-  const [selectedUsageLegend, setSelectedUsageLegend] = useState("");
   const [usageMessage, setUsageMessage] = useState("准备就绪");
   const [pricingDraft, setPricingDraft] = useState<PricingDraft>({
     inputPrice: "",
@@ -368,6 +396,10 @@ export function ConfigPage() {
     : usageTotals;
 
   useEffect(() => {
+    ensureConfigSession(workspaceId);
+  }, [ensureConfigSession, workspaceId]);
+
+  useEffect(() => {
     const providers = providersQuery.data;
     if (!providers || providers.length === 0) {
       setSelectedProvider("");
@@ -401,10 +433,6 @@ export function ConfigPage() {
       setSelectedUsageLegend("");
     }
   }, [selectedUsageLegend, usageLegendItems]);
-
-  useEffect(() => {
-    setSelectedUsageLegend("");
-  }, [usageBreakdownBy, usagePeriod]);
 
   useEffect(() => {
     const globalRule = pricingQuery.data?.find(

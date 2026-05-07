@@ -1,6 +1,7 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { getDefaultWorkbenchPageSession, usePageSessionStore, type WorkbenchSortDirection, type WorkbenchSortField } from "../app/pageSessionStore";
 import { getWorkbenchChatSessionKey, useWorkbenchChatStore } from "../app/workbenchChatStore";
 import { useWorkspaceStore } from "../app/workspaceStore";
 import { CanvasPanel } from "../features/workbench/CanvasPanel";
@@ -82,15 +83,42 @@ function matchesLibrarySearch(
 export function WorkbenchPage() {
   const queryClient = useQueryClient();
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
+  const workbenchSession = usePageSessionStore((state) => state.workbenchByWorkspace[workspaceId] ?? getDefaultWorkbenchPageSession());
+  const ensureWorkbenchSession = usePageSessionStore((state) => state.ensureWorkbenchSession);
+  const updateWorkbenchSession = usePageSessionStore((state) => state.updateWorkbenchSession);
 
-  const [provider, setProvider] = useState("");
-  const [model, setModel] = useState("");
-  const [templateId, setTemplateId] = useState("tpl_default");
-  const [searchInput, setSearchInput] = useState("");
-  const [searchSortField, setSearchSortField] = useState<"display_name" | "authors" | "year" | "modified_at">("modified_at");
-  const [searchSortDirection, setSearchSortDirection] = useState<"asc" | "desc">("desc");
-  const [selectedDocId, setSelectedDocId] = useState("");
-  const [previewMode, setPreviewMode] = useState<PreviewMode>("rendered");
+  const provider = workbenchSession.provider;
+  const model = workbenchSession.model;
+  const templateId = workbenchSession.templateId;
+  const searchInput = workbenchSession.searchInput;
+  const searchSortField = workbenchSession.searchSortField;
+  const searchSortDirection = workbenchSession.searchSortDirection;
+  const selectedDocId = workbenchSession.selectedDocId;
+  const previewMode = workbenchSession.previewMode as PreviewMode;
+  const setProvider = useCallback((next: string) => {
+    updateWorkbenchSession(workspaceId, { provider: next });
+  }, [updateWorkbenchSession, workspaceId]);
+  const setModel = useCallback((next: string) => {
+    updateWorkbenchSession(workspaceId, { model: next });
+  }, [updateWorkbenchSession, workspaceId]);
+  const setTemplateId = useCallback((next: string) => {
+    updateWorkbenchSession(workspaceId, { templateId: next });
+  }, [updateWorkbenchSession, workspaceId]);
+  const setSearchInput = useCallback((next: string) => {
+    updateWorkbenchSession(workspaceId, { searchInput: next });
+  }, [updateWorkbenchSession, workspaceId]);
+  const setSearchSortField = useCallback((next: WorkbenchSortField) => {
+    updateWorkbenchSession(workspaceId, { searchSortField: next });
+  }, [updateWorkbenchSession, workspaceId]);
+  const setSearchSortDirection = useCallback((next: WorkbenchSortDirection) => {
+    updateWorkbenchSession(workspaceId, { searchSortDirection: next });
+  }, [updateWorkbenchSession, workspaceId]);
+  const setSelectedDocId = useCallback((next: string) => {
+    updateWorkbenchSession(workspaceId, { selectedDocId: next });
+  }, [updateWorkbenchSession, workspaceId]);
+  const setPreviewMode = useCallback((next: PreviewMode) => {
+    updateWorkbenchSession(workspaceId, { previewMode: next });
+  }, [updateWorkbenchSession, workspaceId]);
   const [isEditingPreview, setIsEditingPreview] = useState(false);
   const [previewDraft, setPreviewDraft] = useState("");
   const [previewDisplayNameDraft, setPreviewDisplayNameDraft] = useState("");
@@ -347,6 +375,10 @@ export function WorkbenchPage() {
   const chatStatus = useWorkbenchChatStore((state) => (chatSessionKey ? state.statusBySession[chatSessionKey] ?? "Ready" : "Idle"));
   const chatMessages = activeChatSession?.messages ?? [];
   const chatAvailable = Boolean(selectedDocId && selectedFileRow?.status === "indexed" && selectedModelEntry?.provider);
+
+  useEffect(() => {
+    ensureWorkbenchSession(workspaceId);
+  }, [ensureWorkbenchSession, workspaceId]);
 
   useEffect(() => {
     if (providerRows.length === 0) {

@@ -10,8 +10,11 @@ import { AppShell } from "./AppShell";
 import { ChatPage } from "../pages/ChatPage";
 import { ConfigPage } from "../pages/ConfigPage";
 import { ConsolePage } from "../pages/ConsolePage";
-import { TranslatorPage } from "../pages/TranslatorPage";
 import { WorkbenchPage } from "../pages/WorkbenchPage";
+
+function EmptyRoute() {
+  return null;
+}
 
 function RootLayout() {
   return (
@@ -76,7 +79,7 @@ const chatRoute = createRoute({
 const translatorRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/translator",
-  component: TranslatorPage,
+  component: EmptyRoute,
 });
 
 const routeTree = rootRoute.addChildren([

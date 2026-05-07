@@ -1,7 +1,8 @@
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { type ChatSession, useChatStore } from "../app/chatStore";
+import { getDefaultChatPageSession, usePageSessionStore } from "../app/pageSessionStore";
 import { useWorkspaceStore } from "../app/workspaceStore";
 import {
   resolveAssistantCitedSources,
@@ -119,14 +120,27 @@ export function ChatPage() {
   const addSource = useChatStore((state) => state.addSource);
   const submitChatQuestion = useChatStore((state) => state.submitQuestion);
   const stopChatGeneration = useChatStore((state) => state.stopGeneration);
-  const [selectedModelKey, setSelectedModelKey] = useState("");
-  const [question, setQuestion] = useState("");
-  const [sourceSearch, setSourceSearch] = useState("");
+  const chatPageSession = usePageSessionStore((state) => state.chatByWorkspace[workspaceId] ?? getDefaultChatPageSession());
+  const ensureChatPageSession = usePageSessionStore((state) => state.ensureChatSession);
+  const updateChatPageSession = usePageSessionStore((state) => state.updateChatSession);
+
+  const selectedModelKey = chatPageSession.selectedModelKey;
+  const question = chatPageSession.question;
+  const sourceSearch = chatPageSession.sourceSearch;
+  const expandedTraceByMessage = chatPageSession.expandedTraceByMessage;
+  const expandedThinkingByBlock = chatPageSession.expandedThinkingByBlock;
+  const setSelectedModelKey = useCallback((next: string) => {
+    updateChatPageSession(workspaceId, { selectedModelKey: next });
+  }, [updateChatPageSession, workspaceId]);
+  const setQuestion = useCallback((next: string) => {
+    updateChatPageSession(workspaceId, { question: next });
+  }, [updateChatPageSession, workspaceId]);
+  const setSourceSearch = useCallback((next: string) => {
+    updateChatPageSession(workspaceId, { sourceSearch: next });
+  }, [updateChatPageSession, workspaceId]);
   const [editingSessionId, setEditingSessionId] = useState("");
   const [editingSessionTitle, setEditingSessionTitle] = useState("");
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-  const [expandedTraceByMessage, setExpandedTraceByMessage] = useState<Record<string, boolean>>({});
-  const [expandedThinkingByBlock, setExpandedThinkingByBlock] = useState<Record<string, boolean>>({});
 
   const threadRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -234,7 +248,8 @@ export function ChatPage() {
 
   useEffect(() => {
     ensureWorkspace(workspaceId);
-  }, [ensureWorkspace, workspaceId]);
+    ensureChatPageSession(workspaceId);
+  }, [ensureChatPageSession, ensureWorkspace, workspaceId]);
 
   useEffect(() => {
     if (modelOptions.length === 0) {
@@ -383,16 +398,20 @@ export function ChatPage() {
   }
 
   function toggleTrace(messageId: string) {
-    setExpandedTraceByMessage((current) => ({
-      ...current,
-      [messageId]: !current[messageId],
+    updateChatPageSession(workspaceId, (current) => ({
+      expandedTraceByMessage: {
+        ...current.expandedTraceByMessage,
+        [messageId]: !current.expandedTraceByMessage[messageId],
+      },
     }));
   }
 
   function toggleThinking(blockId: string) {
-    setExpandedThinkingByBlock((current) => ({
-      ...current,
-      [blockId]: !current[blockId],
+    updateChatPageSession(workspaceId, (current) => ({
+      expandedThinkingByBlock: {
+        ...current.expandedThinkingByBlock,
+        [blockId]: !current.expandedThinkingByBlock[blockId],
+      },
     }));
   }
 

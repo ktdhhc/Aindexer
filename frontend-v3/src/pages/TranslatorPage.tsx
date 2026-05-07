@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
@@ -7,6 +7,7 @@ import {
   PREVIEW_SCALE_MAX,
   PREVIEW_SCALE_MIN,
   PREVIEW_SCALE_STEP,
+  getDefaultTranslatorWorkspaceState,
   useTranslatorStore,
 } from "../app/translatorStore";
 import { useWorkspaceStore } from "../app/workspaceStore";
@@ -67,23 +68,25 @@ const TARGET_LANGUAGE_OPTIONS = [
 
 export function TranslatorPage() {
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
-  const [documentQuery, setDocumentQuery] = useState("");
+  const translatorState = useTranslatorStore((state) => state.byWorkspace[workspaceId] ?? getDefaultTranslatorWorkspaceState());
+  const documentQuery = translatorState.documentQuery;
   const deferredDocumentQuery = useDeferredValue(documentQuery.trim());
   const ensureWorkspace = useTranslatorStore((state) => state.ensureWorkspace);
-  const selectedDocumentId = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.selectedDocumentId ?? "");
-  const selectedModelKey = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.selectedModelKey ?? "");
-  const targetLanguage = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.targetLanguage ?? "zh-CN");
-  const isLibraryCollapsed = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.isLibraryCollapsed ?? false);
-  const inspectorPaneWidth = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.inspectorPaneWidth ?? DEFAULT_INSPECTOR_PANE_WIDTH);
-  const sourceText = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.sourceText ?? "");
-  const streamedTranslationText = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.streamedTranslationText ?? "");
-  const inspectorTab = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.inspectorTab ?? "result");
-  const translateMode = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.translateMode ?? "full");
-  const latestResult = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.latestResult ?? null);
-  const statusMessage = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.statusMessage ?? "准备就绪");
-  const viewerMode = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.viewerMode ?? "layout");
-  const isTranslating = useTranslatorStore((state) => Boolean(state.byWorkspace[workspaceId]?.isTranslating));
-  const previewScale = useTranslatorStore((state) => state.byWorkspace[workspaceId]?.previewScale ?? DEFAULT_PREVIEW_SCALE);
+  const selectedDocumentId = translatorState.selectedDocumentId;
+  const selectedModelKey = translatorState.selectedModelKey;
+  const targetLanguage = translatorState.targetLanguage;
+  const isLibraryCollapsed = translatorState.isLibraryCollapsed;
+  const inspectorPaneWidth = translatorState.inspectorPaneWidth ?? DEFAULT_INSPECTOR_PANE_WIDTH;
+  const inspectorTab = translatorState.inspectorTab;
+  const translateMode = translatorState.translateMode;
+  const statusMessage = translatorState.statusMessage;
+  const viewerMode = translatorState.viewerMode;
+  const previewScale = translatorState.previewScale ?? DEFAULT_PREVIEW_SCALE;
+  const sourceText = translatorState.sourceText;
+  const streamedTranslationText = translatorState.streamedTranslationText;
+  const latestResult = translatorState.latestResult;
+  const isTranslating = Boolean(translatorState.isTranslating);
+  const setDocumentQuery = useTranslatorStore((state) => state.setDocumentQuery);
   const setSelectedDocumentId = useTranslatorStore((state) => state.setSelectedDocumentId);
   const setSelectedModelKey = useTranslatorStore((state) => state.setSelectedModelKey);
   const setTargetLanguage = useTranslatorStore((state) => state.setTargetLanguage);
@@ -331,14 +334,16 @@ export function TranslatorPage() {
   const pdfFileUrl = selectedDocumentId ? buildOriginalFileUrl(selectedDocumentId, workspaceId) : "";
   const initialReaderScrollTop = useMemo(() => {
     if (!selectedDocumentId) return 0;
-    return useTranslatorStore.getState().byWorkspace[workspaceId]?.readerScrollTopByDocumentId?.[selectedDocumentId] ?? 0;
-  }, [selectedDocumentId, workspaceId]);
+    return translatorState.readerScrollTop ?? 0;
+  }, [selectedDocumentId, translatorState.readerScrollTop]);
   const canZoomOut = previewScale > PREVIEW_SCALE_MIN;
   const canZoomIn = previewScale < PREVIEW_SCALE_MAX;
 
   const handleReaderScrollPositionChange = useCallback((scrollTop: number) => {
     if (!selectedDocumentId) return;
-    setReaderScrollTop(workspaceId, selectedDocumentId, scrollTop);
+    const currentDocumentId = useTranslatorStore.getState().byWorkspace[workspaceId]?.selectedDocumentId ?? "";
+    if (currentDocumentId !== selectedDocumentId) return;
+    setReaderScrollTop(workspaceId, scrollTop);
   }, [selectedDocumentId, setReaderScrollTop, workspaceId]);
 
   function changePreviewScale(direction: -1 | 1) {
@@ -424,7 +429,7 @@ export function TranslatorPage() {
               className="v35-input"
               type="search"
               value={documentQuery}
-              onChange={(event) => setDocumentQuery(event.target.value)}
+              onChange={(event) => setDocumentQuery(workspaceId, event.target.value)}
               placeholder="搜索标题、文件名、作者或年份"
             />
           </div>
@@ -445,8 +450,6 @@ export function TranslatorPage() {
                   ].filter(Boolean).join(" · ")}
                   onClick={() => {
                     setSelectedDocumentId(workspaceId, doc.id);
-                    setSourceText(workspaceId, "");
-                    setLatestResult(workspaceId, null);
                     lastAutoSourceRef.current = "";
                   }}
                 >

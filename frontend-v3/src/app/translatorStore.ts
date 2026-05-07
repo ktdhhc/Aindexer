@@ -14,6 +14,7 @@ export const DEFAULT_INSPECTOR_PANE_WIDTH = 420;
 const STORAGE_KEY = "aindexer_v35_translator_state";
 
 interface TranslatorWorkspaceState {
+  documentQuery: string;
   selectedDocumentId: string;
   selectedModelKey: string;
   targetLanguage: string;
@@ -28,10 +29,11 @@ interface TranslatorWorkspaceState {
   viewerMode: PdfSelectionMode;
   isTranslating: boolean;
   previewScale: number;
-  readerScrollTopByDocumentId: Record<string, number>;
+  readerScrollTop: number;
 }
 
 interface PersistedTranslatorWorkspaceState {
+  documentQuery?: string;
   selectedDocumentId?: string;
   selectedModelKey?: string;
   targetLanguage?: string;
@@ -42,7 +44,7 @@ interface PersistedTranslatorWorkspaceState {
   translateMode?: TranslateMode;
   viewerMode?: PdfSelectionMode;
   previewScale?: number;
-  readerScrollTopByDocumentId?: Record<string, number>;
+  readerScrollTop?: number;
 }
 
 interface StartTranslationArgs {
@@ -57,6 +59,7 @@ interface StartTranslationArgs {
 interface TranslatorState {
   byWorkspace: Record<string, TranslatorWorkspaceState>;
   ensureWorkspace: (workspaceId: string) => void;
+  setDocumentQuery: (workspaceId: string, value: string) => void;
   setSelectedDocumentId: (workspaceId: string, documentId: string) => void;
   setSelectedModelKey: (workspaceId: string, value: string) => void;
   setTargetLanguage: (workspaceId: string, value: string) => void;
@@ -67,7 +70,7 @@ interface TranslatorState {
   setTranslateMode: (workspaceId: string, mode: TranslateMode) => void;
   setViewerMode: (workspaceId: string, mode: PdfSelectionMode) => void;
   setPreviewScale: (workspaceId: string, next: number | ((current: number) => number)) => void;
-  setReaderScrollTop: (workspaceId: string, documentId: string, scrollTop: number) => void;
+  setReaderScrollTop: (workspaceId: string, scrollTop: number) => void;
   setLatestResult: (workspaceId: string, result: TranslationResult | null) => void;
   setStatusMessage: (workspaceId: string, message: string) => void;
   startTranslation: (args: StartTranslationArgs) => Promise<void>;
@@ -83,6 +86,7 @@ function normalizeText(text: string): string {
 
 function createDefaultWorkspaceState(): TranslatorWorkspaceState {
   return {
+    documentQuery: "",
     selectedDocumentId: "",
     selectedModelKey: "",
     targetLanguage: "zh-CN",
@@ -97,18 +101,12 @@ function createDefaultWorkspaceState(): TranslatorWorkspaceState {
     viewerMode: "layout",
     isTranslating: false,
     previewScale: DEFAULT_PREVIEW_SCALE,
-    readerScrollTopByDocumentId: {},
+    readerScrollTop: 0,
   };
 }
 
-function normalizeReaderScrollTopMap(value: unknown): Record<string, number> {
-  if (!value || typeof value !== "object") {
-    return {};
-  }
-  const entries = Object.entries(value as Record<string, unknown>)
-    .map(([key, raw]) => [String(key), Number(raw)] as const)
-    .filter(([, numberValue]) => Number.isFinite(numberValue) && numberValue >= 0);
-  return Object.fromEntries(entries);
+export function getDefaultTranslatorWorkspaceState(): TranslatorWorkspaceState {
+  return createDefaultWorkspaceState();
 }
 
 function buildWorkspaceStateFromPersisted(value: PersistedTranslatorWorkspaceState | null | undefined): TranslatorWorkspaceState {
@@ -116,6 +114,7 @@ function buildWorkspaceStateFromPersisted(value: PersistedTranslatorWorkspaceSta
   if (!value) return defaults;
   return {
     ...defaults,
+    documentQuery: String(value.documentQuery || ""),
     selectedDocumentId: String(value.selectedDocumentId || ""),
     selectedModelKey: String(value.selectedModelKey || ""),
     targetLanguage: String(value.targetLanguage || defaults.targetLanguage),
@@ -126,13 +125,13 @@ function buildWorkspaceStateFromPersisted(value: PersistedTranslatorWorkspaceSta
     translateMode: value.translateMode === "compact" ? "compact" : "full",
     viewerMode: value.viewerMode === "text" ? "text" : "layout",
     previewScale: Number.isFinite(Number(value.previewScale)) ? Number(value.previewScale) : defaults.previewScale,
-    readerScrollTopByDocumentId: normalizeReaderScrollTopMap(value.readerScrollTopByDocumentId),
+    readerScrollTop: Math.max(0, Number.isFinite(Number(value.readerScrollTop)) ? Number(value.readerScrollTop) : 0),
   };
 }
 
 function getStoredTranslatorState(): Record<string, TranslatorWorkspaceState> {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, PersistedTranslatorWorkspaceState>;
     return Object.fromEntries(
@@ -147,6 +146,7 @@ function persistTranslatorState(byWorkspace: Record<string, TranslatorWorkspaceS
   try {
     const serialized = Object.fromEntries(
       Object.entries(byWorkspace).map(([workspaceId, workspace]) => [workspaceId, {
+        documentQuery: workspace.documentQuery,
         selectedDocumentId: workspace.selectedDocumentId,
         selectedModelKey: workspace.selectedModelKey,
         targetLanguage: workspace.targetLanguage,
@@ -157,10 +157,10 @@ function persistTranslatorState(byWorkspace: Record<string, TranslatorWorkspaceS
         translateMode: workspace.translateMode,
         viewerMode: workspace.viewerMode,
         previewScale: workspace.previewScale,
-        readerScrollTopByDocumentId: workspace.readerScrollTopByDocumentId,
+        readerScrollTop: workspace.readerScrollTop,
       } satisfies PersistedTranslatorWorkspaceState]),
     );
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(serialized));
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(serialized));
   } catch {
     // ignore storage failures
   }
@@ -207,13 +207,25 @@ export const useTranslatorStore = create<TranslatorState>((set, get) => ({
       return { byWorkspace: nextByWorkspace };
     });
   },
+  setDocumentQuery: (workspaceId, value) => {
+    set((state) => {
+      const next = updateWorkspace(state, workspaceId, (workspace) => ({
+        ...workspace,
+        documentQuery: value,
+      }));
+      persistTranslatorState(next.byWorkspace);
+      return next;
+    });
+  },
   setSelectedDocumentId: (workspaceId, documentId) => {
     set((state) => {
       const next = updateWorkspace(state, workspaceId, (workspace) => ({
         ...workspace,
         selectedDocumentId: documentId,
         sourceText: "",
+        streamedTranslationText: "",
         latestResult: null,
+        readerScrollTop: 0,
       }));
       persistTranslatorState(next.byWorkspace);
       return next;
@@ -294,18 +306,11 @@ export const useTranslatorStore = create<TranslatorState>((set, get) => ({
       return updated;
     });
   },
-  setReaderScrollTop: (workspaceId, documentId, scrollTop) => {
-    const normalizedDocumentId = String(documentId || "").trim();
-    if (!normalizedDocumentId) {
-      return;
-    }
+  setReaderScrollTop: (workspaceId, scrollTop) => {
     set((state) => {
       const updated = updateWorkspace(state, workspaceId, (workspace) => ({
         ...workspace,
-        readerScrollTopByDocumentId: {
-          ...workspace.readerScrollTopByDocumentId,
-          [normalizedDocumentId]: Math.max(0, Math.round(scrollTop)),
-        },
+        readerScrollTop: Math.max(0, Math.round(scrollTop)),
       }));
       persistTranslatorState(updated.byWorkspace);
       return updated;

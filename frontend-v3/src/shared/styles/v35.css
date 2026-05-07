@@ -289,6 +289,10 @@ html[data-v35-ui-size="small"] .v35-shell-root {
   padding: 18px;
 }
 
+.v35-route-pane.is-hidden {
+  display: none;
+}
+
 .v35-workbench-page {
   display: grid;
   grid-template-rows: auto auto;

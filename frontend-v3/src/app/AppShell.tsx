@@ -1,10 +1,11 @@
-import { Link } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { Link, useRouterState } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { useShellStore } from "./shellStore";
 import { DEFAULT_WORKSPACE_ID, useWorkspaceStore } from "./workspaceStore";
+import { TranslatorPage } from "../pages/TranslatorPage";
 import { listWorkspaces } from "../shared/api/workspaces";
 import { isDesktopShell } from "../shared/lib/runtime";
 
@@ -37,6 +38,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const uiLayoutSize = useShellStore((state) => state.uiLayoutSize);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const setWorkspaceId = useWorkspaceStore((state) => state.setWorkspaceId);
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const isTranslatorRoute = pathname === "/translator" || pathname.endsWith("/translator");
+  const [hasVisitedTranslator, setHasVisitedTranslator] = useState(isTranslatorRoute);
 
   const workspacesQuery = useQuery({
     queryKey: ["workspaces"],
@@ -58,6 +62,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     document.documentElement.dataset.v35UiSize = uiLayoutSize;
     document.body.dataset.v35UiSize = uiLayoutSize;
   }, [uiLayoutSize]);
+
+  useEffect(() => {
+    if (isTranslatorRoute) {
+      setHasVisitedTranslator(true);
+    }
+  }, [isTranslatorRoute]);
 
   return (
     <div className="v35-shell-root">
@@ -108,7 +118,16 @@ export function AppShell({ children }: { children: ReactNode }) {
           </nav>
         </aside>
 
-        <main className="v35-main">{children}</main>
+        <main className="v35-main">
+          {hasVisitedTranslator ? (
+            <div className={`v35-route-pane ${isTranslatorRoute ? "" : "is-hidden"}`} aria-hidden={!isTranslatorRoute}>
+              <TranslatorPage />
+            </div>
+          ) : null}
+          <div className={`v35-route-pane ${isTranslatorRoute ? "is-hidden" : ""}`} aria-hidden={isTranslatorRoute}>
+            {children}
+          </div>
+        </main>
       </div>
     </div>
   );
