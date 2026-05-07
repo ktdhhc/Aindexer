@@ -1001,18 +1001,18 @@ export function ConfigPage() {
             <section className="v35-config-section">
               <div className="v35-config-list">
                 <div className="v35-config-list-item is-active">
-                  <strong>默认模型</strong>
-                  <span>{availableModelEntries.length} available</span>
-                  <em>本地偏好</em>
-                </div>
-                <div className="v35-config-list-item is-active">
                   <strong>界面尺寸</strong>
                   <span>{UI_LAYOUT_SIZE_OPTIONS.find((option) => option.value === uiLayoutSize)?.label ?? "大"}</span>
                   <em>当前布局</em>
                 </div>
+                <div className="v35-config-list-item">
+                  <strong>默认模型</strong>
+                  <span>{availableModelEntries.length} available</span>
+                  <em>本地偏好</em>
+                </div>
               </div>
 
-              <article className="v35-config-paper">
+              <article className="v35-config-paper v35-config-paper-defaults">
                 <header className="v35-config-paper-head">
                   <div>
                     <p>Defaults</p>
@@ -1099,7 +1099,7 @@ export function ConfigPage() {
                 </div>
               </div>
 
-              <article className="v35-config-paper">
+              <article className="v35-config-paper v35-config-paper-fields">
                 <header className="v35-config-paper-head">
                   <div>
                     <p>Template</p>
@@ -1256,7 +1256,6 @@ export function ConfigPage() {
                     </button>
                   ))}
                 </div>
-                <p className="v35-muted">点击维度，图例会显示该统计口径下各变量占比。</p>
               </div>
 
               <article className="v35-config-paper v35-usage-paper">

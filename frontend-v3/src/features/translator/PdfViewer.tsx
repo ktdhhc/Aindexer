@@ -16,6 +16,8 @@ interface PdfViewerProps {
   className?: string;
   selectionMode?: PdfSelectionMode;
   scale?: number;
+  initialScrollTop?: number;
+  onScrollPositionChange?: (scrollTop: number) => void;
 }
 
 export function PdfViewer({
@@ -24,11 +26,18 @@ export function PdfViewer({
   className,
   selectionMode = "layout",
   scale = DEFAULT_SCALE,
+  initialScrollTop = 0,
+  onScrollPositionChange,
 }: PdfViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const renderTokenRef = useRef(0);
   const pdfDocRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
+  const initialScrollTopRef = useRef(initialScrollTop);
   const [, setError] = useState("");
+
+  useEffect(() => {
+    initialScrollTopRef.current = initialScrollTop;
+  }, [initialScrollTop]);
 
   const renderPages = useCallback(
     async (token: number) => {
@@ -125,6 +134,13 @@ export function PdfViewer({
             surface.appendChild(textFlow);
           }
         }
+
+        if (token === renderTokenRef.current && initialScrollTopRef.current > 0 && containerRef.current) {
+          requestAnimationFrame(() => {
+            if (token !== renderTokenRef.current || !containerRef.current) return;
+            containerRef.current.scrollTop = initialScrollTopRef.current;
+          });
+        }
       } catch (err) {
         if (token !== renderTokenRef.current) return;
         const message = err instanceof Error ? err.message : "PDF 渲染失败";
@@ -133,7 +149,7 @@ export function PdfViewer({
         try { loadingTask.destroy(); } catch { /* ok */ }
       }
     },
-    [url, scale, selectionMode],
+    [selectionMode, scale, url],
   );
 
   useEffect(() => {
@@ -172,6 +188,16 @@ export function PdfViewer({
     container.addEventListener("mouseup", handler);
     return () => container.removeEventListener("mouseup", handler);
   }, [onSelection]);
+
+  useEffect(() => {
+    return () => {
+      const container = containerRef.current;
+      if (!container || !onScrollPositionChange) {
+        return;
+      }
+      onScrollPositionChange(container.scrollTop);
+    };
+  }, [onScrollPositionChange, scale, selectionMode, url]);
 
   return <div ref={containerRef} className={className} />;
 }

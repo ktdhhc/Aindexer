@@ -95,6 +95,7 @@ export function TranslatorPage() {
   const setLatestResult = useTranslatorStore((state) => state.setLatestResult);
   const setViewerMode = useTranslatorStore((state) => state.setViewerMode);
   const setPreviewScale = useTranslatorStore((state) => state.setPreviewScale);
+  const setReaderScrollTop = useTranslatorStore((state) => state.setReaderScrollTop);
   const startTranslation = useTranslatorStore((state) => state.startTranslation);
   const cancelStoredTranslation = useTranslatorStore((state) => state.cancelActiveTranslation);
 
@@ -328,8 +329,17 @@ export function TranslatorPage() {
   );
 
   const pdfFileUrl = selectedDocumentId ? buildOriginalFileUrl(selectedDocumentId, workspaceId) : "";
+  const initialReaderScrollTop = useMemo(() => {
+    if (!selectedDocumentId) return 0;
+    return useTranslatorStore.getState().byWorkspace[workspaceId]?.readerScrollTopByDocumentId?.[selectedDocumentId] ?? 0;
+  }, [selectedDocumentId, workspaceId]);
   const canZoomOut = previewScale > PREVIEW_SCALE_MIN;
   const canZoomIn = previewScale < PREVIEW_SCALE_MAX;
+
+  const handleReaderScrollPositionChange = useCallback((scrollTop: number) => {
+    if (!selectedDocumentId) return;
+    setReaderScrollTop(workspaceId, selectedDocumentId, scrollTop);
+  }, [selectedDocumentId, setReaderScrollTop, workspaceId]);
 
   function changePreviewScale(direction: -1 | 1) {
     setPreviewScale(workspaceId, (current) => {
@@ -345,15 +355,17 @@ export function TranslatorPage() {
     const previousUserSelect = document.body.style.userSelect;
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
-    const layoutGap = 14;
-    const libraryWidth = isLibraryCollapsed ? 0 : 300;
-    const gapCount = isLibraryCollapsed ? 1 : 2;
     const minInspectorWidth = 360;
     const minReaderWidth = 420;
 
     const handleMove = (moveEvent: MouseEvent) => {
       const workspaceRect = workspaceRef.current?.getBoundingClientRect();
       if (!workspaceRect) return;
+      const workspaceStyle = window.getComputedStyle(workspaceRef.current as Element);
+      const layoutGap = Number.parseFloat(workspaceStyle.columnGap || workspaceStyle.gap || "14") || 14;
+      const libraryPane = workspaceRef.current?.querySelector<HTMLElement>(".v35-translation-library");
+      const libraryWidth = isLibraryCollapsed ? 0 : Math.round(libraryPane?.getBoundingClientRect().width || 0);
+      const gapCount = isLibraryCollapsed ? 1 : 2;
       const maxInspectorWidth = Math.max(
         minInspectorWidth,
         workspaceRect.width - libraryWidth - layoutGap * gapCount - minReaderWidth,
@@ -533,6 +545,8 @@ export function TranslatorPage() {
               onSelection={handlePdfSelection}
               selectionMode={viewerMode}
               scale={previewScale}
+              initialScrollTop={initialReaderScrollTop}
+              onScrollPositionChange={handleReaderScrollPositionChange}
             />
           ) : (
             <div className="v35-translation-pages">

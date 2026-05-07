@@ -15,6 +15,7 @@
   --v35-border: rgba(36, 28, 22, 0.12);
   --v35-border-strong: rgba(36, 28, 22, 0.2);
   --v35-pane-height: clamp(900px, calc(100vh - 150px), 1080px);
+  --v35-config-workspace-height: min(720px, calc(100vh - 240px));
 }
 
 body {
@@ -26,6 +27,7 @@ body {
 
 .v35-shell-root {
   min-height: 100vh;
+  padding-top: 60px;
 }
 
 html[data-v35-ui-size="medium"] .v35-shell-root {
@@ -172,8 +174,10 @@ html[data-v35-ui-size="small"] .v35-shell-root {
   border-bottom: 1px solid var(--v35-border);
   background: rgba(255, 253, 248, 0.88);
   backdrop-filter: blur(16px);
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 10;
 }
 
@@ -2339,6 +2343,7 @@ html[data-v35-ui-size="small"] .v35-shell-root {
 }
 
 .v35-config-nav button {
+  min-height: 72px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -2365,7 +2370,11 @@ html[data-v35-ui-size="small"] .v35-shell-root {
 
 .v35-config-nav-copy strong,
 .v35-config-nav-copy span {
+  min-width: 0;
+  overflow: hidden;
   display: block;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .v35-config-nav button strong,
@@ -2393,7 +2402,6 @@ html[data-v35-ui-size="small"] .v35-shell-root {
 html.v35-runtime-desktop .v35-topbar {
   height: 60px;
   padding: 0 20px;
-  position: relative;
 }
 
 html.v35-runtime-desktop .v35-topbar-brand {
@@ -2596,6 +2604,10 @@ html.v35-runtime-desktop .v35-translator-workspace {
   grid-template-columns: 260px minmax(0, 1fr) var(--v35-inspector-width, 380px);
 }
 
+html.v35-runtime-desktop .v35-translator-workspace.is-library-collapsed {
+  grid-template-columns: minmax(0, 1fr) var(--v35-inspector-width, 380px);
+}
+
 html.v35-runtime-desktop .v35-translation-resizer {
   height: auto;
 }
@@ -2609,13 +2621,16 @@ html.v35-runtime-desktop .v35-translation-resizer {
 
 .v35-config-stage {
   min-width: 0;
+  display: grid;
+  align-items: stretch;
 }
 
 .v35-config-section {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
+  min-height: var(--v35-config-workspace-height);
 }
 
 .v35-provider-head-actions {
@@ -2630,6 +2645,7 @@ html.v35-runtime-desktop .v35-translation-resizer {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
   gap: 14px;
+  align-items: stretch;
 }
 
 .v35-provider-block {
@@ -2639,6 +2655,7 @@ html.v35-runtime-desktop .v35-translation-resizer {
   padding: 14px;
   display: grid;
   gap: 12px;
+  align-content: start;
 }
 
 .v35-provider-block-head {
@@ -2732,19 +2749,36 @@ html.v35-runtime-desktop .v35-translation-resizer {
 .v35-config-list {
   display: grid;
   gap: 10px;
-  max-height: min(720px, calc(100vh - 240px));
+  height: 100%;
+  max-height: var(--v35-config-workspace-height);
+  align-content: start;
   overflow: auto;
   padding-right: 4px;
 }
 
 .v35-config-list-item {
+  min-height: 82px;
   display: grid;
-  gap: 6px;
+  grid-template-rows: auto auto 16px;
+  align-content: start;
+  gap: 5px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.v35-config-list-item strong,
+.v35-config-list-item span,
+.v35-config-list-item em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .v35-config-list-item em {
   color: var(--v35-accent-hover);
   font-size: 12px;
+  line-height: 16px;
   font-style: normal;
 }
 
@@ -2755,7 +2789,13 @@ html.v35-runtime-desktop .v35-translation-resizer {
   padding-top: 12px;
 }
 
+.v35-config-list .v35-config-create-row {
+  margin-top: auto;
+}
+
 .v35-config-paper {
+  min-height: var(--v35-config-workspace-height);
+  box-sizing: border-box;
   border: 1px solid var(--v35-border);
   border-radius: 18px;
   background: var(--v35-bg-surface);
@@ -2763,15 +2803,40 @@ html.v35-runtime-desktop .v35-translation-resizer {
   padding: 18px;
   display: grid;
   gap: 18px;
+  align-content: start;
+}
+
+.v35-config-paper-fields {
+  height: var(--v35-config-workspace-height);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.v35-config-paper-defaults {
+  height: var(--v35-config-workspace-height);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.v35-config-paper-defaults .v35-config-form-grid {
+  min-height: 0;
+  align-content: start;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .v35-config-paper-head {
+  min-height: 86px;
   display: flex;
-  align-items: start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid var(--v35-border);
   padding-bottom: 16px;
+}
+
+.v35-config-paper-head > div {
+  min-width: 0;
 }
 
 .v35-config-paper-head p {
@@ -2783,11 +2848,14 @@ html.v35-runtime-desktop .v35-translation-resizer {
 }
 
 .v35-config-paper-head h2 {
+  overflow: hidden;
   margin: 0;
   font-family: "Source Serif 4", "Noto Serif SC", Georgia, serif;
   font-size: 30px;
   line-height: 36px;
   letter-spacing: -0.035em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .v35-config-form-grid {
@@ -2887,6 +2955,7 @@ html.v35-runtime-desktop .v35-translation-resizer {
 }
 
 .v35-usage-period-switch button {
+  min-height: 50px;
   border: 1px solid var(--v35-border);
   border-radius: 14px;
   background: rgba(255, 253, 248, 0.72);
@@ -2897,6 +2966,7 @@ html.v35-runtime-desktop .v35-translation-resizer {
 }
 
 .v35-usage-dimension-switch button {
+  min-height: 46px;
   border: 1px solid var(--v35-border);
   border-radius: 14px;
   background: rgba(255, 253, 248, 0.72);
@@ -2923,7 +2993,7 @@ html.v35-runtime-desktop .v35-translation-resizer {
 }
 
 .v35-usage-paper {
-  min-height: 620px;
+  min-height: var(--v35-config-workspace-height);
 }
 
 .v35-usage-metrics {
@@ -3203,15 +3273,25 @@ html.v35-runtime-desktop .v35-translation-resizer {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
+}
+
+.v35-config-paper-fields .v35-template-designer {
+  min-height: 0;
 }
 
 .v35-field-strip {
-  max-height: min(560px, calc(100vh - 330px));
+  max-height: min(560px, calc(var(--v35-config-workspace-height) - 160px));
   overflow: auto;
   display: grid;
   gap: 8px;
+  align-content: start;
   padding-right: 4px;
+}
+
+.v35-config-paper-fields .v35-field-strip {
+  height: 100%;
+  max-height: none;
 }
 
 .v35-field-token {
@@ -3259,7 +3339,7 @@ html.v35-runtime-desktop .v35-translation-resizer {
 }
 
 .v35-field-inspector {
-  min-height: 360px;
+  min-height: min(430px, calc(var(--v35-config-workspace-height) - 160px));
   border: 1px solid var(--v35-border);
   border-radius: 18px;
   background:
@@ -3268,6 +3348,12 @@ html.v35-runtime-desktop .v35-translation-resizer {
   padding: 16px;
   display: grid;
   gap: 16px;
+}
+
+.v35-config-paper-fields .v35-field-inspector {
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
 }
 
 .v35-field-inspector-head {
@@ -3983,7 +4069,21 @@ html.v35-runtime-desktop .v35-translation-resizer {
 
   .v35-config-list,
   .v35-field-strip {
+    height: auto;
     max-height: none;
+  }
+
+  .v35-config-section,
+  .v35-config-paper {
+    min-height: auto;
+  }
+
+  .v35-config-paper-fields {
+    height: auto;
+  }
+
+  .v35-config-paper-defaults {
+    height: auto;
   }
 
   .v35-field-row-grid {
