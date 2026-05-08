@@ -81,7 +81,12 @@ const controllers = new Map<string, AbortController>();
 const clientRequestIds = new Map<string, string>();
 
 function normalizeText(text: string): string {
-  return String(text || "").replace(/\s+/g, " ").trim();
+  return String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .split(/\n\s*\n+/)
+    .map((paragraph) => paragraph.replace(/[^\S\n]+/g, " ").replace(/\s*\n\s*/g, " ").trim())
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function createDefaultWorkspaceState(): TranslatorWorkspaceState {
@@ -171,7 +176,7 @@ function workspaceStateFor(state: TranslatorState, workspaceId: string): Transla
 }
 
 function clampInspectorPaneWidth(value: number): number {
-  return Math.min(720, Math.max(360, Number.isFinite(value) ? value : DEFAULT_INSPECTOR_PANE_WIDTH));
+  return Math.min(760, Math.max(380, Number.isFinite(value) ? value : DEFAULT_INSPECTOR_PANE_WIDTH));
 }
 
 function isStreamingUnsupportedError(error: unknown): boolean {

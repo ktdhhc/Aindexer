@@ -50,6 +50,7 @@ interface SubmitChatQuestionArgs {
   question: string;
   selectedModelEntry: ProviderModelEntry | null;
   indexedFiles: FileItem[];
+  retryFromMessageId?: string;
 }
 
 interface ChatState {
@@ -510,18 +511,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
     }));
   },
-  submitQuestion: async ({ workspaceId, question, selectedModelEntry, indexedFiles }) => {
+  submitQuestion: async ({ workspaceId, question, selectedModelEntry, indexedFiles, retryFromMessageId }) => {
     get().ensureWorkspace(workspaceId);
     const trimmedQuestion = question.trim();
     const state = get();
     const activeSession = findActiveSession(state, workspaceId);
     const currentSessionId = activeSession?.id || "";
     const currentMode = activeSession?.mode ?? "deep";
+    const sessionMessages = activeSession?.messages ?? [];
+    const retryIndex = retryFromMessageId
+      ? sessionMessages.findIndex((message) => message.id === retryFromMessageId && message.role === "user")
+      : -1;
+    const retryMessage = retryIndex >= 0 ? sessionMessages[retryIndex] : null;
+    const baseMessages = retryIndex >= 0 ? sessionMessages.slice(0, retryIndex) : sessionMessages;
     const injectedDocIds = activeSession?.injectedDocIds ?? [];
     const selectedDocIds = activeSession?.selectedDocIds ?? [];
-    const currentDocIds = [...new Set([...injectedDocIds, ...selectedDocIds])];
-    const currentSources = buildSourceSnapshot(selectedDocIds, indexedFiles);
-    const historyMessages = buildHistoryPayload(activeSession?.messages ?? []);
+    const retryInjectedDocIds = baseMessages
+      .flatMap((message) => message.sources ?? [])
+      .map((source) => source.doc_id)
+      .filter((docId, index, list) => Boolean(docId) && list.indexOf(docId) === index);
+    const retrySelectedDocIds = (retryMessage?.sources ?? [])
+      .map((source) => source.doc_id)
+      .filter((docId, index, list) => Boolean(docId) && list.indexOf(docId) === index);
+    const requestInjectedDocIds = retryIndex >= 0 ? retryInjectedDocIds : injectedDocIds;
+    const requestSelectedDocIds = retrySelectedDocIds.length > 0 ? retrySelectedDocIds : selectedDocIds;
+    const currentDocIds = [...new Set([...requestInjectedDocIds, ...requestSelectedDocIds])];
+    const currentSources = buildSourceSnapshot(requestSelectedDocIds, indexedFiles);
+    const historyMessages = buildHistoryPayload(baseMessages);
     if (!trimmedQuestion || state.sendingByWorkspace[workspaceId] || !currentSessionId) return;
     if (!selectedModelEntry?.provider) {
       set((current) => ({
@@ -572,13 +588,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         session.id === currentSessionId
           ? {
               ...session,
-              title: session.messages.length === 0 ? buildSessionTitle(trimmedQuestion) : session.title,
+              title: baseMessages.length === 0 ? buildSessionTitle(trimmedQuestion) : session.title,
               locked: true,
+              injectedDocIds: requestInjectedDocIds,
               updatedAt: new Date().toISOString(),
               lastQuestion: trimmedQuestion,
               agentTrace: currentMode === "agent" ? [] : session.agentTrace,
               messages: [
-                ...session.messages,
+                ...baseMessages,
                 createMessage("user", trimmedQuestion, currentSources),
                 createAssistantPlaceholder(assistantMessageId),
               ],
@@ -674,7 +691,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 const hasAssistantMessage = session.messages.some((item) => item.id === assistantMessageId);
                 return {
                   ...session,
-                  injectedDocIds: [...new Set([...session.injectedDocIds, ...selectedDocIds])],
+                  injectedDocIds: [...new Set([...session.injectedDocIds, ...requestSelectedDocIds])],
                   selectedDocIds: session.id === currentSessionId ? [] : session.selectedDocIds,
                   agentTrace: currentMode === "agent"
                     ? ((event.context_stats.agent_trace as AgentTraceStep[] | undefined) ?? session.agentTrace)
@@ -840,7 +857,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           session.id === currentSessionId
             ? {
                 ...session,
-                injectedDocIds: [...new Set([...session.injectedDocIds, ...selectedDocIds])],
+                injectedDocIds: [...new Set([...session.injectedDocIds, ...requestSelectedDocIds])],
                 selectedDocIds: [],
 
                 agentTrace: currentMode === "agent"

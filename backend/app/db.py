@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Generator
 
 from .config import DB_PATH, ensure_dirs
@@ -129,6 +130,15 @@ def init_db() -> None:
                 stage TEXT,
                 stage_message TEXT,
                 cancel_requested INTEGER NOT NULL DEFAULT 0,
+                index_run_id TEXT,
+                index_provider TEXT,
+                index_model TEXT,
+                index_field_template_id TEXT,
+                progress INTEGER NOT NULL DEFAULT 0,
+                output_seen_tokens INTEGER NOT NULL DEFAULT 0,
+                output_budget_tokens INTEGER NOT NULL DEFAULT 0,
+                failure_code TEXT,
+                failure_label TEXT,
                 error_message TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -316,6 +326,12 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_llm_pricing_rules_lookup
             ON llm_pricing_rules(provider, model, api_key_fingerprint);
+
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
         _migrate_schema(conn)
@@ -323,6 +339,31 @@ def init_db() -> None:
         _seed_default_fields(conn)
         _seed_default_field_templates(conn)
         _seed_default_providers(conn)
+
+
+def _default_document_display_name(filename: str) -> str:
+    raw = str(filename or "").strip()
+    if not raw:
+        return ""
+    stem = Path(raw).stem.strip()
+    return stem or raw
+
+
+def _normalize_document_display_names(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        "SELECT id, filename, COALESCE(display_name, '') AS display_name FROM documents"
+    ).fetchall()
+    for row in rows:
+        doc_id = row[0]
+        filename = str(row[1] or "")
+        display_name = str(row[2] or "").strip()
+        if not display_name or display_name == filename:
+            normalized = _default_document_display_name(filename)
+            if normalized != display_name:
+                conn.execute(
+                    "UPDATE documents SET display_name = ?, updated_at = ? WHERE id = ?",
+                    (normalized, utcnow(), doc_id),
+                )
 
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:
@@ -355,6 +396,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "UPDATE documents SET display_name = filename WHERE display_name IS NULL OR display_name = ''"
         )
+    _normalize_document_display_names(conn)
     if "stage" not in cols:
         conn.execute("ALTER TABLE documents ADD COLUMN stage TEXT")
     if "stage_message" not in cols:
@@ -363,6 +405,24 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE documents ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0"
         )
+    if "index_run_id" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN index_run_id TEXT")
+    if "index_provider" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN index_provider TEXT")
+    if "index_model" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN index_model TEXT")
+    if "index_field_template_id" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN index_field_template_id TEXT")
+    if "progress" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN progress INTEGER NOT NULL DEFAULT 0")
+    if "output_seen_tokens" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN output_seen_tokens INTEGER NOT NULL DEFAULT 0")
+    if "output_budget_tokens" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN output_budget_tokens INTEGER NOT NULL DEFAULT 0")
+    if "failure_code" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN failure_code TEXT")
+    if "failure_label" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN failure_label TEXT")
     if "seq_num" not in cols:
         conn.execute("ALTER TABLE documents ADD COLUMN seq_num INTEGER")
     _backfill_seq_num(conn)

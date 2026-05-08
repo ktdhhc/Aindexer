@@ -55,3 +55,48 @@ def test_usage_summary_aggregates_tokens_and_pricing() -> None:
             conn.execute("DELETE FROM llm_usage_events WHERE request_id = ?", (request_id,))
             if rule_id:
                 conn.execute("DELETE FROM llm_pricing_rules WHERE id = ?", (rule_id,))
+
+
+def test_usage_summary_without_workspace_filter_aggregates_all_workspaces() -> None:
+    init_db()
+    provider = "usage_test_provider_all"
+    request_ids = ["usage_all_request_1", "usage_all_request_2"]
+    try:
+        record_llm_usage(
+            workspace_id="usage_workspace_a",
+            feature="chat",
+            operation="usage_test_all",
+            provider_cfg=ProviderConfig(
+                provider=provider,
+                base_url="https://example.invalid/v1",
+                model="usage-test-model",
+                api_key="usage-test-key-a",
+            ),
+            usage={"prompt_tokens": 100, "completion_tokens": 50},
+            request_id=request_ids[0],
+        )
+        record_llm_usage(
+            workspace_id="usage_workspace_b",
+            feature="translation",
+            operation="usage_test_all",
+            provider_cfg=ProviderConfig(
+                provider=provider,
+                base_url="https://example.invalid/v1",
+                model="usage-test-model",
+                api_key="usage-test-key-b",
+            ),
+            usage={"prompt_tokens": 40, "completion_tokens": 10},
+            request_id=request_ids[1],
+        )
+
+        summary = get_usage_summary(workspace_id=None, period="day", provider=provider)
+
+        assert summary["totals"]["input_tokens"] == 140
+        assert summary["totals"]["output_tokens"] == 60
+        assert summary["totals"]["total_tokens"] == 200
+        assert summary["totals"]["request_count"] == 2
+        assert summary["totals"]["dimension_breakdown"].get("chat", 0) == 150
+        assert summary["totals"]["dimension_breakdown"].get("translation", 0) == 50
+    finally:
+        with get_conn() as conn:
+            conn.execute("DELETE FROM llm_usage_events WHERE request_id IN (?, ?)", tuple(request_ids))

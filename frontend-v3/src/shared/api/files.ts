@@ -10,6 +10,14 @@ export interface FileItem {
   stage: string;
   stage_message: string;
   error_message?: string | null;
+  progress?: number | null;
+  output_seen_tokens?: number | null;
+  output_budget_tokens?: number | null;
+  failure_code?: string | null;
+  failure_label?: string | null;
+  index_provider?: string | null;
+  index_model?: string | null;
+  index_field_template_id?: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -1,6 +1,45 @@
-任务：根据文献内容提取索引字段，返回严格 JSON。
-要求：除title/authors/keywords外，描述性内容必须使用中文；不要返回 markdown 代码块。
-{page_rule}{page_hint}自定义字段定义: {fields_json}
-claims 每项仅需包含 claim_text/evidence_quote/page。
-文献内容（完整）如下：
+任务：根据文献内容提取索引字段，并返回严格合法的 json object。
+
+输出要求：
+1. 只返回一个 json object，不要返回 markdown 代码块，不要返回任何说明文字。
+2. 必须包含以下字段：title, authors, year, keywords, apa_citation, one_liner, core_points, claims, custom_fields。
+3. claims 中每项至少包含 claim_text, evidence_quote, page。
+4. authors 必须是作者姓名数组；不要混入单位、脚注、邮箱、ORCID 或机构信息。
+5. keywords 优先提取原文关键词；若原文没有明确关键词，可根据摘要归纳 3-8 个核心主题词。
+6. one_liner 必须用一句中文概括本文最重要的研究问题、方法或结论。
+7. core_points 输出 3-5 条最重要的核心观点，每条尽量简洁具体。
+8. 若无法确定某字段：
+   - title / apa_citation / one_liner 用空字符串
+   - authors / keywords / core_points / claims 用空数组
+   - year 用 0
+   - claims.page 用 -1
+9. 不要输出 Unknown、N/A、待补充、TBD 这类占位词。
+10. {page_rule}{page_hint}
+
+自定义字段定义（json）：
+{fields_json}
+
+请严格参考以下 json 结构：
+{{
+  "title": "",
+  "authors": [],
+  "year": 0,
+  "keywords": [],
+  "apa_citation": "",
+  "one_liner": "",
+  "core_points": [],
+  "claims": [
+    {{
+      "claim_text": "",
+      "evidence_quote": "",
+      "page": -1,
+      "section": "",
+      "paragraph_index": 0,
+      "confidence": 0.0
+    }}
+  ],
+  "custom_fields": {{}}
+}}
+
+文献内容如下：
 {doc_full}

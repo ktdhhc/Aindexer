@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import mimetypes
+import sqlite3
+import uuid
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
@@ -42,13 +44,14 @@ async def upload_file(
 
     workspace_upload_dir = UPLOAD_DIR / workspace
     workspace_upload_dir.mkdir(parents=True, exist_ok=True)
-    save_path = workspace_upload_dir / filename
     content = await file.read()
-    save_path.write_bytes(content)
-    file_hash = build_scoped_file_hash(hash_file(save_path), workspace)
+    temp_path = workspace_upload_dir / f".upload-{uuid.uuid4().hex}.tmp"
+    temp_path.write_bytes(content)
+    file_hash = build_scoped_file_hash(hash_file(temp_path), workspace)
 
     duplicate = get_document_by_hash(file_hash, workspace_id=workspace)
     if duplicate:
+        temp_path.unlink(missing_ok=True)
         return {
             "doc_id": duplicate["id"],
             "workspace_id": workspace,
@@ -56,13 +59,29 @@ async def upload_file(
             "status": duplicate["status"],
         }
 
-    doc_id = create_document(
-        filename,
-        suffix,
-        file_hash,
-        str(save_path),
-        workspace_id=workspace,
-    )
+    doc_id = f"doc_{uuid.uuid4().hex[:12]}"
+    save_path = workspace_upload_dir / f"{doc_id}.{suffix}"
+    temp_path.replace(save_path)
+    try:
+        create_document(
+            filename,
+            suffix,
+            file_hash,
+            str(save_path),
+            workspace_id=workspace,
+            doc_id=doc_id,
+        )
+    except sqlite3.IntegrityError as exc:
+        save_path.unlink(missing_ok=True)
+        duplicate = get_document_by_hash(file_hash, workspace_id=workspace)
+        if duplicate and "documents.file_hash" in str(exc):
+            return {
+                "doc_id": duplicate["id"],
+                "workspace_id": workspace,
+                "duplicate": True,
+                "status": duplicate["status"],
+            }
+        raise
     return {
         "doc_id": doc_id,
         "workspace_id": workspace,

@@ -25,6 +25,7 @@ desktop-v4/src-tauri/target/
 .opencode/
 .sisyphus/
 .trae/
+product-homepage-draft/
 
 # Local archives
 *.zip

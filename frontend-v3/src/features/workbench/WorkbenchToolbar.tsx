@@ -15,6 +15,7 @@ interface WorkbenchToolbarProps {
   selectedTemplateId: string;
   onTemplateChange: (value: string) => void;
   onUploadFiles: (files: File[]) => void;
+  controlsDisabled?: boolean;
 }
 
 function UploadIcon() {
@@ -38,6 +39,7 @@ export function WorkbenchToolbar({
   selectedTemplateId,
   onTemplateChange,
   onUploadFiles,
+  controlsDisabled = false,
 }: WorkbenchToolbarProps) {
   const desktopShell = isDesktopShell();
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -85,7 +87,7 @@ export function WorkbenchToolbar({
             onChange={(event) => {
               onProviderChange(event.target.value);
             }}
-            disabled={providers.length === 0}
+            disabled={controlsDisabled || providers.length === 0}
           >
             {providers.map((provider) => (
               <option key={provider.provider} value={provider.provider}>
@@ -104,7 +106,7 @@ export function WorkbenchToolbar({
             onChange={(event) => {
               onModelChange(event.target.value);
             }}
-            disabled={modelOptions.length === 0}
+            disabled={controlsDisabled || modelOptions.length === 0}
           >
             {modelOptions.length > 0 ? (
               modelOptions.map((model) => (
@@ -127,7 +129,7 @@ export function WorkbenchToolbar({
             onChange={(event) => {
               onTemplateChange(event.target.value);
             }}
-            disabled={templates.length === 0}
+            disabled={controlsDisabled || templates.length === 0}
           >
             {templates.map((template) => (
               <option key={template.id} value={template.id}>

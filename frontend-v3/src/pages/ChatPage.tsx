@@ -7,8 +7,10 @@ import { useWorkspaceStore } from "../app/workspaceStore";
 import {
   resolveAssistantCitedSources,
   stripAssistantCitationFooter,
+  type AgentTraceStep,
   type ChatContextStats,
   type ChatMode,
+  type ChatThinkingBlock,
 } from "../shared/api/chat";
 import { listFiles, type FileItem } from "../shared/api/files";
 import { listProviders } from "../shared/api/providers";
@@ -103,6 +105,124 @@ function isThreadNearBottom(node: HTMLDivElement): boolean {
   return node.scrollHeight - node.scrollTop - node.clientHeight <= THREAD_BOTTOM_THRESHOLD;
 }
 
+function thinkingExpansionKey(messageId: string, blockId: string): string {
+  return `${messageId}::${blockId}`;
+}
+
+function plannerIterationFromThinkingId(thinkingId: string): number | null {
+  const matched = /^agent_planner_(\d+)$/.exec(thinkingId);
+  if (!matched) return null;
+  const value = Number(matched[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function formatTraceSourceIds(ids: string[]): string {
+  if (ids.length <= 3) return ids.join(", ");
+  return `${ids.slice(0, 3).join(", ")} +${ids.length - 3}`;
+}
+
+function summarizeTraceForIteration(traceSteps: AgentTraceStep[], iteration: number): string {
+  const indexIds: string[] = [];
+  const paperIds: string[] = [];
+  let readMetadata = false;
+  const retryDetails: string[] = [];
+
+  for (const step of traceSteps) {
+    if (step.iteration !== iteration) continue;
+    if (step.step === "read_metadata") {
+      readMetadata = true;
+      continue;
+    }
+    if (step.step === "read_index") {
+      for (const source of step.sources ?? []) {
+        if (source.source_id && !indexIds.includes(source.source_id)) {
+          indexIds.push(source.source_id);
+        }
+      }
+      continue;
+    }
+    if (step.step === "read_paper") {
+      for (const source of step.sources ?? []) {
+        if (source.source_id && !paperIds.includes(source.source_id)) {
+          paperIds.push(source.source_id);
+        }
+      }
+      continue;
+    }
+    if (step.step.startsWith("planner_retry_") && step.detail && !retryDetails.includes(step.detail)) {
+      retryDetails.push(step.detail);
+    }
+  }
+
+  const parts: string[] = [];
+  if (readMetadata) parts.push("元数据");
+  if (indexIds.length > 0) parts.push(`索引 ${formatTraceSourceIds(indexIds)}`);
+  if (paperIds.length > 0) parts.push(`原文 ${formatTraceSourceIds(paperIds)}`);
+  parts.push(...retryDetails);
+  return parts.join(" / ");
+}
+
+function buildThinkingLabel(block: ChatThinkingBlock, traceSteps: AgentTraceStep[]): string {
+  const iteration = plannerIterationFromThinkingId(block.id);
+  if (!iteration) return block.label;
+  const traceSummary = summarizeTraceForIteration(traceSteps, iteration);
+  return traceSummary ? `${block.label} - ${traceSummary}` : block.label;
+}
+
+type UnifiedTraceEntry =
+  | { kind: "thinking"; key: string; block: ChatThinkingBlock }
+  | { kind: "trace"; key: string; step: AgentTraceStep };
+
+function buildInlineTraceSteps(thinkingBlocks: ChatThinkingBlock[], traceSteps: AgentTraceStep[]): AgentTraceStep[] {
+  const plannedIterations = new Set(
+    thinkingBlocks
+      .map((block) => plannerIterationFromThinkingId(block.id))
+      .filter((value): value is number => value !== null),
+  );
+  return traceSteps.filter((step) => {
+    if (!step.iteration || !plannedIterations.has(step.iteration)) {
+      return true;
+    }
+    return !(step.step === "read_metadata" || step.step === "read_index" || step.step === "read_paper" || step.step.startsWith("planner_retry_"));
+  });
+}
+
+function formatTraceStepLabel(step: AgentTraceStep): string {
+  if (step.step === "metadata") return "注入元数据";
+  return step.label || step.step;
+}
+
+function buildUnifiedTraceEntries(thinkingBlocks: ChatThinkingBlock[], traceSteps: AgentTraceStep[]): UnifiedTraceEntry[] {
+  const inlineTraceSteps = buildInlineTraceSteps(thinkingBlocks, traceSteps);
+  const entries: UnifiedTraceEntry[] = [];
+
+  for (const step of inlineTraceSteps) {
+    if (step.step === "metadata") {
+      entries.push({
+        kind: "trace",
+        key: `${step.step}:${step.iteration ?? "x"}:metadata`,
+        step,
+      });
+    }
+  }
+
+  for (const block of thinkingBlocks) {
+    entries.push({ kind: "thinking", key: `thinking:${block.id}`, block });
+  }
+
+  for (let index = 0; index < inlineTraceSteps.length; index += 1) {
+    const step = inlineTraceSteps[index];
+    if (step.step === "metadata") continue;
+    entries.push({
+      kind: "trace",
+      key: `${step.step}:${step.iteration ?? "x"}:${index}`,
+      step,
+    });
+  }
+
+  return entries;
+}
+
 export function ChatPage() {
   const desktopShell = isDesktopShell();
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
@@ -151,6 +271,27 @@ export function ChatPage() {
   const messageRefs = useRef<Record<string, HTMLElement | null>>({});
   const autoFollowEnabledRef = useRef(true);
   const resumeSmoothUntilRef = useRef(0);
+  const suppressAutoFollowUntilRef = useRef(0);
+
+  const preserveThreadScroll = useCallback((apply: () => void) => {
+    const node = threadRef.current;
+    const savedScrollTop = node?.scrollTop ?? null;
+    suppressAutoFollowUntilRef.current = performance.now() + 280;
+    autoFollowEnabledRef.current = false;
+    apply();
+    if (savedScrollTop === null) return;
+    const restoreScrollTop = () => {
+      const currentNode = threadRef.current;
+      if (!currentNode) return;
+      currentNode.scrollTo({ top: savedScrollTop, behavior: "auto" });
+      setShowJumpToBottom(!isThreadNearBottom(currentNode));
+    };
+    restoreScrollTop();
+    requestAnimationFrame(() => {
+      restoreScrollTop();
+      requestAnimationFrame(restoreScrollTop);
+    });
+  }, []);
 
   const providersQuery = useQuery({
     queryKey: ["providers"],
@@ -280,6 +421,10 @@ export function ChatPage() {
     if (!node) return;
 
     const syncScrollState = () => {
+      if (performance.now() < suppressAutoFollowUntilRef.current) {
+        setShowJumpToBottom(!isThreadNearBottom(node));
+        return;
+      }
       const nearBottom = isThreadNearBottom(node);
       if (nearBottom) {
         autoFollowEnabledRef.current = true;
@@ -332,6 +477,10 @@ export function ChatPage() {
     const node = threadRef.current;
     if (!node) return;
     requestAnimationFrame(() => {
+      if (performance.now() < suppressAutoFollowUntilRef.current) {
+        setShowJumpToBottom(!isThreadNearBottom(node));
+        return;
+      }
       if (autoFollowEnabledRef.current) {
         const behavior = performance.now() < resumeSmoothUntilRef.current ? "smooth" : "auto";
         node.scrollTo({ top: node.scrollHeight, behavior });
@@ -388,13 +537,14 @@ export function ChatPage() {
     node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
   }
 
-  async function submitQuestion(input = question) {
+  async function submitQuestion(input = question, retryFromMessageId?: string) {
     setQuestion("");
     await submitChatQuestion({
       workspaceId,
       question: input,
       selectedModelEntry,
       indexedFiles,
+      retryFromMessageId,
     });
   }
 
@@ -433,21 +583,26 @@ export function ChatPage() {
   }
 
   function toggleTrace(messageId: string) {
-    updateChatPageSession(workspaceId, (current) => ({
-      expandedTraceByMessage: {
-        ...current.expandedTraceByMessage,
-        [messageId]: !current.expandedTraceByMessage[messageId],
-      },
-    }));
+    preserveThreadScroll(() => {
+      updateChatPageSession(workspaceId, (current) => ({
+        expandedTraceByMessage: {
+          ...current.expandedTraceByMessage,
+          [messageId]: !current.expandedTraceByMessage[messageId],
+        },
+      }));
+    });
   }
 
-  function toggleThinking(blockId: string) {
-    updateChatPageSession(workspaceId, (current) => ({
-      expandedThinkingByBlock: {
-        ...current.expandedThinkingByBlock,
-        [blockId]: !current.expandedThinkingByBlock[blockId],
-      },
-    }));
+  function toggleThinking(messageId: string, blockId: string) {
+    const key = thinkingExpansionKey(messageId, blockId);
+    preserveThreadScroll(() => {
+      updateChatPageSession(workspaceId, (current) => ({
+        expandedThinkingByBlock: {
+          ...current.expandedThinkingByBlock,
+          [key]: !current.expandedThinkingByBlock[key],
+        },
+      }));
+    });
   }
 
   const canSend = Boolean(
@@ -480,7 +635,7 @@ export function ChatPage() {
                 key={item.mode}
                 type="button"
                 disabled={Boolean(activeSession?.locked) || isSending}
-                  onClick={() => changeMode(workspaceId, item.mode)}
+                  onClick={() => preserveThreadScroll(() => changeMode(workspaceId, item.mode))}
                 title={activeSession?.locked ? "当前会话已锁定模式" : item.label}
               >
                 <ModeIcon icon={item.icon} />
@@ -501,9 +656,10 @@ export function ChatPage() {
               const displayContent = message.role === "assistant" ? stripAssistantCitationFooter(message.content) : message.content;
               const displaySources = message.role === "assistant" ? resolveAssistantCitedSources(message.content, message.sources) : (message.sources ?? []);
               const traceSteps = message.agentTrace ?? [];
+              const thinkingBlocks = message.thinkingBlocks ?? [];
+              const unifiedTraceEntries = buildUnifiedTraceEntries(thinkingBlocks, traceSteps);
               const traceExpanded = expandedTraceByMessage[message.id] ?? !displayContent.trim();
               const isLiveAssistant = message.role === "assistant" && isSending && latestAssistantMessage?.id === message.id;
-              const thinkingBlocks = message.thinkingBlocks ?? [];
               return (
                 <article className={`v35-chat-turn role-${message.role}`} key={message.id} ref={(node) => { messageRefs.current[message.id] = node; }}>
                   <header>
@@ -513,47 +669,49 @@ export function ChatPage() {
                     </span>
                     <time>{formatTime(message.createdAt)}</time>
                   </header>
-                  {message.role === "assistant" && thinkingBlocks.length > 0 ? (
-                    <div className="v35-chat-thinking-list">
-                      {thinkingBlocks.map((block) => {
-                        const thinkingExpanded = expandedThinkingByBlock[block.id] ?? !block.completed;
-                        return (
-                          <div className={`v35-chat-thinking ${thinkingExpanded ? "is-expanded" : "is-collapsed"}`} key={block.id}>
-                            <button className="v35-chat-thinking-toggle" type="button" onClick={() => toggleThinking(block.id)}>
-                              <span>{block.label}</span>
-                              <em>{thinkingExpanded ? "收起" : "展开"}</em>
-                            </button>
-                            {thinkingExpanded ? <p>{block.content}</p> : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                  {message.role === "assistant" && traceSteps.length > 0 ? (
+                  {message.role === "assistant" && unifiedTraceEntries.length > 0 ? (
                     <div className={`v35-chat-inline-trace ${traceExpanded ? "is-expanded" : "is-collapsed"}`}>
                       <button className="v35-chat-inline-trace-toggle" type="button" onClick={() => toggleTrace(message.id)}>
                         <span>Trace</span>
-                        <em>{traceExpanded ? "收起" : `展开 ${traceSteps.length} 步`}</em>
+                        <em>{traceExpanded ? "收起" : `展开 ${unifiedTraceEntries.length} 项`}</em>
                       </button>
                       {traceExpanded ? (
                         <div className="v35-chat-inline-trace-steps">
-                          {traceSteps.map((step) => (
-                            <article className="v35-chat-inline-trace-step" key={step.step}>
-                              <header>
-                                <strong>{step.label}</strong>
-                                <span>{step.detail || step.status || "done"}</span>
-                              </header>
-                              {(step.sources ?? []).length > 0 ? (
-                                <div className="v35-chat-inline-trace-sources">
-                                   {(step.sources ?? []).map((source) => (
-                                     <button key={`${source.source_kind || "index"}:${source.doc_id}:${source.source_id || ""}`} type="button" onClick={() => void navigator.clipboard?.writeText(source.doc_id)}>
-                                       <strong>{source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}</strong>
-                                     </button>
-                                   ))}
+                          {unifiedTraceEntries.map((entry) => {
+                            if (entry.kind === "thinking") {
+                              const block = entry.block;
+                              const blockKey = thinkingExpansionKey(message.id, block.id);
+                              const thinkingExpanded = expandedThinkingByBlock[blockKey] ?? !block.completed;
+                              const thinkingLabel = buildThinkingLabel(block, traceSteps);
+                              return (
+                                <div className={`v35-chat-thinking ${thinkingExpanded ? "is-expanded" : "is-collapsed"}`} key={entry.key}>
+                                  <button className="v35-chat-thinking-toggle" type="button" onClick={() => toggleThinking(message.id, block.id)}>
+                                    <span>{thinkingLabel}</span>
+                                    <em>{thinkingExpanded ? "收起" : "展开"}</em>
+                                  </button>
+                                  {thinkingExpanded ? <p>{block.content}</p> : null}
                                 </div>
-                              ) : null}
-                            </article>
-                          ))}
+                              );
+                            }
+                            const step = entry.step;
+                            return (
+                              <article className="v35-chat-inline-trace-step" key={entry.key}>
+                                <header>
+                                  <strong>{formatTraceStepLabel(step)}</strong>
+                                  <span>{step.detail || step.status || "done"}</span>
+                                </header>
+                                {(step.sources ?? []).length > 0 ? (
+                                  <div className="v35-chat-inline-trace-sources">
+                                    {(step.sources ?? []).map((source) => (
+                                      <button key={`${source.source_kind || "index"}:${source.doc_id}:${source.source_id || ""}`} type="button" onClick={() => void navigator.clipboard?.writeText(source.doc_id)}>
+                                        <strong>{source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}</strong>
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </article>
+                            );
+                          })}
                         </div>
                       ) : null}
                     </div>
@@ -586,7 +744,7 @@ export function ChatPage() {
                           <CopyIcon />
                         </button>
                         {message.role === "user" ? (
-                          <button className="v35-icon-button" type="button" aria-label="重试提问" title="重试提问" disabled={isSending} onClick={() => void submitQuestion(message.content)}>
+                          <button className="v35-icon-button" type="button" aria-label="重试提问" title="重试提问" disabled={isSending} onClick={() => void submitQuestion(message.content, message.id)}>
                             <RetryIcon />
                           </button>
                         ) : null}
@@ -598,7 +756,7 @@ export function ChatPage() {
                     )}
                     {message.role === "user" ? (
                       desktopShell ? null : (
-                        <button className="v35-chat-text-action" type="button" disabled={isSending} onClick={() => void submitQuestion(message.content)}>
+                        <button className="v35-chat-text-action" type="button" disabled={isSending} onClick={() => void submitQuestion(message.content, message.id)}>
                           重试
                         </button>
                       )
@@ -670,7 +828,7 @@ export function ChatPage() {
                 <select
                   className="v35-input v35-chat-model-select"
                   value={selectedModelKey}
-                  onChange={(event) => setSelectedModelKey(event.target.value)}
+                  onChange={(event) => preserveThreadScroll(() => setSelectedModelKey(event.target.value))}
                   disabled={providersQuery.isLoading || modelOptions.length === 0 || isSending}
                 >
                   {modelOptions.map((entry) => (

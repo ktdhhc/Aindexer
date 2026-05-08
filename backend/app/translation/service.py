@@ -172,7 +172,14 @@ def build_translation_cache_key(request: TranslationProviderRequest) -> str:
 
 
 def normalize_selection_text(text: str) -> str:
-    return " ".join(str(text or "").replace("\n", " ").split())
+    return "\n\n".join(
+        paragraph
+        for paragraph in (
+            re.sub(r"\s*\n\s*", " ", re.sub(r"[^\S\n]+", " ", part)).strip()
+            for part in re.split(r"\n\s*\n+", str(text or "").replace("\r\n", "\n").replace("\r", "\n"))
+        )
+        if paragraph
+    )
 
 
 def is_selection_long_enough(

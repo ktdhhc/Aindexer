@@ -618,7 +618,7 @@ html[data-v35-ui-size="small"] .v35-shell-root {
 
 .v35-column {
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
   display: flex;
   flex-direction: column;
 }
@@ -683,14 +683,18 @@ html[data-v35-ui-size="small"] .v35-shell-root {
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
+  position: relative;
   overflow: hidden;
-  min-height: 92px;
+  min-height: 128px;
+  height: 128px;
   border: 1px solid var(--v35-border);
   border-radius: 14px;
   background: rgba(255, 253, 248, 0.78);
   padding: 12px;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: minmax(40px, auto) 24px auto;
+  align-content: start;
+  gap: 8px;
 }
 
 .v35-paper-row.is-active {
@@ -704,20 +708,130 @@ html[data-v35-ui-size="small"] .v35-shell-root {
   overflow: hidden;
   margin: 0;
   font-size: 14px;
-  line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 19px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  word-break: break-word;
 }
 
 .v35-paper-row p {
-  margin: 8px 0 0;
+  margin: 0;
   color: var(--v35-text-secondary);
   font-size: 12px;
   line-height: 17px;
 }
 
-.v35-row-stage {
-  min-height: 17px;
+.v35-row-meta {
+  min-width: 0;
+  min-height: 24px;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.v35-mini-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(36, 28, 22, 0.06);
+  color: var(--v35-text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.v35-mini-chip:last-of-type {
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.v35-mini-chip.is-ok {
+  background: #dfeee4;
+  color: var(--v35-success);
+}
+
+.v35-mini-chip.is-warn {
+  background: var(--v35-accent-soft);
+  color: var(--v35-warning);
+}
+
+.v35-mini-chip.is-error {
+  background: #f9e1de;
+  color: var(--v35-error);
+}
+
+.v35-mini-chip.is-muted {
+  background: #e8e2da;
+}
+
+.v35-stage-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.v35-index-progress {
+  min-width: 0;
+  display: block;
+  align-items: center;
+}
+
+.v35-index-progress-track {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--v35-border) 65%, transparent);
+}
+
+.v35-index-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--v35-accent), var(--v35-accent-strong));
+  transition: width 720ms linear;
+}
+
+.v35-index-progress.is-edge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+}
+
+.v35-index-progress.is-edge .v35-index-progress-track {
+  height: 3px;
+  border-radius: 0 0 14px 14px;
+  background: rgba(36, 28, 22, 0.08);
+}
+
+.v35-index-progress.is-edge .v35-index-progress-fill {
+  border-radius: 0 999px 999px 0;
+}
+
+.v35-index-progress.is-running .v35-index-progress-fill {
+  background:
+    linear-gradient(90deg, rgba(255, 253, 248, 0.18), rgba(255, 253, 248, 0) 36%),
+    repeating-linear-gradient(
+      135deg,
+      rgba(255, 253, 248, 0.14) 0 8px,
+      rgba(255, 253, 248, 0.02) 8px 16px
+    ),
+    linear-gradient(90deg, var(--v35-accent), var(--v35-accent-strong));
+  background-size: 200% 100%, 24px 100%, 100% 100%;
+  animation: v35-progress-shimmer 1.2s linear infinite;
 }
 
 .v35-row-status {
@@ -764,10 +878,20 @@ html[data-v35-ui-size="small"] .v35-shell-root {
 }
 
 .v35-row-actions {
-  margin-top: auto;
-  padding-top: 10px;
   display: flex;
   gap: 8px;
+  align-self: end;
+  min-height: 32px;
+}
+
+@keyframes v35-progress-shimmer {
+  from {
+    background-position: 200% 0, 0 0, 0 0;
+  }
+
+  to {
+    background-position: 0 0, 24px 0, 0 0;
+  }
 }
 
 .v35-document-canvas {
@@ -2286,27 +2410,27 @@ html[data-v35-ui-size="small"] .v35-shell-root {
 
 .v35-config-page {
   display: grid;
-  gap: 18px;
+  gap: 14px;
 }
 
 .v35-config-hero {
-  min-height: 180px;
-  padding: 30px 32px;
+  min-height: 142px;
+  padding: 26px 30px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 28px;
+  gap: 24px;
   align-items: end;
   border-bottom: 1px solid var(--v35-border);
   background:
-    linear-gradient(100deg, rgba(255, 253, 248, 0.08), rgba(166, 95, 43, 0.1)),
-    radial-gradient(circle at 92% 4%, rgba(166, 95, 43, 0.15), transparent 30%);
+    linear-gradient(105deg, rgba(255, 253, 248, 0.04), rgba(166, 95, 43, 0.08)),
+    radial-gradient(circle at 92% 12%, rgba(166, 95, 43, 0.13), transparent 30%);
 }
 
 .v35-config-hero h1 {
   margin: 0;
   max-width: 860px;
   font-family: "Source Serif 4", "Noto Serif SC", Georgia, serif;
-  font-size: clamp(34px, 4.8vw, 60px);
+  font-size: clamp(34px, 4.6vw, 58px);
   line-height: 1;
   letter-spacing: -0.055em;
 }
@@ -2605,11 +2729,12 @@ html.v35-runtime-desktop .v35-config-stage {
 }
 
 html.v35-runtime-desktop .v35-translator-workspace {
-  grid-template-columns: 260px minmax(0, 1fr) var(--v35-inspector-width, 380px);
+  --v35-translator-library-width: 260px;
+  grid-template-columns: var(--v35-translator-library-width) minmax(0, 1fr) var(--v35-inspector-width, 420px);
 }
 
 html.v35-runtime-desktop .v35-translator-workspace.is-library-collapsed {
-  grid-template-columns: minmax(0, 1fr) var(--v35-inspector-width, 380px);
+  grid-template-columns: minmax(0, 1fr) var(--v35-inspector-width, 420px);
 }
 
 html.v35-runtime-desktop .v35-translation-resizer {
@@ -3113,6 +3238,11 @@ html.v35-runtime-desktop .v35-translation-resizer {
   align-items: stretch;
 }
 
+.v35-usage-chart-window {
+  width: min(100%, calc((9 * 56px) + (8 * 8px) + 28px));
+  overflow-x: auto;
+}
+
 .v35-usage-axis {
   display: grid;
   grid-template-rows: repeat(5, minmax(0, 1fr));
@@ -3133,7 +3263,8 @@ html.v35-runtime-desktop .v35-translation-resizer {
   display: flex;
   align-items: stretch;
   gap: 8px;
-  overflow-x: auto;
+  width: max-content;
+  min-width: 100%;
   border: 1px solid var(--v35-border);
   border-radius: 18px;
   background:
@@ -3143,8 +3274,9 @@ html.v35-runtime-desktop .v35-translation-resizer {
 }
 
 .v35-usage-bar-item {
-  min-width: 44px;
-  flex: 1 0 44px;
+  width: 56px;
+  min-width: 56px;
+  flex: 0 0 56px;
   display: grid;
   grid-template-rows: minmax(180px, 1fr) auto auto;
   gap: 7px;
@@ -3170,6 +3302,13 @@ html.v35-runtime-desktop .v35-translation-resizer {
   border-radius: 12px 12px 6px 6px;
   background: var(--v35-bg-subtle);
   transition: height 180ms ease, border-color 180ms ease;
+}
+
+.v35-usage-bar.is-empty {
+  min-height: 0;
+  border-style: dashed;
+  border-color: rgba(36, 28, 22, 0.16);
+  background: transparent;
 }
 
 .v35-usage-bar span {
@@ -3462,7 +3601,8 @@ html.v35-runtime-desktop .v35-translation-resizer {
 .v35-translator-workspace {
   display: grid;
   --v35-translator-gap: 14px;
-  grid-template-columns: 300px minmax(0, 1fr) var(--v35-inspector-width, 420px);
+  --v35-translator-library-width: 300px;
+  grid-template-columns: var(--v35-translator-library-width) minmax(0, 1fr) var(--v35-inspector-width, 420px);
   gap: var(--v35-translator-gap);
   align-items: start;
   position: relative;
@@ -3932,7 +4072,7 @@ html.v35-runtime-desktop .v35-translation-resizer {
 .v35-translation-result p {
   margin: 0;
   font-family: "Source Serif 4", "Noto Serif SC", Georgia, serif;
-  font-size: 17px;
+  font-size: 16px;
   line-height: 30px;
 }
 

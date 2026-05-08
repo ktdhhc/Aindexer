@@ -176,9 +176,7 @@ export function PdfViewer({
         if (!selection || selection.isCollapsed) return;
         const anchor = selection.anchorNode;
         if (!anchor || !container.contains(anchor)) return;
-        const text = String(selection.toString() || "")
-          .replace(/\s+/g, " ")
-          .trim();
+        const text = extractSelectedText(selection, selectionMode);
         if (text) {
           onSelection(text);
         }
@@ -200,6 +198,117 @@ export function PdfViewer({
   }, [onScrollPositionChange, scale, selectionMode, url]);
 
   return <div ref={containerRef} className={className} />;
+}
+
+function extractSelectedText(selection: Selection, selectionMode: PdfSelectionMode): string {
+  const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+  if (!range) return "";
+
+  if (selectionMode === "layout") {
+    const structured = extractStructuredLayoutSelection(range);
+    if (structured) {
+      return structured;
+    }
+  }
+
+  if (selectionMode === "text") {
+    const fragment = range.cloneContents();
+    const wrapper = document.createElement("div");
+    wrapper.append(fragment);
+    const text = wrapper.innerText || wrapper.textContent || selection.toString() || "";
+    return normalizeParagraphText(text);
+  }
+
+  return normalizeParagraphText(selection.toString() || "");
+}
+
+function extractStructuredLayoutSelection(range: Range): string {
+  const commonRoot = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+    ? (range.commonAncestorContainer as Element)
+    : range.commonAncestorContainer.parentElement;
+  const page = commonRoot?.closest<HTMLElement>(".v35-pdf-page");
+  if (!page) {
+    return "";
+  }
+
+  const spans = Array.from(page.querySelectorAll<HTMLElement>(".v35-pdf-text-layer span"))
+    .filter((span) => {
+      const node = span.firstChild;
+      return Boolean(node) && range.intersectsNode(node as Node);
+    })
+    .map((span) => ({
+      text: String(span.textContent || ""),
+      top: readPx(span.style.top),
+      left: readPx(span.style.left),
+      width: readPx(span.style.width),
+      height: readPx(span.style.height),
+    }))
+    .filter((item) => item.text.trim());
+
+  if (spans.length === 0) {
+    return "";
+  }
+
+  spans.sort((a, b) => {
+    if (Math.abs(a.top - b.top) > 2) return a.top - b.top;
+    return a.left - b.left;
+  });
+
+  const lines: Array<{ top: number; height: number; items: typeof spans }> = [];
+  for (const span of spans) {
+    const last = lines[lines.length - 1];
+    if (!last || Math.abs(last.top - span.top) > Math.max(4, last.height * 0.55)) {
+      lines.push({ top: span.top, height: span.height || 16, items: [span] });
+      continue;
+    }
+    last.items.push(span);
+    last.height = Math.max(last.height, span.height || last.height);
+  }
+
+  const paragraphs: string[] = [];
+  let currentParagraph: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const nextLine = lines[index + 1];
+    const lineText = line.items
+      .sort((a, b) => a.left - b.left)
+      .map((item) => item.text)
+      .join("")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!lineText) continue;
+
+    currentParagraph.push(lineText);
+    if (!nextLine) {
+      paragraphs.push(currentParagraph.join(" "));
+      currentParagraph = [];
+      continue;
+    }
+
+    const verticalGap = nextLine.top - line.top;
+    const paragraphBreak = verticalGap > Math.max(line.height * 1.45, 18);
+    if (paragraphBreak) {
+      paragraphs.push(currentParagraph.join(" "));
+      currentParagraph = [];
+    }
+  }
+
+  return normalizeParagraphText(paragraphs.join("\n\n"));
+}
+
+function readPx(value: string): number {
+  const parsed = Number.parseFloat(value || "0");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeParagraphText(text: string): string {
+  return String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .split(/\n\s*\n+/)
+    .map((paragraph) => paragraph.replace(/[^\S\n]+/g, " ").replace(/\s*\n\s*/g, " ").trim())
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function buildPageTextLines(textContent: pdfjsLib.TextContent): string[] {

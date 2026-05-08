@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 from ..schemas import IndexRecordOut
 
@@ -51,4 +52,14 @@ def render_markdown(doc_id: str, record: IndexRecordOut) -> str:
 
 
 def write_markdown(path: Path, content: str) -> None:
-    path.write_text(content, encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        tmp_path.write_text(content, encoding="utf-8")
+        tmp_path.replace(path)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise

@@ -1,5 +1,6 @@
 import { fetchJson } from "./http";
 
+export const ALL_WORKSPACES_USAGE_SCOPE = "__all__";
 export type UsagePeriod = "day" | "month";
 export type UsageFeature = "indexing" | "translation" | "chat";
 export type UsageBreakdownBy = "provider" | "model" | "feature" | "api_key_fingerprint";

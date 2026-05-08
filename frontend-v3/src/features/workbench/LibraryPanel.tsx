@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import type { FileItem } from "../../shared/api/files";
 import type { SearchItem } from "../../shared/api/search";
 import { isDesktopShell } from "../../shared/lib/runtime";
-import { formatQueueStatus, isRunningStatus } from "./utils";
+import { formatCompactStage, formatQueueStatusWithFailure, isRunningStatus } from "./utils";
 
 type LibrarySortField = "display_name" | "authors" | "year" | "modified_at";
 type LibrarySortDirection = "asc" | "desc";
@@ -89,6 +89,16 @@ function DeleteIcon() {
       <path d="M7 6.5l.6 8a1 1 0 0 0 1 .9h2.8a1 1 0 0 0 1-.9l.6-8" />
     </svg>
   );
+}
+
+function StageIcon({ tone }: { tone: "ok" | "warn" | "error" | "muted" | "default" }) {
+  return (
+    <span className={`v35-stage-dot is-${tone}`} aria-hidden="true" />
+  );
+}
+
+function stripDocumentExtension(value: string): string {
+  return value.replace(/\.(pdf|txt|docx)$/i, "");
 }
 
 export function LibraryPanel({
@@ -208,8 +218,16 @@ export function LibraryPanel({
           const stage = fileRow?.stage || "uploaded";
           const stageMessage = fileRow?.stage_message === "索引生成完成" ? "" : (fileRow?.stage_message || "");
           const running = isRunningStatus(status, stage);
-          const statusMeta = formatQueueStatus(status, stage);
+          const statusMeta = formatQueueStatusWithFailure(status, stage, fileRow?.failure_label);
+          const compactStage = formatCompactStage(status, stage);
           const runTitle = status === "uploaded" ? "生成索引" : "重新生成索引";
+          const rawProgress = Number(fileRow?.progress ?? (running ? 5 : status === "indexed" ? 100 : 0));
+          const progress = Math.max(0, Math.min(100, Number.isFinite(rawProgress) ? rawProgress : 0));
+          const showProgress = running;
+          const fileType = String(fileRow?.file_type || "").trim().toUpperCase();
+          const hasYear = typeof row.year === "number" && Number.isFinite(row.year);
+          const displayName = stripDocumentExtension(row.display_name || row.filename || row.doc_id);
+          const showStageChip = running && compactStage.label !== statusMeta.label;
 
           return (
             <article
@@ -228,10 +246,22 @@ export function LibraryPanel({
               }}
             >
               <div className="v35-row-status">
-                <h3>{row.display_name || row.filename || row.doc_id}</h3>
-                <span className={`v35-status is-${statusMeta.tone}`}>{statusMeta.label}</span>
+                <h3 title={displayName}>{displayName}</h3>
               </div>
-              {stageMessage ? <p className="v35-row-stage">{stageMessage}</p> : null}
+              <div className="v35-row-meta" title={stageMessage || undefined}>
+                {fileType ? <span className="v35-mini-chip">{fileType}</span> : null}
+                {hasYear ? <span className="v35-mini-chip">{row.year}</span> : null}
+                <span className={`v35-mini-chip is-${statusMeta.tone}`}>
+                  <StageIcon tone={statusMeta.tone} />
+                  {statusMeta.label}
+                </span>
+                {showStageChip ? (
+                  <span className={`v35-mini-chip is-${compactStage.tone}`}>
+                    <StageIcon tone={compactStage.tone} />
+                    {compactStage.label}
+                  </span>
+                ) : null}
+              </div>
               <div className="v35-row-actions">
                 {running ? (
                   <button
@@ -278,6 +308,16 @@ export function LibraryPanel({
                   </>
                 )}
               </div>
+              {showProgress ? (
+                <div
+                  className="v35-index-progress is-edge is-running"
+                  aria-label="索引进行中"
+                >
+                  <i className="v35-index-progress-track" aria-hidden="true">
+                    <span className="v35-index-progress-fill" style={{ width: `${Math.max(progress, 6)}%` }} />
+                  </i>
+                </div>
+              ) : null}
             </article>
           );
         })}

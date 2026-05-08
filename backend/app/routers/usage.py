@@ -16,6 +16,14 @@ from ..services.usage_tracker import (
 from ._context import resolve_workspace_id
 
 router = APIRouter()
+ALL_WORKSPACES_SCOPE = "__all__"
+
+
+def _resolve_usage_workspace_id(workspace_id: str | None) -> str | None:
+    cleaned = str(workspace_id or "").strip()
+    if not cleaned or cleaned == ALL_WORKSPACES_SCOPE:
+        return None
+    return resolve_workspace_id(cleaned)
 
 
 class PricingRuleIn(BaseModel):
@@ -29,7 +37,7 @@ class PricingRuleIn(BaseModel):
 
 @router.get("/filters")
 def usage_filters(workspace_id: str = DEFAULT_WORKSPACE_ID) -> dict[str, list[str]]:
-    return list_usage_filters(resolve_workspace_id(workspace_id))
+    return list_usage_filters(_resolve_usage_workspace_id(workspace_id))
 
 
 @router.get("/summary")
@@ -43,7 +51,7 @@ def usage_summary(
     api_key: str | None = None,
 ) -> dict:
     return get_usage_summary(
-        workspace_id=resolve_workspace_id(workspace_id),
+        workspace_id=_resolve_usage_workspace_id(workspace_id),
         period=period,
         breakdown_by=breakdown_by,
         provider=provider,

@@ -37,6 +37,53 @@ export function formatQueueStatus(status: string, stage: string): {
   return { label: "待索引", tone: "default" };
 }
 
+export function formatQueueStatusWithFailure(status: string, stage: string, failureLabel?: string | null): {
+  label: string;
+  tone: "ok" | "warn" | "error" | "muted" | "default";
+} {
+  const fallback = formatQueueStatus(status, stage);
+  const label = String(failureLabel || "").trim();
+  if (!label) return fallback;
+  if (status === "failed") return { label, tone: "error" };
+  if (status === "needs_review") return { label, tone: "warn" };
+  if (status === "cancelled") return { label, tone: "muted" };
+  return fallback;
+}
+
+export function formatCompactStage(status: string, stage: string): {
+  label: string;
+  tone: "ok" | "warn" | "error" | "muted" | "default";
+} {
+  if (status === "cancelled" || stage === "cancelled") {
+    return { label: "取消", tone: "muted" };
+  }
+  if (stage === "cancel_requested") {
+    return { label: "停止中", tone: "muted" };
+  }
+  if (stage === "queued") {
+    return { label: "排队", tone: "default" };
+  }
+  if (stage === "parsing") {
+    return { label: "解析", tone: "warn" };
+  }
+  if (stage === "llm_request") {
+    return { label: "提取", tone: "warn" };
+  }
+  if (stage === "writing") {
+    return { label: "写入", tone: "warn" };
+  }
+  if (status === "needs_review") {
+    return { label: "审核", tone: "warn" };
+  }
+  if (status === "failed" || stage === "failed") {
+    return { label: "失败", tone: "error" };
+  }
+  if (status === "indexed" || stage === "completed") {
+    return { label: "完成", tone: "ok" };
+  }
+  return { label: "待命", tone: "default" };
+}
+
 export function compactAuthors(authors: string[] | undefined): string {
   if (!authors || authors.length === 0) {
     return "-";

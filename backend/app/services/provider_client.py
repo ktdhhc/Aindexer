@@ -81,7 +81,12 @@ class ProviderClient:
         user_prompt: str,
         should_cancel: Callable[[], bool] | None = None,
         on_thinking: Callable[[str], None] | None = None,
+        on_progress: Callable[[str, str, int], None] | None = None,
+        max_tokens: int = 2500,
+        stream: bool = True,
+        use_json_mode: bool = True,
     ) -> dict:
+        resolved_max_tokens = _effective_json_max_tokens(config.model, max_tokens)
         payload = {
             "model": config.model,
             "messages": [
@@ -89,9 +94,11 @@ class ProviderClient:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": _effective_temperature(config.model, config.temperature),
-            "max_tokens": _effective_max_tokens(config.model, 2500),
-            "stream": True,
+            "max_tokens": resolved_max_tokens,
+            "stream": stream,
         }
+        if use_json_mode:
+            payload["response_format"] = {"type": "json_object"}
         url = config.base_url.rstrip("/") + "/chat/completions"
         headers = {
             "Authorization": f"Bearer {config.api_key}",
@@ -103,15 +110,26 @@ class ProviderClient:
             if should_cancel and should_cancel():
                 raise RuntimeError("cancelled by user before request")
             try:
-                stream_result = stream_chat_completion_with_metrics(
-                    url=url,
-                    headers=headers,
-                    payload=payload,
-                    timeout=config.timeout,
-                    should_cancel=should_cancel,
-                    on_thinking=on_thinking,
-                )
-                text = stream_result.text
+                if stream:
+                    text = stream_chat_completion_with_metrics(
+                        url=url,
+                        headers=headers,
+                        payload=payload,
+                        timeout=config.timeout,
+                        should_cancel=should_cancel,
+                        on_thinking=on_thinking,
+                        on_text_delta=on_progress,
+                    ).text
+                else:
+                    body = post_chat_completion_json(
+                        url=url,
+                        headers=headers,
+                        payload=payload,
+                        timeout=config.timeout,
+                    )
+                    text = _extract_assistant_text(body)
+                    if not text.strip():
+                        raise RuntimeError("LLM JSON mode empty content")
                 try:
                     return _parse_json_strict(text)
                 except Exception as exc:
@@ -148,6 +166,8 @@ class ProviderClient:
         system_prompt: str,
         user_prompt: str,
         should_cancel: Callable[[], bool] | None = None,
+        max_tokens: int | None = None,
+        stream: bool = True,
     ) -> str:
         payload = {
             "model": config.model,
@@ -156,8 +176,8 @@ class ProviderClient:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": _effective_temperature(config.model, config.temperature),
-            "max_tokens": _chat_max_tokens(config.model),
-            "stream": True,
+            "max_tokens": _effective_json_max_tokens(config.model, max_tokens or _chat_max_tokens(config.model)),
+            "stream": stream,
         }
         url = config.base_url.rstrip("/") + "/chat/completions"
         headers = {
@@ -165,13 +185,22 @@ class ProviderClient:
             "Content-Type": "application/json",
         }
         try:
-            text = stream_chat_completion_with_metrics(
-                url=url,
-                headers=headers,
-                payload=payload,
-                timeout=config.timeout,
-                should_cancel=should_cancel,
-            ).text
+            if stream:
+                text = stream_chat_completion_with_metrics(
+                    url=url,
+                    headers=headers,
+                    payload=payload,
+                    timeout=config.timeout,
+                    should_cancel=should_cancel,
+                ).text
+            else:
+                body = post_chat_completion_json(
+                    url=url,
+                    headers=headers,
+                    payload=payload,
+                    timeout=config.timeout,
+                )
+                text = _extract_assistant_text(body)
         except UnicodeError as exc:
             raise RuntimeError(_format_url_error(config.base_url, exc)) from exc
         return text.strip()
@@ -254,6 +283,7 @@ def stream_chat_completion_with_metrics(
     timeout: int,
     should_cancel: Callable[[], bool] | None = None,
     on_thinking: Callable[[str], None] | None = None,
+    on_text_delta: Callable[[str, str, int], None] | None = None,
 ) -> StreamChatCompletionResult:
     timeout_cfg = httpx.Timeout(
         connect=min(timeout, 30), read=None, write=timeout, pool=timeout
@@ -317,6 +347,8 @@ def stream_chat_completion_with_metrics(
                         if first_token_ms is None:
                             first_token_ms = (time.perf_counter() - started_at) * 1000.0
                         parts.append(delta_text)
+                        if on_text_delta:
+                            on_text_delta(delta_text, "".join(parts), int(payload.get("max_tokens") or 0))
 
             if parts:
                 return StreamChatCompletionResult(
@@ -354,6 +386,12 @@ def stream_chat_completion_with_metrics(
                     if line.startswith("data:"):
                         data = line[5:].strip()
                         if data and data != "[DONE]":
+                            try:
+                                parsed = json.loads(data)
+                            except Exception:
+                                parsed = None
+                            if _is_stream_chunk_envelope(parsed):
+                                continue
                             return StreamChatCompletionResult(
                                 text=data,
                                 first_token_ms=(time.perf_counter() - started_at)
@@ -573,7 +611,33 @@ def _extract_assistant_text(data: dict) -> str:
         if isinstance(content, list):
             parts = [c.get("text", "") for c in content if isinstance(c, dict)]
             return "\n".join(parts).strip()
-    return json.dumps(data, ensure_ascii=False)
+    return ""
+
+
+def _is_stream_chunk_envelope(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    obj = str(payload.get("object") or "").strip().lower()
+    return obj.endswith("chat.completion.chunk")
+
+
+def post_chat_completion_json(
+    url: str,
+    headers: dict[str, str],
+    payload: dict,
+    timeout: int,
+) -> dict:
+    with httpx.Client(timeout=timeout) as client:
+        response = client.post(url, headers=headers, json=payload)
+    if response.status_code >= 400:
+        req_id = response.headers.get("x-request-id") or response.headers.get("request-id") or ""
+        rid = f" request_id={req_id}" if req_id else ""
+        raise RuntimeError(f"LLM HTTP {response.status_code}{rid}: {_truncate_text(response.text, 1200)}")
+    body = response.json()
+    if isinstance(body, dict) and isinstance(body.get("error"), dict):
+        err = body["error"]
+        raise RuntimeError(f"LLM error code={err.get('code', '')}: {err.get('message') or err}")
+    return body
 
 
 def _extract_body_finish_reason(data: dict) -> str | None:
@@ -716,6 +780,20 @@ def _effective_max_tokens(model: str, default: int) -> int:
     if "reasoner" in m:
         return max(default * 2, 4096)
     return default
+
+
+def _effective_json_max_tokens(model: str, default: int) -> int:
+    base = _effective_max_tokens(model, default)
+    resolved = resolve_model_name_registry_entry(model)
+    if not resolved:
+        return base
+    try:
+        max_output = int(resolved.get("max_output_tokens") or 0)
+    except (TypeError, ValueError):
+        max_output = 0
+    if max_output > 0:
+        return min(base, max_output)
+    return base
 
 
 def _chat_max_tokens(model: str) -> int:

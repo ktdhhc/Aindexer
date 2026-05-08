@@ -13,32 +13,52 @@ from fastapi.responses import StreamingResponse
 from ..db import DEFAULT_FIELD_TEMPLATE_ID, DEFAULT_WORKSPACE_ID
 from ._context import resolve_field_template_id, resolve_workspace_id
 from ..repository import (
+    begin_index_run,
+    clear_markdown_failure,
     get_document,
     get_fields,
     get_index,
+    get_index_max_concurrency,
     get_provider_config_raw,
-    set_document_field_template,
+    is_current_index_run,
     list_documents,
+    mark_document_indexed,
     markdown_path,
     reset_index_content,
     save_index,
     set_cancel_requested,
     set_document_stage,
+    set_document_stage_for_run,
     set_document_status,
+    set_document_status_for_run,
+    set_index_failure_for_run,
+    set_index_max_concurrency,
     is_cancel_requested,
+    update_index_progress_for_run,
     update_index_editor_fields,
 )
-from ..schemas import IndexRecordIn
-from ..services.extractor import fallback_extract, run_extraction
+from ..schemas import IndexRecordIn, IndexRecordOut
+from ..services.extractor import (
+    DEFAULT_INDEX_INPUT_BUDGET_TOKENS,
+    assess_index_quality,
+    fallback_extract,
+    run_extraction,
+)
 from ..services.file_parser import parse_file
 from ..services.markdown_export import render_markdown, write_markdown
 from ..services.provider_client import ProviderConfig
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-EXECUTOR = ThreadPoolExecutor(max_workers=3, thread_name_prefix="indexer")
+INDEX_OUTPUT_BUDGET_TOKENS = 1500
+INDEX_INPUT_BUDGET_TOKENS = DEFAULT_INDEX_INPUT_BUDGET_TOKENS
+EXECUTOR = ThreadPoolExecutor(max_workers=20, thread_name_prefix="indexer")
 FUTURES: dict[str, Future] = {}
+FUTURE_WORKSPACES: dict[str, str] = {}
 FUTURES_LOCK = threading.Lock()
+RUNNING_DOC_IDS: set[str] = set()
+RUN_GATE: threading.Semaphore | None = None
+RUN_GATE_LIMIT = 0
 TERMINAL_STATUS = {"indexed", "needs_review", "failed", "cancelled"}
 
 
@@ -71,6 +91,12 @@ def _progress_payload(doc: dict, elapsed_seconds: int = 0) -> dict:
         progress = 100
     if status == "cancelled" and stage == "cancel_requested":
         progress = min(98, progress)
+    stored_progress = doc.get("progress")
+    if stored_progress is not None:
+        try:
+            progress = max(progress, min(100, max(0, int(stored_progress))))
+        except (TypeError, ValueError):
+            pass
     return {
         "doc_id": doc.get("id"),
         "status": status,
@@ -78,7 +104,28 @@ def _progress_payload(doc: dict, elapsed_seconds: int = 0) -> dict:
         "stage_message": message,
         "error_message": error,
         "progress": progress,
+        "output_seen_tokens": doc.get("output_seen_tokens") or 0,
+        "output_budget_tokens": doc.get("output_budget_tokens") or 0,
+        "failure_code": doc.get("failure_code"),
+        "failure_label": doc.get("failure_label"),
     }
+
+
+def _ensure_run_gate_locked() -> None:
+    global RUN_GATE, RUN_GATE_LIMIT
+    active = any(f and not f.done() for f in FUTURES.values())
+    if RUN_GATE is None or not active:
+        RUN_GATE_LIMIT = get_index_max_concurrency()
+        RUN_GATE = threading.Semaphore(RUN_GATE_LIMIT)
+
+
+def _estimate_tokens(text: str) -> int:
+    raw = str(text or "")
+    if not raw:
+        return 0
+    ascii_chars = sum(1 for char in raw if ord(char) < 128)
+    non_ascii_chars = len(raw) - ascii_chars
+    return max(1, int(ascii_chars / 4 + non_ascii_chars / 1.8))
 
 
 def _start_job(
@@ -92,19 +139,29 @@ def _start_job(
         existing = FUTURES.get(doc_id)
         if existing and not existing.done():
             return False
-        set_cancel_requested(doc_id, False)
-        set_document_field_template(doc_id, field_template_id)
-        set_document_status(doc_id, "parsing")
-        set_document_stage(doc_id, "queued", "任务已加入队列，最多并发3条")
+        _ensure_run_gate_locked()
+        doc = get_document(doc_id)
+        workspace = str(doc.get("workspace_id") or DEFAULT_WORKSPACE_ID) if doc else DEFAULT_WORKSPACE_ID
+        effective_model = str(model or "").strip() or None
+        run_id = begin_index_run(
+            doc_id,
+            field_template_id,
+            provider=provider,
+            model=effective_model,
+            output_budget_tokens=INDEX_OUTPUT_BUDGET_TOKENS,
+            stage_message=f"任务已加入队列，最多并发{RUN_GATE_LIMIT}条",
+        )
         future = EXECUTOR.submit(
             _process_indexing,
             doc_id,
+            run_id,
             provider,
             retries,
             model,
             field_template_id,
         )
         FUTURES[doc_id] = future
+        FUTURE_WORKSPACES[doc_id] = workspace
         future.add_done_callback(lambda _f, did=doc_id: _clear_future(did))
         return True
 
@@ -112,6 +169,8 @@ def _start_job(
 def _clear_future(doc_id: str) -> None:
     with FUTURES_LOCK:
         FUTURES.pop(doc_id, None)
+        FUTURE_WORKSPACES.pop(doc_id, None)
+        RUNNING_DOC_IDS.discard(doc_id)
 
 
 def _is_job_active(doc_id: str) -> bool:
@@ -120,44 +179,153 @@ def _is_job_active(doc_id: str) -> bool:
         return bool(f and not f.done())
 
 
-def _check_cancel(doc_id: str) -> bool:
+def _check_cancel(doc_id: str, run_id: str) -> bool:
+    if not is_current_index_run(doc_id, run_id):
+        return True
     if is_cancel_requested(doc_id):
-        set_document_stage(doc_id, "cancelled", "用户已中断任务")
-        set_document_status(doc_id, "cancelled", "Task cancelled by user")
+        set_index_failure_for_run(doc_id, run_id, "cancelled", "已取消")
+        set_document_stage_for_run(doc_id, run_id, "cancelled", "用户已中断任务")
+        set_document_status_for_run(doc_id, run_id, "cancelled", "Task cancelled by user")
         return True
     return False
 
 
+def _classify_failure(exc: Exception) -> tuple[str, str]:
+    text = str(exc or "").lower()
+    if "api key" in text:
+        return "api_key_missing", "API Key 缺失"
+    if "provider config" in text or "provider配置" in text:
+        return "provider_missing", "Provider 配置缺失"
+    if "timed out" in text or "timeout" in text:
+        return "llm_timeout", "模型超时"
+    if "json" in text or "解析失败" in text:
+        return "llm_json_error", "模型格式错误"
+    if "empty" in text or "无可用文本" in text or "解析内容不足" in text:
+        return "parse_empty", "解析内容不足"
+    if "markdown" in text:
+        return "markdown_write_failed", "Markdown 写入失败"
+    return "unknown", "索引失败"
+
+
+def _is_fallback_record(record: IndexRecordIn) -> bool:
+    marker = "自动抽取失败"
+    values = [
+        record.title,
+        record.one_liner,
+        *record.core_points,
+        *[claim.claim_text for claim in record.claims],
+    ]
+    return any(marker in str(value or "") for value in values)
+
+
+def _index_quality_failure(record: IndexRecordIn) -> tuple[str, str, str] | None:
+    return assess_index_quality(record)
+
+
+def _set_stage_progress(doc_id: str, run_id: str, stage: str, message: str, progress: int) -> bool:
+    if not set_document_stage_for_run(doc_id, run_id, stage, message):
+        return False
+    return update_index_progress_for_run(doc_id, run_id, progress=progress)
+
+
+def _llm_progress_callback(doc_id: str, run_id: str):
+    def on_progress(_delta: str, accumulated: str, output_budget_tokens: int) -> None:
+        budget = max(1, int(output_budget_tokens or INDEX_OUTPUT_BUDGET_TOKENS))
+        seen = _estimate_tokens(accumulated)
+        progress = 35 + min(50, int((seen / budget) * 50))
+        update_index_progress_for_run(
+            doc_id,
+            run_id,
+            progress=progress,
+            output_seen_tokens=seen,
+            output_budget_tokens=budget,
+        )
+
+    return on_progress
+
+
+def _write_markdown_for_run(doc_id: str, run_id: str, saved) -> Exception | None:
+    if not saved or not is_current_index_run(doc_id, run_id):
+        return None
+    md = render_markdown(doc_id, saved)
+    md_path = markdown_path(doc_id)
+    try:
+        write_markdown(md_path, md)
+    except Exception as exc:
+        logger.exception("Markdown write failed for doc_id=%s", doc_id)
+        return exc
+    if not is_current_index_run(doc_id, run_id) and md_path.exists():
+        try:
+            md_path.unlink()
+        except OSError:
+            logger.warning("Failed to remove stale markdown for doc_id=%s", doc_id)
+    return None
+
+
+def _mark_markdown_write_failed(doc_id: str, run_id: str, exc: Exception) -> None:
+    message = f"结构化索引已保存，但 Markdown 落盘失败: {exc}"
+    set_index_failure_for_run(doc_id, run_id, "markdown_write_failed", "Markdown 写入失败")
+    set_document_stage_for_run(doc_id, run_id, "failed", "结构化索引已保存，但 Markdown 落盘失败")
+    set_document_status_for_run(doc_id, run_id, "needs_review", message[:1200])
+
+
+def _write_markdown_or_raise(doc_id: str, markdown: str) -> None:
+    try:
+        write_markdown(markdown_path(doc_id), markdown)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Markdown 写入失败: {exc}") from exc
+
+
+def _manual_record_for_markdown(doc_id: str, payload: IndexRecordIn) -> IndexRecordOut:
+    return IndexRecordOut(
+        doc_id=doc_id,
+        provider="manual",
+        model="manual",
+        updated_at=None,
+        **payload.model_dump(),
+    )
+
+
 def _process_indexing(
     doc_id: str,
+    run_id: str,
     provider: str,
     retries: int = 3,
     model: str | None = None,
     field_template_id: str = DEFAULT_FIELD_TEMPLATE_ID,
 ) -> None:
     doc = None
+    text = ""
+    gate = RUN_GATE
+    acquired = False
     try:
+        if gate:
+            gate.acquire()
+            acquired = True
+        with FUTURES_LOCK:
+            RUNNING_DOC_IDS.add(doc_id)
         doc = get_document(doc_id)
         if not doc:
             return
-        if _check_cancel(doc_id):
+        if _check_cancel(doc_id, run_id):
             return
 
         provider_row = get_provider_config_raw(provider)
         if not provider_row:
-            set_document_stage(doc_id, "failed", "Provider配置不存在")
-            set_document_status(doc_id, "failed", "Provider config missing")
+            set_index_failure_for_run(doc_id, run_id, "provider_missing", "Provider 配置缺失")
+            set_document_stage_for_run(doc_id, run_id, "failed", "Provider配置不存在")
+            set_document_status_for_run(doc_id, run_id, "failed", "Provider config missing")
             return
 
-        set_document_status(doc_id, "parsing")
-        set_document_stage(doc_id, "parsing", "正在解析文件内容")
+        set_document_status_for_run(doc_id, run_id, "parsing")
+        _set_stage_progress(doc_id, run_id, "parsing", "正在解析文件内容", 20)
         file_path = Path(doc["file_path"])
 
         text = parse_file(file_path=file_path, file_type=doc["file_type"])
-        if _check_cancel(doc_id):
+        if _check_cancel(doc_id, run_id):
             return
 
-        set_document_stage(doc_id, "llm_request", "解析完成，正在请求大模型")
+        _set_stage_progress(doc_id, run_id, "llm_request", "解析完成，正在请求大模型", 35)
         if not provider_row.get("api_key_enc"):
             raise RuntimeError("API key not configured for provider")
         cfg = ProviderConfig(
@@ -176,57 +344,84 @@ def _process_indexing(
             provider_cfg=cfg,
             custom_fields=custom_fields,
             retries=retries,
-            should_cancel=lambda: is_cancel_requested(doc_id),
+            should_cancel=lambda: (not is_current_index_run(doc_id, run_id)) or is_cancel_requested(doc_id),
+            on_progress=_llm_progress_callback(doc_id, run_id),
+            output_budget_tokens=INDEX_OUTPUT_BUDGET_TOKENS,
+            input_budget_tokens=INDEX_INPUT_BUDGET_TOKENS,
             workspace_id=str(doc.get("workspace_id") or DEFAULT_WORKSPACE_ID),
             request_id=doc_id,
         )
-        if _check_cancel(doc_id):
+        if _check_cancel(doc_id, run_id):
             return
 
-        save_index(doc_id, record, provider=provider, model=cfg.model)
-        set_document_stage(doc_id, "writing", "模型返回成功，正在写入索引")
+        _set_stage_progress(doc_id, run_id, "writing", "模型返回成功，正在写入索引", 90)
+        if not save_index(doc_id, record, provider=provider, model=cfg.model, index_run_id=run_id):
+            return
         saved = get_index(doc_id)
-        if saved:
-            md = render_markdown(doc_id, saved)
-            write_markdown(markdown_path(doc_id), md)
-        set_document_stage(doc_id, "completed", "索引生成完成")
-        set_document_status(doc_id, "indexed")
+        markdown_error = _write_markdown_for_run(doc_id, run_id, saved)
+        if not is_current_index_run(doc_id, run_id):
+            return
+        update_index_progress_for_run(doc_id, run_id, progress=100)
+        quality_failure = _index_quality_failure(record)
+        if _is_fallback_record(record) or quality_failure:
+            code, label, message = quality_failure or (
+                "low_quality_index",
+                "索引需审核",
+                "生成结果为兜底模板，请人工审核",
+            )
+            set_index_failure_for_run(doc_id, run_id, code, label)
+            set_document_stage_for_run(doc_id, run_id, "failed", message)
+            set_document_status_for_run(doc_id, run_id, "needs_review", message)
+        elif markdown_error:
+            _mark_markdown_write_failed(doc_id, run_id, markdown_error)
+        else:
+            set_document_stage_for_run(doc_id, run_id, "completed", "索引生成完成")
+            set_document_status_for_run(doc_id, run_id, "indexed")
         return
     except Exception as exc:
         logger.exception("Indexing failed for doc_id=%s provider=%s", doc_id, provider)
-        if _check_cancel(doc_id):
+        if _check_cancel(doc_id, run_id):
             return
-        text = ""
+        failure_code, failure_label = _classify_failure(exc)
+        set_index_failure_for_run(doc_id, run_id, failure_code, failure_label)
         try:
             doc = get_document(doc_id)
-            if not doc:
+            if not doc or _check_cancel(doc_id, run_id):
                 return
-            file_path = Path(doc["file_path"])
-            text = parse_file(file_path=file_path, file_type=doc["file_type"])
+            if not text:
+                file_path = Path(doc["file_path"])
+                text = parse_file(file_path=file_path, file_type=doc["file_type"])
         except Exception:
             pass
         fallback = fallback_extract(
             Path(doc["file_path"]) if doc else Path("unknown"), text
         )
         provider_row = get_provider_config_raw(provider) or {}
-        save_index(
+        if not save_index(
             doc_id,
             fallback,
             provider=provider,
             model=model or provider_row.get("model"),
-        )
+            index_run_id=run_id,
+        ):
+            return
         fallback_saved = get_index(doc_id)
-        if fallback_saved:
-            md = render_markdown(doc_id, fallback_saved)
-            write_markdown(markdown_path(doc_id), md)
+        markdown_error = _write_markdown_for_run(doc_id, run_id, fallback_saved)
+        if not is_current_index_run(doc_id, run_id):
+            return
         err = str(exc)
         if "timed out" in err.lower():
             err = f"{err}；可能是输入过长或模型响应慢。建议调高timeout到90-180秒，或改用更快模型。"
-        set_document_stage(doc_id, "failed", "生成失败，已回退为人工补全模板")
-        set_document_status(doc_id, "needs_review", err[:1200])
+        if markdown_error:
+            err = f"{err}；Markdown 落盘失败: {markdown_error}"
+        set_document_stage_for_run(doc_id, run_id, "failed", "生成失败，已回退为人工补全模板")
+        set_document_status_for_run(doc_id, run_id, "needs_review", err[:1200])
         return
     finally:
-        pass
+        with FUTURES_LOCK:
+            RUNNING_DOC_IDS.discard(doc_id)
+        if acquired and gate:
+            gate.release()
 
 
 @router.post("/{doc_id}/run")
@@ -298,7 +493,61 @@ def run_indexing_all(
             queued += 1
         else:
             skipped += 1
-    return {"queued": queued, "skipped": skipped, "max_concurrency": 3}
+    return {"queued": queued, "skipped": skipped, "max_concurrency": RUN_GATE_LIMIT or get_index_max_concurrency()}
+
+
+@router.get("/runs/active")
+def active_index_runs() -> dict:
+    with FUTURES_LOCK:
+        active_doc_ids = [doc_id for doc_id, future in FUTURES.items() if future and not future.done()]
+        running_doc_ids = set(RUNNING_DOC_IDS)
+        active_by_workspace: dict[str, int] = {}
+        for doc_id in active_doc_ids:
+            workspace = FUTURE_WORKSPACES.get(doc_id) or DEFAULT_WORKSPACE_ID
+            active_by_workspace[workspace] = active_by_workspace.get(workspace, 0) + 1
+        current_batch_limit = RUN_GATE_LIMIT or get_index_max_concurrency()
+    return {
+        "active_total": len(active_doc_ids),
+        "active_by_workspace": active_by_workspace,
+        "running_count": len(running_doc_ids),
+        "queued_count": max(0, len(active_doc_ids) - len(running_doc_ids)),
+        "max_concurrency": current_batch_limit,
+        "configured_max_concurrency": get_index_max_concurrency(),
+    }
+
+
+@router.get("/settings")
+def get_index_settings() -> dict:
+    with FUTURES_LOCK:
+        has_active = any(f and not f.done() for f in FUTURES.values())
+        effective = RUN_GATE_LIMIT or get_index_max_concurrency()
+    return {
+        "max_concurrency": get_index_max_concurrency(),
+        "effective_max_concurrency": effective,
+        "pending_next_batch": has_active and effective != get_index_max_concurrency(),
+        "min_concurrency": 1,
+        "max_allowed_concurrency": 20,
+    }
+
+
+@router.put("/settings")
+def update_index_settings(payload: dict = Body(...)) -> dict:
+    value = payload.get("max_concurrency")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 8
+    saved = set_index_max_concurrency(parsed)
+    with FUTURES_LOCK:
+        has_active = any(f and not f.done() for f in FUTURES.values())
+        effective = RUN_GATE_LIMIT or saved
+    return {
+        "max_concurrency": saved,
+        "effective_max_concurrency": effective,
+        "pending_next_batch": has_active and effective != saved,
+        "min_concurrency": 1,
+        "max_allowed_concurrency": 20,
+    }
 
 
 @router.get("/{doc_id}/run_stream")
@@ -441,9 +690,26 @@ def index_markdown(
         raise HTTPException(status_code=404, detail="Document not found")
 
     path = markdown_path(doc_id)
-    if not path.exists():
+    if path.exists():
+        return {"doc_id": doc_id, "markdown": path.read_text(encoding="utf-8")}
+
+    item = get_index(doc_id)
+    if not item:
         raise HTTPException(status_code=404, detail="Markdown not found")
-    return {"doc_id": doc_id, "markdown": path.read_text(encoding="utf-8")}
+    markdown = render_markdown(doc_id, item)
+    try:
+        write_markdown(path, markdown)
+        clear_markdown_failure(doc_id)
+        rebuilt = True
+        rebuild_error = None
+    except Exception:
+        logger.exception("Markdown rebuild failed for doc_id=%s", doc_id)
+        rebuilt = False
+        rebuild_error = "Markdown rebuild failed"
+    payload = {"doc_id": doc_id, "markdown": markdown, "rebuilt": rebuilt}
+    if rebuild_error:
+        payload["rebuild_error"] = rebuild_error
+    return payload
 
 
 @router.put("/{doc_id}/markdown")
@@ -457,8 +723,8 @@ def update_index_markdown(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     markdown = str(payload.get("markdown", ""))
-    write_markdown(markdown_path(doc_id), markdown)
-    set_document_status(doc_id, "indexed")
+    _write_markdown_or_raise(doc_id, markdown)
+    mark_document_indexed(doc_id, stage_message="Markdown 已人工保存")
     return {"ok": True}
 
 
@@ -490,6 +756,11 @@ def update_index_editor(
     year_text = str(raw_year or "").strip()
     year = int(year_text) if year_text else None
 
+    if not get_index(doc_id):
+        raise HTTPException(status_code=404, detail="Index not found")
+
+    _write_markdown_or_raise(doc_id, markdown)
+
     updated = update_index_editor_fields(
         doc_id,
         title=title,
@@ -501,8 +772,7 @@ def update_index_editor(
     if not updated:
         raise HTTPException(status_code=404, detail="Index not found")
 
-    write_markdown(markdown_path(doc_id), markdown)
-    set_document_status(doc_id, "indexed")
+    mark_document_indexed(doc_id, stage_message="索引编辑已人工保存")
     return {"ok": True}
 
 
@@ -516,10 +786,10 @@ def update_index(
     doc = get_document(doc_id, workspace_id=workspace)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    save_index(doc_id, payload, provider="manual", model="manual")
-    saved = get_index(doc_id)
-    if saved:
-        md = render_markdown(doc_id, saved)
-        write_markdown(markdown_path(doc_id), md)
-    set_document_status(doc_id, "indexed")
+    manual_record = _manual_record_for_markdown(doc_id, payload)
+    markdown = render_markdown(doc_id, manual_record)
+    _write_markdown_or_raise(doc_id, markdown)
+    if not save_index(doc_id, payload, provider="manual", model="manual"):
+        raise HTTPException(status_code=404, detail="Document not found")
+    mark_document_indexed(doc_id, stage_message="结构化索引已人工保存")
     return {"ok": True}

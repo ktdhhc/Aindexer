@@ -6,6 +6,10 @@ export interface SearchItem {
   filename: string;
   display_name: string;
   status: string;
+  stage?: string | null;
+  progress?: number | null;
+  failure_code?: string | null;
+  failure_label?: string | null;
   created_at: string;
   title?: string | null;
   year?: number | null;

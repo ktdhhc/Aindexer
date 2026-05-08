@@ -42,6 +42,24 @@ def normalize_field_template_id(template_id: str | None) -> str:
     return value or DEFAULT_FIELD_TEMPLATE_ID
 
 
+def default_document_display_name(filename: str) -> str:
+    raw = str(filename or "").strip()
+    if not raw:
+        return ""
+    stem = Path(raw).stem.strip()
+    return stem or raw
+
+
+def normalize_document_display_name(filename: str, display_name: str | None) -> str:
+    fallback = default_document_display_name(filename)
+    raw_display_name = str(display_name or "").strip()
+    if not raw_display_name:
+        return fallback
+    if raw_display_name == str(filename or "").strip():
+        return fallback
+    return raw_display_name
+
+
 def build_scoped_file_hash(file_hash: str, workspace_id: str | None) -> str:
     workspace = normalize_workspace_id(workspace_id)
     digest = str(file_hash or "").strip()
@@ -230,8 +248,9 @@ def create_document(
     file_path: str,
     workspace_id: str = DEFAULT_WORKSPACE_ID,
     field_template_id: str = DEFAULT_FIELD_TEMPLATE_ID,
+    doc_id: str | None = None,
 ) -> str:
-    doc_id = f"doc_{uuid.uuid4().hex[:12]}"
+    doc_id = doc_id or f"doc_{uuid.uuid4().hex[:12]}"
     now = utcnow()
     workspace = normalize_workspace_id(workspace_id)
     template = normalize_field_template_id(field_template_id)
@@ -249,7 +268,7 @@ def create_document(
                 workspace,
                 template,
                 filename,
-                filename,
+                default_document_display_name(filename),
                 file_type,
                 file_hash,
                 file_path,
@@ -284,6 +303,101 @@ def set_document_status(
         )
 
 
+def mark_document_indexed(
+    doc_id: str,
+    *,
+    stage_message: str = "索引已保存",
+) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE documents SET status = 'indexed', stage = 'completed', stage_message = ?, error_message = NULL, failure_code = NULL, failure_label = NULL, cancel_requested = 0, progress = 100, updated_at = ? WHERE id = ?",
+            (stage_message, utcnow(), doc_id),
+        )
+
+
+def clear_markdown_failure(doc_id: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE documents SET status = CASE WHEN failure_code = 'markdown_write_failed' THEN 'indexed' ELSE status END, stage = CASE WHEN failure_code = 'markdown_write_failed' THEN 'completed' ELSE stage END, stage_message = CASE WHEN failure_code = 'markdown_write_failed' THEN 'Markdown 已重建' ELSE stage_message END, error_message = CASE WHEN failure_code = 'markdown_write_failed' THEN NULL ELSE error_message END, failure_code = CASE WHEN failure_code = 'markdown_write_failed' THEN NULL ELSE failure_code END, failure_label = CASE WHEN failure_code = 'markdown_write_failed' THEN NULL ELSE failure_label END, updated_at = ? WHERE id = ?",
+            (utcnow(), doc_id),
+        )
+
+
+def begin_index_run(
+    doc_id: str,
+    field_template_id: str,
+    *,
+    provider: str,
+    model: str | None,
+    output_budget_tokens: int = 0,
+    stage_message: str = "任务已加入队列，最多并发3条",
+) -> str:
+    run_id = f"run_{uuid.uuid4().hex[:12]}"
+    template = normalize_field_template_id(field_template_id)
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE documents
+            SET field_template_id = ?, status = 'parsing', stage = 'queued',
+                stage_message = ?, cancel_requested = 0, error_message = NULL,
+                index_run_id = ?, index_provider = ?, index_model = ?,
+                index_field_template_id = ?, progress = 5,
+                output_seen_tokens = 0, output_budget_tokens = ?,
+                failure_code = NULL, failure_label = NULL, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                template,
+                stage_message,
+                run_id,
+                str(provider or "").strip(),
+                str(model or "").strip() or None,
+                template,
+                max(0, int(output_budget_tokens or 0)),
+                utcnow(),
+                doc_id,
+            ),
+        )
+    return run_id
+
+
+def is_current_index_run(doc_id: str, run_id: str) -> bool:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT index_run_id FROM documents WHERE id = ?",
+            (doc_id,),
+        ).fetchone()
+        return bool(row and row["index_run_id"] == run_id)
+
+
+def set_document_status_for_run(
+    doc_id: str,
+    run_id: str,
+    status: str,
+    error_message: str | None = None,
+) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE documents SET status = ?, error_message = ?, progress = CASE WHEN ? IN ('indexed', 'needs_review', 'failed', 'cancelled') THEN 100 ELSE progress END, updated_at = ? WHERE id = ? AND index_run_id = ?",
+            (status, error_message, status, utcnow(), doc_id, run_id),
+        )
+        return cur.rowcount > 0
+
+
+def set_index_failure_for_run(
+    doc_id: str,
+    run_id: str,
+    code: str,
+    label: str,
+) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE documents SET failure_code = ?, failure_label = ?, updated_at = ? WHERE id = ? AND index_run_id = ?",
+            (str(code or "unknown"), str(label or "索引失败"), utcnow(), doc_id, run_id),
+        )
+        return cur.rowcount > 0
+
+
 def set_cancel_requested(doc_id: str, requested: bool) -> None:
     with get_conn() as conn:
         conn.execute(
@@ -312,6 +426,52 @@ def set_document_stage(
         )
 
 
+def set_document_stage_for_run(
+    doc_id: str,
+    run_id: str,
+    stage: str,
+    stage_message: str | None = None,
+) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE documents SET stage = ?, stage_message = ?, updated_at = ? WHERE id = ? AND index_run_id = ?",
+            (stage, stage_message, utcnow(), doc_id, run_id),
+        )
+        return cur.rowcount > 0
+
+
+def update_index_progress_for_run(
+    doc_id: str,
+    run_id: str,
+    *,
+    progress: int | None = None,
+    output_seen_tokens: int | None = None,
+    output_budget_tokens: int | None = None,
+) -> bool:
+    updates: list[str] = []
+    params: list[Any] = []
+    if progress is not None:
+        updates.append("progress = ?")
+        params.append(max(0, min(100, int(progress))))
+    if output_seen_tokens is not None:
+        updates.append("output_seen_tokens = ?")
+        params.append(max(0, int(output_seen_tokens)))
+    if output_budget_tokens is not None:
+        updates.append("output_budget_tokens = ?")
+        params.append(max(0, int(output_budget_tokens)))
+    if not updates:
+        return is_current_index_run(doc_id, run_id)
+    updates.append("updated_at = ?")
+    params.append(utcnow())
+    params.extend([doc_id, run_id])
+    with get_conn() as conn:
+        cur = conn.execute(
+            f"UPDATE documents SET {', '.join(updates)} WHERE id = ? AND index_run_id = ?",
+            tuple(params),
+        )
+        return cur.rowcount > 0
+
+
 def set_document_field_template(doc_id: str, field_template_id: str) -> None:
     template = normalize_field_template_id(field_template_id)
     with get_conn() as conn:
@@ -334,14 +494,32 @@ def get_document(doc_id: str, workspace_id: str | None = None) -> dict[str, Any]
                 "SELECT * FROM documents WHERE id = ? AND workspace_id = ?",
                 (doc_id, workspace),
             ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        data = dict(row)
+        data["display_name"] = normalize_document_display_name(
+            str(data.get("filename") or ""),
+            str(data.get("display_name") or data.get("filename") or ""),
+        )
+        return data
 
 
 def save_index(
-    doc_id: str, record: IndexRecordIn, provider: str | None, model: str | None
-) -> None:
+    doc_id: str,
+    record: IndexRecordIn,
+    provider: str | None,
+    model: str | None,
+    index_run_id: str | None = None,
+) -> bool:
     now = utcnow()
     with get_conn() as conn:
+        if index_run_id is not None:
+            cur = conn.execute(
+                "UPDATE documents SET updated_at = updated_at WHERE id = ? AND index_run_id = ?",
+                (doc_id, index_run_id),
+            )
+            if cur.rowcount == 0:
+                return False
         conn.execute(
             """
             INSERT INTO index_records (
@@ -394,6 +572,7 @@ def save_index(
                 ),
             )
         _update_fts(conn, doc_id, record)
+    return True
 
 
 def _update_fts(conn: Any, doc_id: str, record: IndexRecordIn) -> None:
@@ -475,25 +654,57 @@ def get_first_indexed_document(
             if not row:
                 return None
             data = dict(row)
-            data["display_name"] = data.get("filename") or ""
+            data["display_name"] = normalize_document_display_name(
+                str(data.get("filename") or ""),
+                str(data.get("display_name") or data.get("filename") or ""),
+            )
             return data
-        return dict(row) if row else None
+        if not row:
+            return None
+        data = dict(row)
+        data["display_name"] = normalize_document_display_name(
+            str(data.get("filename") or ""),
+            str(data.get("display_name") or data.get("filename") or ""),
+        )
+        return data
 
 
 def list_documents(workspace_id: str | None = None) -> list[dict[str, Any]]:
     with get_conn() as conn:
-        _recover_stale_parsing(conn)
         if workspace_id is None:
             rows = conn.execute(
-                "SELECT id, workspace_id, field_template_id, filename, COALESCE(display_name, filename) AS display_name, file_type, status, stage, stage_message, cancel_requested, error_message, created_at, updated_at FROM documents ORDER BY created_at DESC"
+                "SELECT d.id, d.workspace_id, d.field_template_id, d.filename, COALESCE(d.display_name, d.filename) AS display_name, d.file_type, d.status, d.stage, d.stage_message, d.cancel_requested, d.error_message, d.progress, d.output_seen_tokens, d.output_budget_tokens, d.failure_code, d.failure_label, d.index_provider, d.index_model, d.index_field_template_id, d.created_at, d.updated_at, i.one_liner AS index_one_liner, i.core_points_json AS index_core_points_json FROM documents d LEFT JOIN index_records i ON i.doc_id = d.id ORDER BY d.created_at DESC"
             ).fetchall()
         else:
             workspace = normalize_workspace_id(workspace_id)
             rows = conn.execute(
-                "SELECT id, workspace_id, field_template_id, filename, COALESCE(display_name, filename) AS display_name, file_type, status, stage, stage_message, cancel_requested, error_message, created_at, updated_at FROM documents WHERE workspace_id = ? ORDER BY created_at DESC",
+                "SELECT d.id, d.workspace_id, d.field_template_id, d.filename, COALESCE(d.display_name, d.filename) AS display_name, d.file_type, d.status, d.stage, d.stage_message, d.cancel_requested, d.error_message, d.progress, d.output_seen_tokens, d.output_budget_tokens, d.failure_code, d.failure_label, d.index_provider, d.index_model, d.index_field_template_id, d.created_at, d.updated_at, i.one_liner AS index_one_liner, i.core_points_json AS index_core_points_json FROM documents d LEFT JOIN index_records i ON i.doc_id = d.id WHERE d.workspace_id = ? ORDER BY d.created_at DESC",
                 (workspace,),
             ).fetchall()
-        return [dict(r) for r in rows]
+        items = [dict(r) for r in rows]
+    for item in items:
+        item["display_name"] = normalize_document_display_name(
+            str(item.get("filename") or ""),
+            str(item.get("display_name") or item.get("filename") or ""),
+        )
+        _apply_fallback_status_view(item)
+    return items
+
+
+def _apply_fallback_status_view(item: dict[str, Any]) -> dict[str, Any]:
+    marker_text = f"{item.pop('index_one_liner', '') or ''}\n{item.pop('index_core_points_json', '') or ''}"
+    placeholder_hits = sum(
+        1
+        for marker in ("自动抽取失败", "待补充", "未识别", "Unknown")
+        if marker.lower() in marker_text.lower()
+    )
+    if item.get("status") == "indexed" and placeholder_hits >= 1:
+        item["status"] = "needs_review"
+        item["stage"] = "failed"
+        item["failure_code"] = item.get("failure_code") or "low_quality_index"
+        item["failure_label"] = item.get("failure_label") or "索引需审核"
+        item["stage_message"] = item.get("stage_message") or "生成结果为兜底模板，请人工审核"
+    return item
 
 
 def update_document_display_name(
@@ -516,7 +727,7 @@ def update_document_display_name(
             ).fetchone()
         if not row:
             return None
-        next_name = cleaned or str(row["filename"] or "")
+        next_name = normalize_document_display_name(str(row["filename"] or ""), cleaned)
         conn.execute(
             "UPDATE documents SET display_name = ?, updated_at = ? WHERE id = ?",
             (next_name, utcnow(), doc_id),
@@ -525,7 +736,14 @@ def update_document_display_name(
             "SELECT id, workspace_id, filename, COALESCE(display_name, filename) AS display_name, status, updated_at FROM documents WHERE id = ?",
             (doc_id,),
         ).fetchone()
-        return dict(updated) if updated else None
+        if not updated:
+            return None
+        payload = dict(updated)
+        payload["display_name"] = normalize_document_display_name(
+            str(payload.get("filename") or ""),
+            str(payload.get("display_name") or payload.get("filename") or ""),
+        )
+        return payload
 
 
 def update_index_editor_fields(
@@ -557,7 +775,7 @@ def update_index_editor_fields(
         if not doc_row or not index_row:
             return False
 
-        next_name = cleaned_name or str(doc_row["filename"] or "")
+        next_name = normalize_document_display_name(str(doc_row["filename"] or ""), cleaned_name)
         next_title = cleaned_title or next_name
         next_year = int(year or 0) if year else None
         next_generated_at = str(generated_at or "").strip() or utcnow()
@@ -631,10 +849,51 @@ def reset_index_content(doc_id: str, workspace_id: str | None = None) -> bool:
         conn.execute("DELETE FROM index_records WHERE doc_id = ?", (doc_id,))
         conn.execute("DELETE FROM index_fts WHERE doc_id = ?", (doc_id,))
         conn.execute(
-            "UPDATE documents SET status='uploaded', stage='uploaded', stage_message='已清空索引，等待重新生成', error_message=NULL, cancel_requested=0, updated_at=? WHERE id=?",
+            "UPDATE documents SET status='uploaded', stage='uploaded', stage_message='已清空索引，等待重新生成', error_message=NULL, cancel_requested=0, index_run_id=NULL, progress=0, output_seen_tokens=0, output_budget_tokens=0, failure_code=NULL, failure_label=NULL, updated_at=? WHERE id=?",
             (utcnow(), doc_id),
         )
         return True
+
+
+def get_app_setting(key: str, default: str = "") -> str:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT value FROM app_settings WHERE key = ?",
+            (str(key or ""),),
+        ).fetchone()
+        return str(row["value"]) if row else default
+
+
+def set_app_setting(key: str, value: str) -> None:
+    now = utcnow()
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            (str(key or ""), str(value), now),
+        )
+
+
+def get_index_max_concurrency() -> int:
+    raw = get_app_setting("index_max_concurrency", "8")
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        parsed = 8
+    return max(1, min(20, parsed))
+
+
+def set_index_max_concurrency(value: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 8
+    clamped = max(1, min(20, parsed))
+    set_app_setting("index_max_concurrency", str(clamped))
+    return clamped
 
 
 def search_documents(
@@ -648,7 +907,7 @@ def search_documents(
 ) -> list[dict[str, Any]]:
     with get_conn() as conn:
         sql = (
-            "SELECT d.id, d.workspace_id, d.filename, d.status, "
+            "SELECT d.id, d.workspace_id, d.filename, d.status, d.stage, d.progress, d.failure_code, d.failure_label, "
             "COALESCE(d.display_name, d.filename) AS display_name, "
             "COALESCE(i.updated_at, d.created_at) AS sort_time, "
             "i.title, i.year, i.authors_json, i.keywords_json, i.apa_citation, i.one_liner, i.core_points_json, i.custom_fields_json "
@@ -689,14 +948,24 @@ def search_documents(
             "doc_id": r["id"],
             "workspace_id": r["workspace_id"],
             "filename": r["filename"],
-            "display_name": r["display_name"],
+            "display_name": normalize_document_display_name(
+                str(r["filename"] or ""),
+                str(r["display_name"] or r["filename"] or ""),
+            ),
             "status": r["status"],
+            "stage": r["stage"],
+            "progress": r["progress"],
+            "failure_code": r["failure_code"],
+            "failure_label": r["failure_label"],
             "created_at": r["sort_time"],
             "title": r["title"],
             "year": r["year"],
             "authors": authors,
             "keywords": keywords,
+            "index_one_liner": r["one_liner"],
+            "index_core_points_json": r["core_points_json"],
         }
+        _apply_fallback_status_view(item)
 
         if not q:
             ranked.append((0.0, item))

@@ -1,0 +1,33 @@
+任务：你需要阅读文献内容，并按固定标签输出结构化文本，便于系统后续解析成 json。
+
+强制要求：
+1. 不要输出 markdown 代码块。
+2. 只使用以下固定标签，并按如下顺序输出：
+TITLE:
+AUTHORS:
+YEAR:
+KEYWORDS:
+APA_CITATION:
+ONE_LINER:
+CORE_POINTS:
+CLAIMS:
+CUSTOM_FIELDS:
+3. 标签名必须完全一致，使用英文大写。
+4. AUTHORS 和 KEYWORDS 用分号分隔。
+5. CORE_POINTS 每行一个条目，使用 "- " 开头。
+6. CLAIMS 每行一个条目，格式固定为：
+- claim_text || evidence_quote || page || section
+7. 若字段无法确定：
+  - TITLE / APA_CITATION / ONE_LINER 留空
+  - AUTHORS / KEYWORDS / CORE_POINTS / CLAIMS 留空
+  - YEAR 写 0
+  - page 写 -1
+8. 不要输出 Unknown、待补充、TBD 等占位词。
+
+页码规则：{page_rule}{page_hint}
+
+自定义字段定义（json）：
+{fields_json}
+
+文献内容如下：
+{doc_full}

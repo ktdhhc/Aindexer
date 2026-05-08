@@ -13,13 +13,14 @@ from app.translation.service import (
 
 def test_selection_policy_normalizes_and_accepts_long_text() -> None:
     raw_text = (
-        "This   is a sufficiently long sample passage\nfor translation policy checks."
+        "This   is a sufficiently long sample passage\nfor translation policy checks.\n\n"
+        "A second paragraph stays separate."
     )
 
     normalized = normalize_selection_text(raw_text)
     assert (
         normalized
-        == "This is a sufficiently long sample passage for translation policy checks."
+        == "This is a sufficiently long sample passage for translation policy checks.\n\nA second paragraph stays separate."
     )
     assert is_selection_long_enough(raw_text) is True
     assert ensure_selection_long_enough(raw_text) == normalized

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getDefaultConfigPageSession, usePageSessionStore, type ConfigPageSection } from "../app/pageSessionStore";
@@ -33,6 +33,11 @@ import {
   updateWorkspace,
 } from "../shared/api/workspaces";
 import {
+  getIndexSettings,
+  updateIndexSettings,
+} from "../shared/api/index";
+import {
+  ALL_WORKSPACES_USAGE_SCOPE,
   type UsageBreakdownBy,
   type UsageBucket,
   type UsagePeriod,
@@ -190,6 +195,35 @@ const USAGE_STACK_COLORS = [
   "is-rosewood",
   "is-ink",
 ] as const;
+function formatUsageBucketKey(date: Date, period: UsagePeriod): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  if (period === "month") {
+    return `${year}-${month}`;
+  }
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function buildContinuousUsageBucketKeys(period: UsagePeriod, now = new Date()): string[] {
+  const keys: string[] = [];
+  if (period === "month") {
+    const start = new Date(now.getFullYear(), 0, 1);
+    const cursor = new Date(start);
+    while (cursor <= now) {
+      keys.push(formatUsageBucketKey(cursor, "month"));
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return keys;
+  }
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const cursor = new Date(start);
+  while (cursor <= now) {
+    keys.push(formatUsageBucketKey(cursor, "day"));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return keys;
+}
 
 function ConfigSectionIcon({ section }: { section: ConfigSection }) {
   if (section === "providers") {
@@ -256,6 +290,7 @@ export function ConfigPage() {
   const [providerMessage, setProviderMessage] = useState("准备就绪");
 
   const [modelDefaultsDraft, setModelDefaultsDraft] = useState<ModelDefaults>(() => getModelDefaults());
+  const [indexConcurrencyDraft, setIndexConcurrencyDraft] = useState("8");
   const [defaultsMessage, setDefaultsMessage] = useState("准备就绪");
 
   const [newTemplateName, setNewTemplateName] = useState("");
@@ -273,6 +308,7 @@ export function ConfigPage() {
     inputPrice: "",
     outputPrice: "",
   });
+  const usageChartWindowRef = useRef<HTMLDivElement>(null);
 
   const providersQuery = useQuery({
     queryKey: ["providers"],
@@ -301,10 +337,15 @@ export function ConfigPage() {
     enabled: providerModels.length > 0,
   });
 
+  const indexSettingsQuery = useQuery({
+    queryKey: ["index-settings"],
+    queryFn: getIndexSettings,
+  });
+
   const usageSummaryQuery = useQuery({
-    queryKey: ["usage-summary", workspaceId, usagePeriod, usageBreakdownBy],
+    queryKey: ["usage-summary", usagePeriod, usageBreakdownBy],
     queryFn: () => getUsageSummary({
-      workspaceId,
+      workspaceId: ALL_WORKSPACES_USAGE_SCOPE,
       period: usagePeriod,
       breakdownBy: usageBreakdownBy,
     }),
@@ -361,7 +402,26 @@ export function ConfigPage() {
 
   const availableModelEntries = useAvailableProviderModelEntries(providersQuery.data ?? []);
 
-  const usageBuckets = usageSummaryQuery.data?.buckets ?? [];
+  const rawUsageBuckets = usageSummaryQuery.data?.buckets ?? [];
+  const usageBuckets = useMemo<UsageBucket[]>(() => {
+    const bucketMap = new Map(rawUsageBuckets.map((bucket) => [bucket.bucket, bucket] as const));
+    return buildContinuousUsageBucketKeys(usagePeriod).map((bucketKey) => {
+      const bucket = bucketMap.get(bucketKey);
+      if (bucket) {
+        return bucket;
+      }
+      return {
+        bucket: bucketKey,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        request_count: 0,
+        estimated_count: 0,
+        estimated_cost: 0,
+        dimension_breakdown: {},
+      } satisfies UsageBucket;
+    });
+  }, [rawUsageBuckets, usagePeriod]);
   const usageTotals = usageSummaryQuery.data?.totals ?? {
     input_tokens: 0,
     output_tokens: 0,
@@ -400,6 +460,11 @@ export function ConfigPage() {
   }, [ensureConfigSession, workspaceId]);
 
   useEffect(() => {
+    if (!indexSettingsQuery.data) return;
+    setIndexConcurrencyDraft(String(indexSettingsQuery.data.max_concurrency));
+  }, [indexSettingsQuery.data?.max_concurrency]);
+
+  useEffect(() => {
     const providers = providersQuery.data;
     if (!providers || providers.length === 0) {
       setSelectedProvider("");
@@ -433,6 +498,15 @@ export function ConfigPage() {
       setSelectedUsageLegend("");
     }
   }, [selectedUsageLegend, usageLegendItems]);
+
+  useEffect(() => {
+    if (section !== "usage") return;
+    const node = usageChartWindowRef.current;
+    if (!node) return;
+    requestAnimationFrame(() => {
+      node.scrollLeft = Math.max(0, node.scrollWidth - node.clientWidth);
+    });
+  }, [section, usageBuckets.length, usagePeriod]);
 
   useEffect(() => {
     const globalRule = pricingQuery.data?.find(
@@ -601,6 +675,16 @@ export function ConfigPage() {
     onError: (error) => {
       setDefaultsMessage(error instanceof Error ? error.message : "保存失败");
     },
+  });
+
+  const saveIndexSettingsMutation = useMutation({
+    mutationFn: async () => updateIndexSettings(Number.parseInt(indexConcurrencyDraft, 10)),
+    onSuccess: async (settings) => {
+      setIndexConcurrencyDraft(String(settings.max_concurrency));
+      setDefaultsMessage(settings.pending_next_batch ? "索引并发已保存，将在当前批次完成后生效" : "索引并发已保存");
+      await queryClient.invalidateQueries({ queryKey: ["index-settings"] });
+    },
+    onError: (error) => setDefaultsMessage(error instanceof Error ? error.message : "索引并发保存失败"),
   });
 
   const createTemplateMutation = useMutation({
@@ -1038,6 +1122,11 @@ export function ConfigPage() {
                   <span>{availableModelEntries.length} available</span>
                   <em>本地偏好</em>
                 </div>
+                <div className="v35-config-list-item">
+                  <strong>索引并发</strong>
+                  <span>{indexSettingsQuery.data?.max_concurrency ?? 8} / 20</span>
+                  <em>{indexSettingsQuery.data?.pending_next_batch ? "下批生效" : "当前配置"}</em>
+                </div>
               </div>
 
               <article className="v35-config-paper v35-config-paper-defaults">
@@ -1097,10 +1186,23 @@ export function ConfigPage() {
                       ))}
                     </select>
                   </label>
+                  <label className="v35-field v35-span-2">
+                    <span>索引最大并发量</span>
+                    <input
+                      className="v35-input"
+                      type="number"
+                      min={indexSettingsQuery.data?.min_concurrency ?? 1}
+                      max={indexSettingsQuery.data?.max_allowed_concurrency ?? 20}
+                      value={indexConcurrencyDraft}
+                      onChange={(event) => setIndexConcurrencyDraft(event.target.value)}
+                    />
+                    <em>默认 8，上限 20；如当前有索引批次运行，保存后从下一批任务生效。</em>
+                  </label>
                 </div>
 
                 <footer className="v35-config-actions">
                   <button className="v35-button v35-button-primary" type="button" disabled={saveDefaultsMutation.isPending} onClick={() => void saveDefaultsMutation.mutateAsync()}>保存默认配置</button>
+                  <button className="v35-button" type="button" disabled={saveIndexSettingsMutation.isPending} onClick={() => void saveIndexSettingsMutation.mutateAsync()}>保存索引并发</button>
                 </footer>
               </article>
             </section>
@@ -1322,30 +1424,33 @@ export function ConfigPage() {
                   <div className="v35-usage-axis" aria-hidden="true">
                     {usageAxisTicks.map((tick) => <span key={`${tick.ratio}_${tick.value}`}>{compactNumber(tick.value)}</span>)}
                   </div>
-                  <div className="v35-usage-chart" aria-label="token 用量柱状图">
-                    {usageBuckets.map((bucket: UsageBucket) => {
-                      const totalHeight = Math.max(6, Math.round((bucket.total_tokens / maxBucketTokens) * 100));
-                      return (
-                        <div className="v35-usage-bar-item" key={bucket.bucket} title={`${bucket.bucket} · ${compactNumber(bucket.total_tokens)} tokens`}>
-                          <div className="v35-usage-bar-track">
-                            <div className="v35-usage-bar" style={{ height: `${totalHeight}%` }}>
-                              {usageLegendItems.filter((item) => Number(bucket.dimension_breakdown[item.value] || 0) > 0).map((item) => {
-                                const share = bucket.total_tokens > 0 ? Math.max(8, Math.round((Number(bucket.dimension_breakdown[item.value] || 0) / bucket.total_tokens) * 100)) : 0;
-                                const segmentClass = selectedUsageLegend
-                                  ? selectedUsageLegend === item.value
-                                    ? `${item.colorClass} is-highlighted`
-                                    : `${item.colorClass} is-dimmed`
-                                  : item.colorClass;
-                                return <span className={segmentClass} key={`${bucket.bucket}_${item.value}`} style={{ height: `${share}%` }} />;
-                              })}
+                  <div className="v35-usage-chart-window" ref={usageChartWindowRef}>
+                    <div className="v35-usage-chart" aria-label="token 用量柱状图">
+                      {usageBuckets.map((bucket: UsageBucket) => {
+                        const totalHeight = bucket.total_tokens > 0
+                          ? Math.max(6, Math.round((bucket.total_tokens / maxBucketTokens) * 100))
+                          : 0;
+                        return (
+                          <div className="v35-usage-bar-item" key={bucket.bucket} title={`${bucket.bucket} · ${compactNumber(bucket.total_tokens)} tokens`}>
+                            <div className="v35-usage-bar-track">
+                              <div className={`v35-usage-bar ${bucket.total_tokens > 0 ? "" : "is-empty"}`} style={{ height: `${totalHeight}%` }}>
+                                {usageLegendItems.filter((item) => Number(bucket.dimension_breakdown[item.value] || 0) > 0).map((item) => {
+                                  const share = bucket.total_tokens > 0 ? Math.max(8, Math.round((Number(bucket.dimension_breakdown[item.value] || 0) / bucket.total_tokens) * 100)) : 0;
+                                  const segmentClass = selectedUsageLegend
+                                    ? selectedUsageLegend === item.value
+                                      ? `${item.colorClass} is-highlighted`
+                                      : `${item.colorClass} is-dimmed`
+                                    : item.colorClass;
+                                  return <span className={segmentClass} key={`${bucket.bucket}_${item.value}`} style={{ height: `${share}%` }} />;
+                                })}
+                              </div>
                             </div>
+                            <strong>{usagePeriod === "month" ? bucket.bucket.slice(5) : bucket.bucket.slice(5).replace("-", "/")}</strong>
+                            <em>{compactNumber(bucket.total_tokens)}</em>
                           </div>
-                          <strong>{usagePeriod === "month" ? bucket.bucket.slice(5) : bucket.bucket.slice(5).replace("-", "/")}</strong>
-                          <em>{compactNumber(bucket.total_tokens)}</em>
-                        </div>
-                      );
-                    })}
-                    {usageBuckets.length === 0 ? <p className="v35-muted">暂无记录。</p> : null}
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 

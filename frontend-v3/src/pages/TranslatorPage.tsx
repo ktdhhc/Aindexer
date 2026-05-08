@@ -25,7 +25,20 @@ import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaul
 const PdfViewer = lazy(() => import("../features/translator/PdfViewer").then((module) => ({ default: module.PdfViewer })));
 
 function normalizeText(text: string): string {
-  return String(text || "").replace(/\s+/g, " ").trim();
+  return String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .split(/\n\s*\n+/)
+    .map((paragraph) => paragraph.replace(/[^\S\n]+/g, " ").replace(/\s*\n\s*/g, " ").trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function splitTranslationParagraphs(text: string): string[] {
+  return String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .split(/\n\s*\n+/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
 }
 
 function shortId(value: string): string {
@@ -325,6 +338,10 @@ export function TranslatorPage() {
     selectedDocumentId && selectedModelEntry && !isTranslating,
   );
   const visibleTranslationText = latestResult?.translated_text || streamedTranslationText;
+  const translationParagraphs = useMemo(
+    () => splitTranslationParagraphs(visibleTranslationText),
+    [visibleTranslationText],
+  );
   const workspaceStyle = useMemo(
     () => ({
       "--v35-inspector-width": `${inspectorPaneWidth}px`,
@@ -361,8 +378,8 @@ export function TranslatorPage() {
     const previousUserSelect = document.body.style.userSelect;
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
-    const minInspectorWidth = 360;
-    const minReaderWidth = 420;
+    const minInspectorWidth = 380;
+    const minReaderWidth = 480;
 
     const handleMove = (moveEvent: MouseEvent) => {
       const workspaceRect = workspaceRef.current?.getBoundingClientRect();
@@ -675,8 +692,10 @@ export function TranslatorPage() {
                   {isTranslating ? (
                     <p className="v35-muted"><span className="v35-spinner" aria-label="正在翻译" /> 正在生成译文...</p>
                   ) : null}
-                  {visibleTranslationText ? (
-                    <p>{visibleTranslationText}</p>
+                  {translationParagraphs.length > 0 ? (
+                    translationParagraphs.map((paragraph, index) => (
+                      <p key={`${index}-${paragraph.slice(0, 24)}`}>{paragraph}</p>
+                    ))
                   ) : !isTranslating ? (
                     <p className="v35-muted">输入原文后翻译</p>
                   ) : null}

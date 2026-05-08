@@ -21,14 +21,23 @@ def test_build_translation_prompts_reads_prompt_files_and_uses_simplified_chines
         document_id="tdoc_prompt",
         provider="deepseek",
         model="deepseek-chat",
-        source_text="Example source text.",
+        source_text="Example source text.\n\nSecond paragraph.",
         target_lang="zh-CN",
     )
 
     system_prompt, user_prompt = translation_service.build_translation_prompts(payload)
 
     assert system_prompt == "system from file"
-    assert user_prompt == "Translate to 简体中文:\n\nExample source text."
+    assert user_prompt == "Translate to 简体中文:\n\nExample source text.\n\nSecond paragraph."
+
+
+def test_normalize_selection_text_preserves_paragraph_boundaries() -> None:
+    raw_text = "First line\nsecond line\n\nThird  paragraph"
+
+    assert (
+        translation_service.normalize_selection_text(raw_text)
+        == "First line second line\n\nThird paragraph"
+    )
 
 
 def test_translation_cache_key_changes_with_prompt_content() -> None:

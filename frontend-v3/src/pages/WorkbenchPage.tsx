@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getDefaultWorkbenchPageSession, usePageSessionStore, type WorkbenchSortDirection, type WorkbenchSortField } from "../app/pageSessionStore";
@@ -20,7 +20,7 @@ import { listFieldTemplates } from "../shared/api/fields";
 import { buildOriginalFileUrl, deleteFile, listFiles, uploadFile } from "../shared/api/files";
 import type { FileItem } from "../shared/api/files";
 import { buildExportMarkdownUrl } from "../shared/api/export";
-import { getIndexDetail, getIndexMarkdown, runAllIndexes, runIndex, cancelIndex, updateIndexEditor } from "../shared/api/index";
+import { getActiveIndexRuns, getIndexDetail, getIndexMarkdown, runAllIndexes, streamIndex, cancelIndex, updateIndexEditor, type IndexProgressEvent } from "../shared/api/index";
 import { listProviders } from "../shared/api/providers";
 import { searchDocuments } from "../shared/api/search";
 import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
@@ -80,6 +80,25 @@ function matchesLibrarySearch(
   return metadata.some((value) => value.includes(normalizedQuery));
 }
 
+function applyIndexProgressEvent(current: FileItem[] | undefined, event: IndexProgressEvent): FileItem[] | undefined {
+  if (!current) return current;
+  return current.map((item) => {
+    if (item.id !== event.doc_id) return item;
+    return {
+      ...item,
+      status: event.status,
+      stage: event.stage,
+      stage_message: event.stage_message ?? item.stage_message,
+      error_message: event.error_message ?? item.error_message,
+      progress: event.progress,
+      output_seen_tokens: event.output_seen_tokens ?? item.output_seen_tokens,
+      output_budget_tokens: event.output_budget_tokens ?? item.output_budget_tokens,
+      failure_code: event.failure_code ?? item.failure_code,
+      failure_label: event.failure_label ?? item.failure_label,
+    };
+  });
+}
+
 export function WorkbenchPage() {
   const queryClient = useQueryClient();
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
@@ -126,6 +145,7 @@ export function WorkbenchPage() {
   const [previewYearDraft, setPreviewYearDraft] = useState("");
   const [chatQuestion, setChatQuestion] = useState("");
   const [statusText, setStatusText] = useState("准备就绪");
+  const [streamingDocIds, setStreamingDocIds] = useState<string[]>([]);
   const ensureChatSession = useWorkbenchChatStore((state) => state.ensureSession);
   const submitChatQuestion = useWorkbenchChatStore((state) => state.submitQuestion);
   const stopChatGeneration = useWorkbenchChatStore((state) => state.stopGeneration);
@@ -142,9 +162,22 @@ export function WorkbenchPage() {
     queryFn: listFieldTemplates,
   });
 
+  const activeIndexRunsQuery = useQuery({
+    queryKey: ["index-runs-active"],
+    queryFn: getActiveIndexRuns,
+    refetchInterval: (query) => {
+      const payload = query.state.data as Awaited<ReturnType<typeof getActiveIndexRuns>> | undefined;
+      return payload?.active_total ? 1500 : false;
+    },
+  });
+
+  const workspaceActiveRunCount = activeIndexRunsQuery.data?.active_by_workspace?.[workspaceId] ?? 0;
+  const shouldPollLibraryFiles = workspaceActiveRunCount > streamingDocIds.length;
+
   const filesQuery = useQuery({
     queryKey: ["files", workspaceId],
     queryFn: () => listFiles(workspaceId),
+    refetchInterval: shouldPollLibraryFiles ? 1500 : false,
   });
 
   const searchQueryResult = useQuery({
@@ -185,6 +218,7 @@ export function WorkbenchPage() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
         queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["index-runs-active"] }),
       ]);
     },
     onError: (error) => {
@@ -204,6 +238,7 @@ export function WorkbenchPage() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
         queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["index-runs-active"] }),
       ]);
     },
     onError: (error) => {
@@ -212,18 +247,49 @@ export function WorkbenchPage() {
   });
 
   const runMutation = useMutation({
+    onMutate: async (docId: string) => {
+      setStreamingDocIds((current) => (current.includes(docId) ? current : [...current, docId]));
+      setStatusText("索引任务已启动");
+      await queryClient.invalidateQueries({ queryKey: ["index-runs-active"] });
+      queryClient.setQueryData<FileItem[]>(["files", workspaceId], (current) => {
+        if (!current) return current;
+        return current.map((item) => {
+          if (item.id !== docId) return item;
+          return {
+            ...item,
+            status: "parsing",
+            stage: "queued",
+            stage_message: "任务已加入队列",
+            progress: Math.max(5, Number(item.progress ?? 0)),
+            failure_code: null,
+            failure_label: null,
+            error_message: null,
+          };
+        });
+      });
+    },
     mutationFn: async (docId: string) => {
       if (!provider) {
         throw new Error("请先选择 Provider");
       }
-      return runIndex(docId, workspaceId, provider, model.trim() || null, templateId);
+      return streamIndex(docId, workspaceId, provider, model.trim() || null, templateId, (event) => {
+        queryClient.setQueryData<FileItem[]>(["files", workspaceId], (current) => applyIndexProgressEvent(current, event));
+      });
     },
     onSuccess: async () => {
-      setStatusText("索引任务已启动");
-      await queryClient.invalidateQueries({ queryKey: ["files", workspaceId] });
+      setStatusText("索引任务已完成");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["index-runs-active"] }),
+      ]);
     },
     onError: (error) => {
       setStatusText(error instanceof Error ? error.message : "索引启动失败");
+    },
+    onSettled: async (_data, _error, docId) => {
+      setStreamingDocIds((current) => current.filter((item) => item !== docId));
+      await queryClient.invalidateQueries({ queryKey: ["index-runs-active"] });
     },
   });
 
@@ -231,7 +297,10 @@ export function WorkbenchPage() {
     mutationFn: async (docId: string) => cancelIndex(docId, workspaceId),
     onSuccess: async () => {
       setStatusText("已发送取消请求");
-      await queryClient.invalidateQueries({ queryKey: ["files", workspaceId] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["index-runs-active"] }),
+      ]);
     },
     onError: (error) => {
       setStatusText(error instanceof Error ? error.message : "取消失败");
@@ -344,6 +413,8 @@ export function WorkbenchPage() {
     }).length;
   }, [fileRows]);
 
+  const workspaceIndexingActive = Boolean(activeIndexRunsQuery.data?.active_by_workspace?.[workspaceId]);
+
   const previewMarkdown = previewQuery.data?.markdown || "";
   const previewHtml = useMemo(() => {
     if (!previewMarkdown) {
@@ -379,6 +450,10 @@ export function WorkbenchPage() {
   useEffect(() => {
     ensureWorkbenchSession(workspaceId);
   }, [ensureWorkbenchSession, workspaceId]);
+
+  useEffect(() => {
+    setStreamingDocIds([]);
+  }, [workspaceId]);
 
   useEffect(() => {
     if (providerRows.length === 0) {
@@ -452,19 +527,18 @@ export function WorkbenchPage() {
     setPreviewYearDraft(indexDetailQuery.data?.year ? String(indexDetailQuery.data.year) : selectedSearchRow?.year ? String(selectedSearchRow.year) : "");
   }, [indexDetailQuery.data?.title, indexDetailQuery.data?.year, isEditingPreview, previewMarkdown, selectedDocId, selectedFileRow?.display_name, selectedSearchRow?.display_name, selectedSearchRow?.title, selectedSearchRow?.year]);
 
+  const previousWorkspaceActiveRunCountRef = useRef(0);
+
   useEffect(() => {
-    const hasRunning = fileRows.some((item) => isRunningStatus(item.status, item.stage));
-    if (!hasRunning) {
-      return;
+    const previous = previousWorkspaceActiveRunCountRef.current;
+    if (previous > 0 && workspaceActiveRunCount === 0) {
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
+      ]);
     }
-    const timer = window.setInterval(() => {
-      void queryClient.invalidateQueries({ queryKey: ["files", workspaceId] });
-      void queryClient.invalidateQueries({ queryKey: ["search", workspaceId] });
-    }, 2000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [fileRows, queryClient, workspaceId]);
+    previousWorkspaceActiveRunCountRef.current = workspaceActiveRunCount;
+  }, [queryClient, workspaceActiveRunCount, workspaceId]);
 
   const selectedTitle = selectedSearchRow?.display_name || selectedSearchRow?.title || selectedFileRow?.display_name || "未选择文献";
 
@@ -486,6 +560,7 @@ export function WorkbenchPage() {
     await Promise.all([
       filesQuery.refetch(),
       searchQueryResult.refetch(),
+      activeIndexRunsQuery.refetch(),
       previewQuery.refetch(),
     ]);
     setStatusText("已刷新");
@@ -547,6 +622,7 @@ export function WorkbenchPage() {
             templates={templatesQuery.data ?? []}
             selectedTemplateId={templateId}
             onTemplateChange={setTemplateId}
+            controlsDisabled={workspaceIndexingActive}
             onUploadFiles={(files) => {
               void uploadMutation.mutateAsync(files);
             }}
