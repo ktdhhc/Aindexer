@@ -1,11 +1,10 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { useShellStore } from "./shellStore";
 import { DEFAULT_WORKSPACE_ID, useWorkspaceStore } from "./workspaceStore";
-import { TranslatorPage } from "../pages/TranslatorPage";
 import { listWorkspaces } from "../shared/api/workspaces";
 import { isDesktopShell } from "../shared/lib/runtime";
 
@@ -15,6 +14,8 @@ const navItems = [
   { to: "/chat", label: "问答", icon: "chat" },
   { to: "/config", label: "配置", icon: "config" },
 ] as const;
+
+const TranslatorPage = lazy(() => import("../pages/TranslatorPage").then((module) => ({ default: module.TranslatorPage })));
 
 function NavIcon({ icon }: { icon: "library" | "translate" | "chat" | "config" }) {
   if (icon === "library") {
@@ -121,7 +122,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="v35-main">
           {hasVisitedTranslator ? (
             <div className={`v35-route-pane ${isTranslatorRoute ? "" : "is-hidden"}`} aria-hidden={!isTranslatorRoute}>
-              <TranslatorPage />
+              <Suspense fallback={<div className="v35-paper-panel v35-route-loading">正在加载翻译工作台...</div>}>
+                <TranslatorPage />
+              </Suspense>
             </div>
           ) : null}
           <div className={`v35-route-pane ${isTranslatorRoute ? "is-hidden" : ""}`} aria-hidden={isTranslatorRoute}>

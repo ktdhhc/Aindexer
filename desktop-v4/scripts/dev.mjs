@@ -18,10 +18,11 @@ function commandName(name) {
 }
 
 function spawnManaged(name, command, args, cwd) {
+  const useShell = isWindows && command.endsWith(".cmd");
   const child = spawn(command, args, {
     cwd,
     env: process.env,
-    shell: false,
+    shell: useShell,
     stdio: "inherit",
     windowsHide: false,
   });

@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
@@ -21,7 +21,8 @@ import {
   useAvailableProviderModelEntries,
 } from "../shared/lib/providerModels";
 import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
-import { PdfViewer } from "../features/translator/PdfViewer";
+
+const PdfViewer = lazy(() => import("../features/translator/PdfViewer").then((module) => ({ default: module.PdfViewer })));
 
 function normalizeText(text: string): string {
   return String(text || "").replace(/\s+/g, " ").trim();
@@ -542,15 +543,17 @@ export function TranslatorPage() {
           </header>
 
           {pdfFileUrl ? (
-            <PdfViewer
-              className="v35-pdf-viewer"
-              url={pdfFileUrl}
-              onSelection={handlePdfSelection}
-              selectionMode={viewerMode}
-              scale={previewScale}
-              initialScrollTop={initialReaderScrollTop}
-              onScrollPositionChange={handleReaderScrollPositionChange}
-            />
+            <Suspense fallback={<div className="v35-translation-pages"><p className="v35-muted">正在加载 PDF 预览...</p></div>}>
+              <PdfViewer
+                className="v35-pdf-viewer"
+                url={pdfFileUrl}
+                onSelection={handlePdfSelection}
+                selectionMode={viewerMode}
+                scale={previewScale}
+                initialScrollTop={initialReaderScrollTop}
+                onScrollPositionChange={handleReaderScrollPositionChange}
+              />
+            </Suspense>
           ) : (
             <div className="v35-translation-pages">
               <p className="v35-muted">选择左侧一篇 PDF 文档即可预览。</p>

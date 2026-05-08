@@ -33,8 +33,11 @@ export interface ChatPageSession {
   selectedModelKey: string;
   question: string;
   sourceSearch: string;
+  editingSessionId: string;
+  editingSessionTitle: string;
   expandedTraceByMessage: Record<string, boolean>;
   expandedThinkingByBlock: Record<string, boolean>;
+  threadScrollTopBySessionId: Record<string, number>;
 }
 
 interface PageSessionState {
@@ -86,8 +89,11 @@ const DEFAULT_CHAT_SESSION: ChatPageSession = {
   selectedModelKey: "",
   question: "",
   sourceSearch: "",
+  editingSessionId: "",
+  editingSessionTitle: "",
   expandedTraceByMessage: {},
   expandedThinkingByBlock: {},
+  threadScrollTopBySessionId: {},
 };
 
 function normalizeConfigSection(value: unknown): ConfigPageSection {
@@ -133,6 +139,17 @@ function normalizeBooleanRecord(value: unknown): Record<string, boolean> {
   );
 }
 
+function normalizeNumberRecord(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, raw]) => [String(key), Math.max(0, Math.round(Number(raw)))] as const)
+      .filter(([, numberValue]) => Number.isFinite(numberValue)),
+  );
+}
+
 function normalizeConfigSession(value: Partial<ConfigPageSession> | null | undefined): ConfigPageSession {
   return {
     section: normalizeConfigSection(value?.section),
@@ -164,8 +181,11 @@ function normalizeChatSession(value: Partial<ChatPageSession> | null | undefined
     selectedModelKey: String(value?.selectedModelKey || ""),
     question: String(value?.question || ""),
     sourceSearch: String(value?.sourceSearch || ""),
+    editingSessionId: String(value?.editingSessionId || ""),
+    editingSessionTitle: String(value?.editingSessionTitle || ""),
     expandedTraceByMessage: normalizeBooleanRecord(value?.expandedTraceByMessage),
     expandedThinkingByBlock: normalizeBooleanRecord(value?.expandedThinkingByBlock),
+    threadScrollTopBySessionId: normalizeNumberRecord(value?.threadScrollTopBySessionId),
   };
 }
 
@@ -230,6 +250,7 @@ export function getDefaultChatPageSession(): ChatPageSession {
     ...DEFAULT_CHAT_SESSION,
     expandedTraceByMessage: {},
     expandedThinkingByBlock: {},
+    threadScrollTopBySessionId: {},
   };
 }
 

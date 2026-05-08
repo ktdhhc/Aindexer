@@ -127,8 +127,11 @@ export function ChatPage() {
   const selectedModelKey = chatPageSession.selectedModelKey;
   const question = chatPageSession.question;
   const sourceSearch = chatPageSession.sourceSearch;
+  const editingSessionId = chatPageSession.editingSessionId;
+  const editingSessionTitle = chatPageSession.editingSessionTitle;
   const expandedTraceByMessage = chatPageSession.expandedTraceByMessage;
   const expandedThinkingByBlock = chatPageSession.expandedThinkingByBlock;
+  const threadScrollTopBySessionId = chatPageSession.threadScrollTopBySessionId;
   const setSelectedModelKey = useCallback((next: string) => {
     updateChatPageSession(workspaceId, { selectedModelKey: next });
   }, [updateChatPageSession, workspaceId]);
@@ -138,8 +141,9 @@ export function ChatPage() {
   const setSourceSearch = useCallback((next: string) => {
     updateChatPageSession(workspaceId, { sourceSearch: next });
   }, [updateChatPageSession, workspaceId]);
-  const [editingSessionId, setEditingSessionId] = useState("");
-  const [editingSessionTitle, setEditingSessionTitle] = useState("");
+  const setEditingSessionTitle = useCallback((next: string) => {
+    updateChatPageSession(workspaceId, { editingSessionTitle: next });
+  }, [updateChatPageSession, workspaceId]);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
 
   const threadRef = useRef<HTMLDivElement>(null);
@@ -252,6 +256,12 @@ export function ChatPage() {
   }, [ensureChatPageSession, ensureWorkspace, workspaceId]);
 
   useEffect(() => {
+    if (!editingSessionId) return;
+    if (sessions.some((session) => session.id === editingSessionId)) return;
+    updateChatPageSession(workspaceId, { editingSessionId: "", editingSessionTitle: "" });
+  }, [editingSessionId, sessions, updateChatPageSession, workspaceId]);
+
+  useEffect(() => {
     if (modelOptions.length === 0) {
       setSelectedModelKey("");
       return;
@@ -288,19 +298,35 @@ export function ChatPage() {
     syncScrollState();
     return () => {
       node.removeEventListener("scroll", syncScrollState);
+      if (activeSessionId) {
+        updateChatPageSession(workspaceId, (current) => ({
+          threadScrollTopBySessionId: {
+            ...current.threadScrollTopBySessionId,
+            [activeSessionId]: node.scrollTop,
+          },
+        }));
+      }
     };
-  }, [activeSessionId]);
+  }, [activeSessionId, updateChatPageSession, workspaceId]);
 
   useEffect(() => {
     const node = threadRef.current;
     if (!node) return;
-    autoFollowEnabledRef.current = true;
-    setShowJumpToBottom(false);
     resumeSmoothUntilRef.current = 0;
     requestAnimationFrame(() => {
+      const savedScrollTop = activeSessionId ? threadScrollTopBySessionId[activeSessionId] ?? 0 : 0;
+      if (savedScrollTop > 0) {
+        node.scrollTo({ top: savedScrollTop, behavior: "auto" });
+        const nearBottom = isThreadNearBottom(node);
+        autoFollowEnabledRef.current = nearBottom;
+        setShowJumpToBottom(!nearBottom);
+        return;
+      }
+      autoFollowEnabledRef.current = true;
+      setShowJumpToBottom(false);
       node.scrollTo({ top: node.scrollHeight, behavior: "auto" });
     });
-  }, [activeSessionId]);
+  }, [activeSessionId, threadScrollTopBySessionId]);
 
   useEffect(() => {
     const node = threadRef.current;
@@ -326,21 +352,21 @@ export function ChatPage() {
   }
 
   function startRenameSession(session: ChatSession) {
-    setEditingSessionId(session.id);
-    setEditingSessionTitle(session.title);
+    updateChatPageSession(workspaceId, {
+      editingSessionId: session.id,
+      editingSessionTitle: session.title,
+    });
   }
 
   function commitRenameSession(sessionId = editingSessionId) {
     const nextTitle = editingSessionTitle.trim();
     if (!sessionId) return;
     renameSession(workspaceId, sessionId, nextTitle);
-    setEditingSessionId("");
-    setEditingSessionTitle("");
+    updateChatPageSession(workspaceId, { editingSessionId: "", editingSessionTitle: "" });
   }
 
   function cancelRenameSession() {
-    setEditingSessionId("");
-    setEditingSessionTitle("");
+    updateChatPageSession(workspaceId, { editingSessionId: "", editingSessionTitle: "" });
   }
 
   function jumpToMessage(messageId: string) {
@@ -394,6 +420,15 @@ export function ChatPage() {
   }
 
   function deleteSession(sessionId: string) {
+    updateChatPageSession(workspaceId, (current) => {
+      const nextScrollTopBySessionId = { ...current.threadScrollTopBySessionId };
+      delete nextScrollTopBySessionId[sessionId];
+      return {
+        editingSessionId: current.editingSessionId === sessionId ? "" : current.editingSessionId,
+        editingSessionTitle: current.editingSessionId === sessionId ? "" : current.editingSessionTitle,
+        threadScrollTopBySessionId: nextScrollTopBySessionId,
+      };
+    });
     deleteChatSession(workspaceId, sessionId);
   }
 
