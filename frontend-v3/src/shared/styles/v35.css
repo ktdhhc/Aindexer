@@ -3258,6 +3258,31 @@ html.v35-runtime-desktop .v35-translation-resizer {
   color: var(--v35-error);
 }
 
+.v35-feedback-links {
+  display: grid;
+  gap: 8px;
+}
+
+.v35-feedback-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--v35-border);
+  border-radius: 14px;
+  background: rgba(255, 252, 243, 0.92);
+  color: var(--v35-text-primary);
+  text-decoration: none;
+  font-family: "JetBrains Mono", "SF Mono", monospace;
+  font-size: 12px;
+}
+
+.v35-feedback-link:hover {
+  border-color: rgba(166, 95, 43, 0.3);
+  background: #fff9ec;
+  color: var(--v35-accent-hover);
+}
+
 .v35-defaults-index-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

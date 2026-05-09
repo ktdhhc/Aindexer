@@ -1311,8 +1311,8 @@ export function ConfigPage() {
           <button className={section === "backup" ? "is-active" : ""} type="button" onClick={() => setSection("backup")}>
             <span className="v35-config-nav-icon" aria-hidden="true"><ConfigSectionIcon section="backup" /></span>
             <span className="v35-config-nav-copy">
-              <strong>数据</strong>
-              <span>备份 / 恢复 / 日志</span>
+              <strong>数据与反馈</strong>
+              <span>备份 / 恢复 / 日志 / 联系</span>
             </span>
           </button>
           <p className="v35-config-status">{currentSectionStatus}</p>
@@ -1879,7 +1879,7 @@ export function ConfigPage() {
                 <header className="v35-config-paper-head">
                   <div>
                     <p>{backupToolCode(selectedBackupTool)}</p>
-                    <h2>{backupToolLabel(selectedBackupTool)}</h2>
+                    <h2>数据与反馈</h2>
                   </div>
                   <span className={`v35-status ${selectedBackupTool === "restore" ? "is-warn" : selectedBackupTool === "logs" ? "is-muted" : "is-ok"}`}>
                     {selectedBackupTool === "restore" ? restoreStateLabel : selectedBackupTool === "logs" ? "DIAG" : "ZIP"}
@@ -2012,6 +2012,20 @@ export function ConfigPage() {
                       <span>NO PAGE</span>
                     </div>
                     <p className="v35-backup-detail-note">Chat 会话可恢复；页面状态不恢复。</p>
+                  </section>
+
+                  <section className="v35-defaults-block v35-backup-block">
+                    <header className="v35-defaults-block-head">
+                      <div>
+                        <span>FEEDBACK</span>
+                        <strong>LINK</strong>
+                      </div>
+                      <span className="v35-status is-muted">OPEN</span>
+                    </header>
+                    <div className="v35-feedback-links" aria-label="反馈链接">
+                      <a className="v35-feedback-link" href="https://github.com/ktdhhc/Aindexer" target="_blank" rel="noreferrer">GitHub</a>
+                      <a className="v35-feedback-link" href="mailto:1642012059@qq.com">1642012059@qq.com</a>
+                    </div>
                   </section>
                 </div>
               </article>
