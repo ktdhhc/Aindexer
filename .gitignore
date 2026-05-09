@@ -4,6 +4,11 @@ build/
 dist/
 sessions/
 
+# Desktop V4 packaging outputs
+build/desktop-v4-sidecar/
+dist/desktop-v4-sidecar/
+dist/desktop-v4-installer/
+
 # Python caches
 __pycache__/
 *.pyc

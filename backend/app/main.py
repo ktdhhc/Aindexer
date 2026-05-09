@@ -4,14 +4,13 @@ import importlib
 import logging
 import mimetypes
 from datetime import datetime
-from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import APP_LOG_PATH, LOG_DIR, ensure_dirs
+from .config import APP_LOG_PATH, FRONTEND_ROOT, LOG_DIR, ensure_dirs
 from .db import init_db
 from .routers import (
     chat,
@@ -117,7 +116,7 @@ def create_app() -> FastAPI:
     app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
     app.include_router(system.router, prefix="/api/system", tags=["system"])
 
-    static_dir = Path(__file__).resolve().parents[1] / "frontend"
+    static_dir = FRONTEND_ROOT
     translator_static_dir = static_dir / "translator"
     v3_static_dir = static_dir / "v3"
     if translator_static_dir.exists():

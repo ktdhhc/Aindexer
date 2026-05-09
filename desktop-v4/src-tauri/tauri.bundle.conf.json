@@ -1,0 +1,16 @@
+{
+  "bundle": {
+    "targets": [
+      "nsis"
+    ],
+    "resources": {
+      "../../dist/desktop-v4-sidecar/aindexer-sidecar": "sidecar"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
+      }
+    }
+  }
+}

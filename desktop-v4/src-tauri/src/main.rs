@@ -60,7 +60,7 @@ fn main() {
                 return Ok(());
             }
 
-            let (child, port) = spawn_sidecar().map_err(to_setup_error)?;
+            let (child, port) = spawn_sidecar(app.handle()).map_err(to_setup_error)?;
             let state = app.state::<SidecarState>();
             if let Ok(mut guard) = state.0.lock() {
                 *guard = Some(child);
@@ -87,35 +87,37 @@ fn is_dev_runtime() -> bool {
     cfg!(debug_assertions)
 }
 
-fn spawn_sidecar() -> Result<(Child, u16), String> {
+fn spawn_sidecar<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(Child, u16), String> {
     let port = pick_unused_port()?;
-    let backend_dir = resolve_backend_dir()?;
+    let (sidecar_path, sidecar_dir) = resolve_sidecar_path(app)?;
+    let backend_dir = resolve_backend_dir(&sidecar_dir);
     let data_dir = resolve_data_dir()?;
     fs::create_dir_all(&data_dir)
         .map_err(|err| format!("failed to create data dir {}: {err}", data_dir.display()))?;
 
-    let python = env::var("AINDEXER_PYTHON").unwrap_or_else(|_| "python".to_string());
-    let mut command = Command::new(python);
+    let mut command = Command::new(&sidecar_path);
     command
-        .arg("desktop_v4_sidecar.py")
         .arg("--host")
         .arg("127.0.0.1")
         .arg("--port")
         .arg(port.to_string())
         .arg("--data-dir")
         .arg(&data_dir)
-        .current_dir(&backend_dir)
+        .current_dir(&sidecar_dir)
         .env("APP_HOST", "127.0.0.1")
         .env("APP_PORT", port.to_string())
         .env("AINDEXER_DATA_DIR", &data_dir)
+        .env("AINDEXER_RUNTIME_ROOT", &sidecar_dir)
+        .env("AINDEXER_BACKEND_ROOT", &backend_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
     let mut child = command.spawn().map_err(|err| {
         format!(
-            "failed to start Python sidecar from {}: {err}",
-            backend_dir.display()
+            "failed to start sidecar {} from {}: {err}",
+            sidecar_path.display(),
+            sidecar_dir.display()
         )
     })?;
 
@@ -172,17 +174,73 @@ fn pick_unused_port() -> Result<u16, String> {
     Ok(port)
 }
 
-fn resolve_backend_dir() -> Result<PathBuf, String> {
-    if let Ok(path) = env::var("AINDEXER_BACKEND_DIR") {
-        return Ok(PathBuf::from(path));
+fn resolve_backend_dir(sidecar_dir: &Path) -> PathBuf {
+    if let Ok(path) = env::var("AINDEXER_BACKEND_ROOT") {
+        return PathBuf::from(path);
     }
+
+    if let Ok(path) = env::var("AINDEXER_BACKEND_DIR") {
+        return PathBuf::from(path);
+    }
+
+    sidecar_dir.join("_internal").join("backend")
+}
+
+fn resolve_sidecar_path<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<(PathBuf, PathBuf), String> {
+    if let Ok(path) = env::var("AINDEXER_SIDECAR_PATH") {
+        let sidecar_path = PathBuf::from(path);
+        let sidecar_dir = sidecar_path.parent().ok_or_else(|| {
+            format!(
+                "failed to resolve sidecar directory from override path {}",
+                sidecar_path.display()
+            )
+        })?
+        .to_path_buf();
+        return Ok((sidecar_path, sidecar_dir));
+    }
+
+    let sidecar_name = sidecar_binary_name();
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|err| format!("failed to resolve Tauri resource dir: {err}"))?;
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir
         .parent()
         .and_then(Path::parent)
         .ok_or_else(|| "failed to resolve repository root from Cargo manifest".to_string())?;
-    Ok(repo_root.join("backend"))
+
+    let candidates = [
+        resource_dir.join("sidecar").join(sidecar_name),
+        repo_root
+            .join("dist")
+            .join("desktop-v4-sidecar")
+            .join("aindexer-sidecar")
+            .join(sidecar_name),
+    ];
+
+    for candidate in candidates {
+        if candidate.exists() {
+            let sidecar_dir = candidate
+                .parent()
+                .ok_or_else(|| format!("failed to resolve sidecar dir for {}", candidate.display()))?
+                .to_path_buf();
+            return Ok((candidate, sidecar_dir));
+        }
+    }
+
+    Err(format!(
+        "sidecar executable not found; looked under {} and {}",
+        resource_dir.join("sidecar").display(),
+        repo_root
+            .join("dist")
+            .join("desktop-v4-sidecar")
+            .join("aindexer-sidecar")
+            .display()
+    ))
 }
 
 fn resolve_data_dir() -> Result<PathBuf, String> {
@@ -208,4 +266,14 @@ fn resolve_data_dir() -> Result<PathBuf, String> {
 
 fn to_setup_error(message: impl Into<String>) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Other, message.into())
+}
+
+#[cfg(target_os = "windows")]
+fn sidecar_binary_name() -> &'static str {
+    "aindexer-sidecar.exe"
+}
+
+#[cfg(not(target_os = "windows"))]
+fn sidecar_binary_name() -> &'static str {
+    "aindexer-sidecar"
 }

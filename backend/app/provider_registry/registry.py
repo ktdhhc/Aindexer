@@ -6,9 +6,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from ..config import BACKEND_ROOT
 
-PROVIDER_REGISTRY_PATH = Path(__file__).with_name("provider_model_registry.json")
-MODEL_NAME_REGISTRY_PATH = Path(__file__).with_name("model_name_registry.json")
+
+REGISTRY_DIR = BACKEND_ROOT / "app" / "provider_registry"
+PROVIDER_REGISTRY_PATH = REGISTRY_DIR / "provider_model_registry.json"
+MODEL_NAME_REGISTRY_PATH = REGISTRY_DIR / "model_name_registry.json"
 
 # Backward compatibility for earlier imports/tests.
 REGISTRY_PATH = PROVIDER_REGISTRY_PATH

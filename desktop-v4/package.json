@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "dev:tauri": "tauri dev",
-    "build": "tauri build",
+    "sync:version": "node scripts/sync-version.mjs",
+    "dev:tauri": "npm run sync:version && tauri dev",
+    "build": "node scripts/build.mjs",
+    "build:tauri": "npm run sync:version && tauri build",
     "tauri": "tauri"
   },
   "devDependencies": {

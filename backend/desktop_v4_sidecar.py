@@ -18,6 +18,10 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _default_data_dir() -> Path:
+    if appdata := os.getenv("APPDATA"):
+        return Path(appdata).expanduser().resolve() / "Aindexer" / "v4" / "data"
+    if home := os.getenv("HOME"):
+        return Path(home).expanduser().resolve() / ".local" / "share" / "aindexer-v4" / "data"
     return Path(__file__).resolve().parents[1] / "data"
 
 

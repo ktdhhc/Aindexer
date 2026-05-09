@@ -44,6 +44,11 @@ import {
   type RestoreStatus,
 } from "../shared/api/backup";
 import {
+  downloadLatestDesktopInstaller,
+  getLatestDesktopUpdate,
+  type LatestDesktopUpdateInfo,
+} from "../shared/api/system";
+import {
   ALL_WORKSPACES_USAGE_SCOPE,
   type UsageBreakdownBy,
   type UsageBucket,
@@ -82,7 +87,7 @@ interface ProviderTestSummary {
   detail: string;
 }
 
-type BackupTool = "export" | "restore" | "logs";
+type BackupTool = "export" | "restore" | "logs" | "updates";
 
 function uniqueTrimmed(values: string[]): string[] {
   return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))];
@@ -200,13 +205,45 @@ function restoreBlockedMessage(status: RestoreStatus): string {
 function backupToolLabel(tool: BackupTool): string {
   if (tool === "restore") return "恢复";
   if (tool === "logs") return "日志";
+  if (tool === "updates") return "版本更新";
   return "备份";
 }
 
 function backupToolCode(tool: BackupTool): string {
   if (tool === "restore") return "RESTORE";
   if (tool === "logs") return "LOGS";
+  if (tool === "updates") return "UPDATES";
   return "BACKUP";
+}
+
+function formatUpdateBytes(value?: number | null): string {
+  const bytes = Number(value || 0);
+  if (bytes <= 0) return "-";
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatUpdatePublishedAt(value?: string): string {
+  if (!value) return "未发布";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function compactReleaseNotes(value?: string): string {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "当前 release 没有填写更新说明。";
+  }
+  return text;
 }
 
 const GLOBAL_PRICING_PROVIDER = "__global__";
@@ -417,14 +454,41 @@ export function ConfigPage() {
 
   const [usageMessage, setUsageMessage] = useState("准备就绪");
   const [backupMessage, setBackupMessage] = useState("准备就绪");
+  const [updateMessage, setUpdateMessage] = useState("准备就绪");
   const [lastBackupPath, setLastBackupPath] = useState("");
   const [lastLogPath, setLastLogPath] = useState("");
+  const [lastInstallerPath, setLastInstallerPath] = useState("");
+  const [desktopVersion, setDesktopVersion] = useState("");
+  const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
   const [pricingDraft, setPricingDraft] = useState<PricingDraft>({
     inputPrice: "",
     outputPrice: "",
   });
   const usageChartWindowRef = useRef<HTMLDivElement>(null);
   const backupFileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!desktopShell) {
+      setDesktopVersion("");
+      return;
+    }
+    let cancelled = false;
+    import("@tauri-apps/api/app")
+      .then(({ getVersion }) => getVersion())
+      .then((version) => {
+        if (!cancelled) {
+          setDesktopVersion(String(version || ""));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDesktopVersion("");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopShell]);
 
   const providersQuery = useQuery({
     queryKey: ["providers"],
@@ -477,6 +541,14 @@ export function ConfigPage() {
     queryFn: getRestoreStatus,
     enabled: section === "backup",
     refetchInterval: section === "backup" ? 5_000 : false,
+  });
+
+  const latestUpdateQuery = useQuery({
+    queryKey: ["desktop-update-latest", desktopVersion],
+    queryFn: () => getLatestDesktopUpdate(desktopVersion || undefined),
+    enabled: desktopShell || section === "backup",
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
   const selectedProviderRow = useMemo(() => {
@@ -1140,6 +1212,62 @@ export function ConfigPage() {
     },
   });
 
+  const refreshUpdateMutation = useMutation({
+    mutationFn: async () => {
+      return getLatestDesktopUpdate(desktopVersion || undefined, true);
+    },
+    onSuccess: (payload) => {
+      queryClient.setQueryData(["desktop-update-latest", desktopVersion], payload);
+      setUpdateMessage(payload.has_update ? `发现新版本 ${payload.latest_version}` : "已是最新版本");
+    },
+    onError: (error) => {
+      setUpdateMessage(error instanceof Error ? error.message : "检查更新失败");
+    },
+  });
+
+  const downloadUpdateMutation = useMutation({
+    mutationFn: async (payload: LatestDesktopUpdateInfo | undefined) => {
+      if (!payload?.download_url) {
+        throw new Error("当前 release 未提供可下载的安装包");
+      }
+      const file = await downloadLatestDesktopInstaller();
+      const savedPath = await saveDownloadedFile(file, {
+        title: "保存更新安装包",
+        defaultPath: file.filename,
+        filters: [{ name: "Windows Installer", extensions: ["exe", "msi"] }],
+      });
+      return savedPath;
+    },
+    onSuccess: (savedPath) => {
+      if (savedPath) {
+        setLastInstallerPath(savedPath);
+      }
+      setUpdateMessage(savedPath ? "安装包已保存" : desktopShell ? "取消下载" : "已开始下载");
+    },
+    onError: (error) => {
+      setUpdateMessage(error instanceof Error ? error.message : "下载安装包失败");
+    },
+  });
+
+  useEffect(() => {
+    if (latestUpdateQuery.error) {
+      setUpdateMessage(latestUpdateQuery.error instanceof Error ? latestUpdateQuery.error.message : "检查更新失败");
+      return;
+    }
+    if (!latestUpdateQuery.data) {
+      return;
+    }
+    if (latestUpdateQuery.data.has_update) {
+      setUpdateMessage(`发现新版本 ${latestUpdateQuery.data.latest_version}`);
+      return;
+    }
+    if (desktopVersion) {
+      setUpdateMessage(`当前版本 ${desktopVersion} 已是最新`);
+      return;
+    }
+    setUpdateMessage("已同步最新 release 信息");
+  }, [desktopVersion, latestUpdateQuery.data, latestUpdateQuery.error]);
+
   function updateProviderDraft(patch: Partial<ProviderDraft>) {
     setProviderDraft((current) => (current ? { ...current, ...patch } : current));
   }
@@ -1241,6 +1369,11 @@ export function ConfigPage() {
       detail: lastLogPath ? "PATH" : desktopShell ? "DIALOG" : "WEB",
       meta: "DIAG",
     },
+    {
+      key: "updates",
+      detail: latestUpdateQuery.isLoading ? "CHECK" : latestUpdateQuery.data?.has_update ? `NEW ${latestUpdateQuery.data.latest_version}` : desktopVersion ? `OK ${desktopVersion}` : "RELEASE",
+      meta: latestUpdateQuery.data?.has_update ? "NEW" : "SYNC",
+    },
   ];
 
   const currentSectionStatus =
@@ -1250,10 +1383,12 @@ export function ConfigPage() {
         ? defaultsMessage
         : section === "fields"
           ? fieldsMessage
-            : section === "workspaces"
-              ? workspaceMessage
-              : section === "usage"
-                ? usageMessage
+          : section === "workspaces"
+            ? workspaceMessage
+            : section === "usage"
+              ? usageMessage
+              : selectedBackupTool === "updates"
+                ? updateMessage
                 : backupMessage;
   const activeField = fieldDrafts[activeFieldIndex] ?? null;
 
@@ -1312,7 +1447,7 @@ export function ConfigPage() {
             <span className="v35-config-nav-icon" aria-hidden="true"><ConfigSectionIcon section="backup" /></span>
             <span className="v35-config-nav-copy">
               <strong>数据与反馈</strong>
-              <span>备份 / 恢复 / 日志 / 联系</span>
+              <span>备份 / 恢复 / 日志 / 更新 / 联系</span>
             </span>
           </button>
           <p className="v35-config-status">{currentSectionStatus}</p>
@@ -1881,8 +2016,8 @@ export function ConfigPage() {
                     <p>{backupToolCode(selectedBackupTool)}</p>
                     <h2>数据与反馈</h2>
                   </div>
-                  <span className={`v35-status ${selectedBackupTool === "restore" ? "is-warn" : selectedBackupTool === "logs" ? "is-muted" : "is-ok"}`}>
-                    {selectedBackupTool === "restore" ? restoreStateLabel : selectedBackupTool === "logs" ? "DIAG" : "ZIP"}
+                  <span className={`v35-status ${selectedBackupTool === "restore" ? "is-warn" : selectedBackupTool === "logs" ? "is-muted" : selectedBackupTool === "updates" ? (latestUpdateQuery.data?.has_update ? "is-warn" : "is-ok") : "is-ok"}`}>
+                    {selectedBackupTool === "restore" ? restoreStateLabel : selectedBackupTool === "logs" ? "DIAG" : selectedBackupTool === "updates" ? (latestUpdateQuery.data?.has_update ? "NEW" : "SYNC") : "ZIP"}
                   </span>
                 </header>
 
@@ -1996,6 +2131,125 @@ export function ConfigPage() {
                         </div>
                       </footer>
                     </section>
+                  ) : null}
+
+                  {selectedBackupTool === "updates" ? (
+                    <>
+                      <section className="v35-defaults-block v35-backup-block">
+                        <header className="v35-defaults-block-head">
+                          <div>
+                            <span>CURRENT</span>
+                            <strong>{desktopVersion || "未知"}</strong>
+                          </div>
+                          <span className="v35-status is-muted">LOCAL</span>
+                        </header>
+                        <div className="v35-backup-pills" aria-label="当前版本信息">
+                          <span>{desktopShell ? "DESKTOP" : "WEB"}</span>
+                          <span>{latestUpdateQuery.data?.checked_at ? "CACHED" : "IDLE"}</span>
+                        </div>
+                      </section>
+
+                      <section className="v35-defaults-block v35-backup-block">
+                        <header className="v35-defaults-block-head">
+                          <div>
+                            <span>LATEST</span>
+                            <strong>{latestUpdateQuery.data?.latest_version || "未获取"}</strong>
+                          </div>
+                          <span className={`v35-status ${latestUpdateQuery.data?.has_update ? "is-warn" : "is-ok"}`}>
+                            {latestUpdateQuery.isFetching || refreshUpdateMutation.isPending ? "CHECK" : latestUpdateQuery.data?.has_update ? "UPDATE" : "OK"}
+                          </span>
+                        </header>
+                        <div className="v35-backup-pills" aria-label="最新版本信息">
+                          <span>{latestUpdateQuery.data?.release_name || "GitHub"}</span>
+                          <span>{formatUpdatePublishedAt(latestUpdateQuery.data?.published_at)}</span>
+                          <span>{formatUpdateBytes(latestUpdateQuery.data?.download_size)}</span>
+                        </div>
+                        <footer className="v35-defaults-inline-actions v35-backup-actions">
+                          <div className="v35-backup-action-main">
+                            <button
+                              className="v35-button"
+                              type="button"
+                              disabled={refreshUpdateMutation.isPending}
+                              onClick={() => void refreshUpdateMutation.mutateAsync()}
+                            >
+                              <span>检查更新</span>
+                            </button>
+                            <button
+                              className="v35-button v35-button-primary"
+                              type="button"
+                              disabled={!latestUpdateQuery.data?.download_url || downloadUpdateMutation.isPending}
+                              onClick={() => void downloadUpdateMutation.mutateAsync(latestUpdateQuery.data)}
+                            >
+                              <span>下载安装包</span>
+                            </button>
+                          </div>
+                          <div className="v35-backup-action-side">
+                            <span className="v35-backup-state">{lastInstallerPath ? "PATH" : "WEB"}</span>
+                            <button
+                              className="v35-icon-button"
+                              type="button"
+                              title="显示文件"
+                              disabled={!desktopShell || !lastInstallerPath}
+                              onClick={() => {
+                                void revealDesktopPath(lastInstallerPath).catch(() => setUpdateMessage("定位安装包失败"));
+                              }}
+                            >
+                              <BackupActionIcon kind="reveal" />
+                            </button>
+                          </div>
+                        </footer>
+                      </section>
+
+                      <section className="v35-defaults-block v35-backup-block">
+                        <header className="v35-defaults-block-head">
+                          <div>
+                            <span>NOTES</span>
+                            <strong>Release Notes</strong>
+                          </div>
+                          <span className={`v35-status ${isReleaseNotesOpen ? "is-ok" : "is-muted"}`}>{isReleaseNotesOpen ? "OPEN" : "FOLD"}</span>
+                        </header>
+                        <div className="v35-backup-pills" aria-label="更新渠道">
+                          <span>GITHUB</span>
+                          <span>RELEASES</span>
+                          <span>SETUP.EXE</span>
+                        </div>
+                        <div className="v35-defaults-inline-actions" style={{ justifyContent: "flex-start" }}>
+                          <button className="v35-button" type="button" onClick={() => setIsReleaseNotesOpen((current) => !current)}>
+                            <span>{isReleaseNotesOpen ? "收起说明" : "展开说明"}</span>
+                          </button>
+                        </div>
+                        {isReleaseNotesOpen ? (
+                          <p className="v35-backup-detail-note" style={{ whiteSpace: "pre-wrap" }}>
+                            {compactReleaseNotes(latestUpdateQuery.data?.body)}
+                          </p>
+                        ) : null}
+                      </section>
+
+                      <section className="v35-defaults-block v35-backup-block">
+                        <header className="v35-defaults-block-head">
+                          <div>
+                            <span>CHANNEL</span>
+                            <strong>Manual Upgrade</strong>
+                          </div>
+                          <span className="v35-status is-warn">SAFE</span>
+                        </header>
+                        <div className="v35-backup-pills" aria-label="更新方式说明">
+                          <span>APPDATA</span>
+                          <span>NO WIPE</span>
+                          <span>SETUP</span>
+                        </div>
+                        <p className="v35-backup-detail-note">
+                          当前阶段通过新安装器覆盖升级程序文件，不直接清空 AppData 数据目录。
+                        </p>
+                        {latestUpdateQuery.data?.release_url ? (
+                          <div className="v35-feedback-links" aria-label="发布链接">
+                            <a className="v35-feedback-link" href={latestUpdateQuery.data.release_url} target="_blank" rel="noreferrer">
+                              打开 Release 页面
+                            </a>
+                          </div>
+                        ) : null}
+                      </section>
+                    </>
                   ) : null}
 
                   <section className="v35-defaults-block v35-backup-block">

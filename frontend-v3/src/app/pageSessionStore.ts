@@ -12,7 +12,7 @@ export interface ConfigPageSession {
   selectedProvider: string;
   selectedTemplateId: string;
   activeFieldIndex: number;
-  selectedBackupTool: "export" | "restore" | "logs";
+  selectedBackupTool: "export" | "restore" | "logs" | "updates";
   usagePeriod: UsagePeriod;
   usageBreakdownBy: UsageBreakdownBy;
   selectedUsageMonth: string;
@@ -106,6 +106,9 @@ function normalizeConfigSection(value: unknown): ConfigPageSection {
   if (value === "providers" || value === "defaults" || value === "fields" || value === "workspaces" || value === "usage" || value === "backup") {
     return value;
   }
+  if (value === "updates") {
+    return "backup";
+  }
   return DEFAULT_CONFIG_SESSION.section;
 }
 
@@ -162,7 +165,10 @@ function normalizeConfigSession(value: Partial<ConfigPageSession> | null | undef
     selectedProvider: String(value?.selectedProvider || ""),
     selectedTemplateId: String(value?.selectedTemplateId || DEFAULT_CONFIG_SESSION.selectedTemplateId),
     activeFieldIndex: Math.max(0, Number.isFinite(Number(value?.activeFieldIndex)) ? Number(value?.activeFieldIndex) : 0),
-    selectedBackupTool: value?.selectedBackupTool === "restore" || value?.selectedBackupTool === "logs" ? value.selectedBackupTool : "export",
+    selectedBackupTool:
+      value?.selectedBackupTool === "restore" || value?.selectedBackupTool === "logs" || value?.selectedBackupTool === "updates"
+        ? value.selectedBackupTool
+        : "export",
     usagePeriod: normalizeUsagePeriod(value?.usagePeriod),
     usageBreakdownBy: normalizeUsageBreakdownBy(value?.usageBreakdownBy),
     selectedUsageMonth: String(value?.selectedUsageMonth || ""),

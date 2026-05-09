@@ -1,23 +1,11 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
-from ..config import BASE_DIR
-
-
-def _resolve_prompts_dir() -> Path:
-    candidates = [
-        BASE_DIR / "backend" / "prompts",
-        BASE_DIR / "_internal" / "backend" / "prompts",
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    return candidates[0]
+from ..config import PROMPTS_ROOT
 
 
-PROMPTS_DIR = _resolve_prompts_dir()
+PROMPTS_DIR = PROMPTS_ROOT
 
 
 def get_prompt(name: str, default: str) -> str:
