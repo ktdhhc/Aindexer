@@ -113,22 +113,36 @@ def get_usage_summary(
     workspace_id: str | None = None,
     period: Literal["day", "month"] = "day",
     breakdown_by: Literal["provider", "model", "feature", "api_key_fingerprint"] = "feature",
+    start_bucket: str | None = None,
+    end_bucket: str | None = None,
     provider: str | None = None,
     model: str | None = None,
     feature: str | None = None,
     api_key_fingerprint_value: str | None = None,
 ) -> dict[str, Any]:
     bucket_expr = "substr(created_at, 1, 7)" if period == "month" else "substr(created_at, 1, 10)"
+    bucket_prefix_length = 7 if period == "month" else 10
     breakdown_column = breakdown_by if breakdown_by in {"provider", "model", "feature", "api_key_fingerprint"} else "feature"
-    where, params = _usage_filter_where(
+    base_where, base_params = _usage_filter_where(
         workspace_id=workspace_id,
         provider=provider,
         model=model,
         feature=feature,
         api_key_fingerprint_value=api_key_fingerprint_value,
     )
+    where, params = _with_bucket_window(
+        where=base_where,
+        params=base_params,
+        bucket_prefix_length=bucket_prefix_length,
+        start_bucket=start_bucket,
+        end_bucket=end_bucket,
+    )
     pricing_rules = list_pricing_rules()
     with get_conn() as conn:
+        scope_row = conn.execute(
+            f"SELECT MIN({bucket_expr}) AS first_bucket, MAX({bucket_expr}) AS last_bucket FROM llm_usage_events {base_where}",
+            tuple(base_params),
+        ).fetchone()
         rows = conn.execute(
             f"""
             SELECT {bucket_expr} AS bucket,
@@ -221,7 +235,16 @@ def get_usage_summary(
         "dimension_breakdown": breakdown_totals,
         "dimension_metrics": dimension_metrics,
     }
-    return {"period": period, "breakdown_by": breakdown_column, "buckets": buckets, "totals": totals}
+    return {
+        "period": period,
+        "breakdown_by": breakdown_column,
+        "available_range": {
+            "first_bucket": str(scope_row["first_bucket"] or "") if scope_row else "",
+            "last_bucket": str(scope_row["last_bucket"] or "") if scope_row else "",
+        },
+        "buckets": buckets,
+        "totals": totals,
+    }
 
 
 def list_pricing_rules() -> list[dict[str, Any]]:
@@ -348,6 +371,28 @@ def _usage_filter_where(
             clauses.append(f"{column} = ?")
             params.append(cleaned)
     return ("WHERE " + " AND ".join(clauses), params) if clauses else ("", params)
+
+
+def _with_bucket_window(
+    *,
+    where: str,
+    params: list[Any],
+    bucket_prefix_length: int,
+    start_bucket: str | None,
+    end_bucket: str | None,
+) -> tuple[str, list[Any]]:
+    next_where = where
+    next_params = list(params)
+    start_value = str(start_bucket or "").strip()
+    end_value = str(end_bucket or "").strip()
+    bucket_expr = f"substr(created_at, 1, {bucket_prefix_length})"
+    if start_value:
+        next_where = f"{next_where} AND {bucket_expr} >= ?" if next_where else f"WHERE {bucket_expr} >= ?"
+        next_params.append(start_value)
+    if end_value:
+        next_where = f"{next_where} AND {bucket_expr} <= ?" if next_where else f"WHERE {bucket_expr} <= ?"
+        next_params.append(end_value)
+    return next_where, next_params
 
 
 def _estimate_cost(event: dict[str, Any], rules: list[dict[str, Any]]) -> float:

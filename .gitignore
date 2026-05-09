@@ -26,6 +26,7 @@ desktop-v4/src-tauri/target/
 .sisyphus/
 .trae/
 product-homepage-draft/
+icon/
 
 # Local archives
 *.zip

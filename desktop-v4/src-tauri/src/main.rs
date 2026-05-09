@@ -12,8 +12,47 @@ use tauri::{Manager, WindowEvent};
 
 struct SidecarState(Mutex<Option<Child>>);
 
+#[tauri::command]
+fn reveal_in_folder(path: String) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if !target.exists() {
+        return Err(format!("path does not exist: {}", target.display()));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(format!("/select,{}", target.display()))
+            .spawn()
+            .map_err(|err| format!("failed to open Explorer: {err}"))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("-R")
+            .arg(&target)
+            .spawn()
+            .map_err(|err| format!("failed to reveal file in Finder: {err}"))?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let parent = target.parent().unwrap_or(&target);
+        Command::new("xdg-open")
+            .arg(parent)
+            .spawn()
+            .map_err(|err| format!("failed to open file directory: {err}"))?;
+    }
+
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .invoke_handler(tauri::generate_handler![reveal_in_folder])
         .setup(|app| {
             app.manage(SidecarState(Mutex::new(None)));
 

@@ -32,3 +32,8 @@ def cancel_request(client_request_id: str) -> bool:
         return False
     event.set()
     return True
+
+
+def active_request_count() -> int:
+    with _lock:
+        return len(_events)

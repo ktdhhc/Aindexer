@@ -100,3 +100,86 @@ def test_usage_summary_without_workspace_filter_aggregates_all_workspaces() -> N
     finally:
         with get_conn() as conn:
             conn.execute("DELETE FROM llm_usage_events WHERE request_id IN (?, ?)", tuple(request_ids))
+
+
+def test_usage_summary_supports_bucket_window_and_reports_available_range() -> None:
+    init_db()
+    provider = "usage_test_provider_window"
+    request_ids = ["usage_window_request_1", "usage_window_request_2"]
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO llm_usage_events (
+                    id, workspace_id, feature, operation, provider, model, api_key_fingerprint,
+                    input_tokens, output_tokens, total_tokens, token_source, estimated, cached,
+                    success, error_code, duration_ms, request_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "usage_window_event_1",
+                    "usage_window_workspace",
+                    "chat",
+                    "usage_window",
+                    provider,
+                    "usage-window-model",
+                    "usage-window-key",
+                    10,
+                    5,
+                    15,
+                    "provider",
+                    0,
+                    0,
+                    1,
+                    None,
+                    None,
+                    request_ids[0],
+                    "2026-02-10T08:00:00Z",
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO llm_usage_events (
+                    id, workspace_id, feature, operation, provider, model, api_key_fingerprint,
+                    input_tokens, output_tokens, total_tokens, token_source, estimated, cached,
+                    success, error_code, duration_ms, request_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "usage_window_event_2",
+                    "usage_window_workspace",
+                    "chat",
+                    "usage_window",
+                    provider,
+                    "usage-window-model",
+                    "usage-window-key",
+                    20,
+                    10,
+                    30,
+                    "provider",
+                    0,
+                    0,
+                    1,
+                    None,
+                    None,
+                    request_ids[1],
+                    "2026-03-05T08:00:00Z",
+                ),
+            )
+
+        summary = get_usage_summary(
+            workspace_id="usage_window_workspace",
+            period="day",
+            start_bucket="2026-03-01",
+            end_bucket="2026-03-31",
+        )
+
+        assert summary["available_range"] == {
+            "first_bucket": "2026-02-10",
+            "last_bucket": "2026-03-05",
+        }
+        assert summary["totals"]["total_tokens"] == 30
+        assert [bucket["bucket"] for bucket in summary["buckets"]] == ["2026-03-05"]
+    finally:
+        with get_conn() as conn:
+            conn.execute("DELETE FROM llm_usage_events WHERE request_id IN (?, ?)", tuple(request_ids))

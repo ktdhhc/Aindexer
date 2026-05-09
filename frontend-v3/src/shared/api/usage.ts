@@ -42,6 +42,10 @@ export interface UsageTotals {
 export interface UsageSummary {
   period: UsagePeriod;
   breakdown_by: UsageBreakdownBy;
+  available_range: {
+    first_bucket: string;
+    last_bucket: string;
+  };
   buckets: UsageBucket[];
   totals: UsageTotals;
 }
@@ -76,12 +80,16 @@ export async function getUsageSummary(params: {
   workspaceId: string;
   period: UsagePeriod;
   breakdownBy: UsageBreakdownBy;
+  startBucket?: string;
+  endBucket?: string;
   provider?: string;
   model?: string;
   feature?: string;
   apiKey?: string;
 }): Promise<UsageSummary> {
   const query = new URLSearchParams({ workspace_id: params.workspaceId, period: params.period, breakdown_by: params.breakdownBy });
+  if (params.startBucket) query.set("start_bucket", params.startBucket);
+  if (params.endBucket) query.set("end_bucket", params.endBucket);
   if (params.provider) query.set("provider", params.provider);
   if (params.model) query.set("model", params.model);
   if (params.feature) query.set("feature", params.feature);

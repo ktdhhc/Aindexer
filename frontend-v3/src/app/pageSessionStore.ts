@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 import type { UsageBreakdownBy, UsagePeriod } from "../shared/api/usage";
 
-export type ConfigPageSection = "providers" | "defaults" | "fields" | "workspaces" | "usage";
+export type ConfigPageSection = "providers" | "defaults" | "fields" | "workspaces" | "usage" | "backup";
 export type WorkbenchSortField = "display_name" | "authors" | "year" | "modified_at";
 export type WorkbenchSortDirection = "asc" | "desc";
 export type WorkbenchPreviewMode = "rendered" | "raw";
@@ -12,8 +12,11 @@ export interface ConfigPageSession {
   selectedProvider: string;
   selectedTemplateId: string;
   activeFieldIndex: number;
+  selectedBackupTool: "export" | "restore" | "logs";
   usagePeriod: UsagePeriod;
   usageBreakdownBy: UsageBreakdownBy;
+  selectedUsageMonth: string;
+  selectedUsageYear: string;
   selectedUsageLegend: string;
 }
 
@@ -68,8 +71,11 @@ const DEFAULT_CONFIG_SESSION: ConfigPageSession = {
   selectedProvider: "",
   selectedTemplateId: "tpl_default",
   activeFieldIndex: 0,
+  selectedBackupTool: "export",
   usagePeriod: "day",
   usageBreakdownBy: "feature",
+  selectedUsageMonth: "",
+  selectedUsageYear: "",
   selectedUsageLegend: "",
 };
 
@@ -97,7 +103,7 @@ const DEFAULT_CHAT_SESSION: ChatPageSession = {
 };
 
 function normalizeConfigSection(value: unknown): ConfigPageSection {
-  if (value === "providers" || value === "defaults" || value === "fields" || value === "workspaces" || value === "usage") {
+  if (value === "providers" || value === "defaults" || value === "fields" || value === "workspaces" || value === "usage" || value === "backup") {
     return value;
   }
   return DEFAULT_CONFIG_SESSION.section;
@@ -156,8 +162,11 @@ function normalizeConfigSession(value: Partial<ConfigPageSession> | null | undef
     selectedProvider: String(value?.selectedProvider || ""),
     selectedTemplateId: String(value?.selectedTemplateId || DEFAULT_CONFIG_SESSION.selectedTemplateId),
     activeFieldIndex: Math.max(0, Number.isFinite(Number(value?.activeFieldIndex)) ? Number(value?.activeFieldIndex) : 0),
+    selectedBackupTool: value?.selectedBackupTool === "restore" || value?.selectedBackupTool === "logs" ? value.selectedBackupTool : "export",
     usagePeriod: normalizeUsagePeriod(value?.usagePeriod),
     usageBreakdownBy: normalizeUsageBreakdownBy(value?.usageBreakdownBy),
+    selectedUsageMonth: String(value?.selectedUsageMonth || ""),
+    selectedUsageYear: String(value?.selectedUsageYear || ""),
     selectedUsageLegend: String(value?.selectedUsageLegend || ""),
   };
 }

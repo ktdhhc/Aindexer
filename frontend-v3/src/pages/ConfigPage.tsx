@@ -37,6 +37,13 @@ import {
   updateIndexSettings,
 } from "../shared/api/index";
 import {
+  downloadDataBackup,
+  downloadLogBundle,
+  getRestoreStatus,
+  restoreDataBackup,
+  type RestoreStatus,
+} from "../shared/api/backup";
+import {
   ALL_WORKSPACES_USAGE_SCOPE,
   type UsageBreakdownBy,
   type UsageBucket,
@@ -46,6 +53,8 @@ import {
   savePricingRule,
 } from "../shared/api/usage";
 import { UI_LAYOUT_SIZE_OPTIONS, useShellStore, type UiLayoutSize } from "../app/shellStore";
+import { applyChatBackupState, collectChatBackupState } from "../shared/lib/backupState";
+import { confirmDesktopAction, openFileWithDesktopDialog, revealDesktopPath, saveDownloadedFile } from "../shared/lib/desktopFiles";
 import { getModelDefaults, setModelDefaults, type ModelDefaults } from "../shared/lib/modelDefaults";
 import { setProviderModels, useAvailableProviderModelEntries, useProviderModels } from "../shared/lib/providerModels";
 import { isDesktopShell } from "../shared/lib/runtime";
@@ -66,6 +75,14 @@ interface PricingDraft {
   inputPrice: string;
   outputPrice: string;
 }
+
+interface ProviderTestSummary {
+  tone: "ok" | "error" | "muted";
+  label: string;
+  detail: string;
+}
+
+type BackupTool = "export" | "restore" | "logs";
 
 function uniqueTrimmed(values: string[]): string[] {
   return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))];
@@ -173,7 +190,44 @@ function usageDimensionButtonLabel(value: UsageBreakdownBy): string {
   return value;
 }
 
+function restoreBlockedMessage(status: RestoreStatus): string {
+  const parts = [];
+  if (status.active_index_runs > 0) parts.push(`${status.active_index_runs} 个索引任务`);
+  if (status.active_translation_requests > 0) parts.push(`${status.active_translation_requests} 个翻译任务`);
+  return parts.length > 0 ? `存在运行中任务：${parts.join("，")}` : "当前不能恢复数据";
+}
+
+function backupToolLabel(tool: BackupTool): string {
+  if (tool === "restore") return "恢复";
+  if (tool === "logs") return "日志";
+  return "备份";
+}
+
+function backupToolCode(tool: BackupTool): string {
+  if (tool === "restore") return "RESTORE";
+  if (tool === "logs") return "LOGS";
+  return "BACKUP";
+}
+
 const GLOBAL_PRICING_PROVIDER = "__global__";
+
+const MODEL_DEFAULT_ITEMS: Array<{ key: keyof ModelDefaults; label: string; code: string }> = [
+  { key: "indexing", label: "索引", code: "I" },
+  { key: "translation", label: "翻译", code: "T" },
+  { key: "chat", label: "对话", code: "C" },
+];
+
+function formatModelDefaultKey(value: string): string {
+  const [provider, ...modelParts] = String(value || "").split("::");
+  const model = modelParts.join("::");
+  return provider && model ? `${provider} · ${model}` : value || "-";
+}
+
+function uiLayoutSizeCode(value: UiLayoutSize): string {
+  if (value === "small") return "S";
+  if (value === "medium") return "M";
+  return "L";
+}
 
 function pricingPayloadFromDraft(draft: PricingDraft) {
   return {
@@ -205,24 +259,48 @@ function formatUsageBucketKey(date: Date, period: UsagePeriod): string {
   return `${year}-${month}-${day}`;
 }
 
-function buildContinuousUsageBucketKeys(period: UsagePeriod, now = new Date()): string[] {
-  const keys: string[] = [];
+function parseUsageBucketKey(bucket: string, period: UsagePeriod): Date | null {
+  const value = String(bucket || "").trim();
   if (period === "month") {
-    const start = new Date(now.getFullYear(), 0, 1);
-    const cursor = new Date(start);
-    while (cursor <= now) {
-      keys.push(formatUsageBucketKey(cursor, "month"));
-      cursor.setMonth(cursor.getMonth() + 1);
-    }
-    return keys;
+    const matched = /^(\d{4})-(\d{2})$/.exec(value);
+    if (!matched) return null;
+    return new Date(Number(matched[1]), Number(matched[2]) - 1, 1);
   }
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const matched = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!matched) return null;
+  return new Date(Number(matched[1]), Number(matched[2]) - 1, Number(matched[3]));
+}
+
+function buildContinuousUsageBucketKeys(period: UsagePeriod, startBucket: string, endBucket: string): string[] {
+  const start = parseUsageBucketKey(startBucket, period);
+  const end = parseUsageBucketKey(endBucket, period);
+  if (!start || !end || start > end) {
+    return [];
+  }
+  const keys: string[] = [];
   const cursor = new Date(start);
-  while (cursor <= now) {
-    keys.push(formatUsageBucketKey(cursor, "day"));
-    cursor.setDate(cursor.getDate() + 1);
+  while (cursor <= end) {
+    keys.push(formatUsageBucketKey(cursor, period));
+    if (period === "month") {
+      cursor.setMonth(cursor.getMonth() + 1);
+    } else {
+      cursor.setDate(cursor.getDate() + 1);
+    }
   }
   return keys;
+}
+
+function buildContinuousUsageYears(startYear: string, endYear: string): string[] {
+  const start = Number(startYear);
+  const end = Number(endYear);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
+    return [];
+  }
+  const years: string[] = [];
+  for (let year = start; year <= end; year += 1) {
+    years.push(String(year));
+  }
+  return years;
 }
 
 function ConfigSectionIcon({ section }: { section: ConfigSection }) {
@@ -238,7 +316,23 @@ function ConfigSectionIcon({ section }: { section: ConfigSection }) {
   if (section === "workspaces") {
     return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.8 6.2A1.2 1.2 0 0 1 5 5h10a1.2 1.2 0 0 1 1.2 1.2v7.6A1.2 1.2 0 0 1 15 15H5a1.2 1.2 0 0 1-1.2-1.2Z" /><path d="M6.5 5V3.8h7V5" /></svg>;
   }
+  if (section === "backup") {
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5.5h10v9H5z" /><path d="M7.5 8h5" /><path d="M10 8v5" /><path d="m7.8 11 2.2 2 2.2-2" /></svg>;
+  }
   return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 14h2.8" /><path d="M8.8 14h2.4" /><path d="M12.2 14H15" /><path d="M6.2 10.5h1.6v3H6.2z" /><path d="M9.2 8.5h1.6V14H9.2z" /><path d="M12.2 6.5h1.6V14h-1.6z" /></svg>;
+}
+
+function BackupActionIcon({ kind }: { kind: "export" | "restore" | "logs" | "reveal" }) {
+  if (kind === "export") {
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v8" /><path d="m6.8 9.5 3.2 3.2 3.2-3.2" /><path d="M4.8 15.2h10.4" /></svg>;
+  }
+  if (kind === "restore") {
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15.8V7.7" /><path d="m13.2 10.3-3.2-3.2-3.2 3.2" /><path d="M4.8 4.8h10.4" /></svg>;
+  }
+  if (kind === "logs") {
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 4.8h10v10.4H5z" /><path d="M7.6 8h4.8" /><path d="M7.6 11h4.8" /><path d="M7.6 14h3" /></svg>;
+  }
+  return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 6h7v7" /><path d="m8 13 7-7" /><path d="M5 9.5V15h5.5" /></svg>;
 }
 
 export function ConfigPage() {
@@ -256,9 +350,12 @@ export function ConfigPage() {
   const selectedProvider = configSession.selectedProvider;
   const selectedTemplateId = configSession.selectedTemplateId;
   const activeFieldIndex = configSession.activeFieldIndex;
+  const selectedBackupTool = configSession.selectedBackupTool;
   const usagePeriod = configSession.usagePeriod;
   const usageBreakdownBy = configSession.usageBreakdownBy;
-  const selectedUsageLegend = configSession.selectedUsageLegend;
+  const selectedUsageMonth = String(configSession.selectedUsageMonth || "");
+  const selectedUsageYear = String(configSession.selectedUsageYear || "");
+  const selectedUsageLegend = String(configSession.selectedUsageLegend || "");
   const setSection = useCallback((next: ConfigSection) => {
     updateConfigSession(workspaceId, { section: next });
   }, [updateConfigSession, workspaceId]);
@@ -271,11 +368,20 @@ export function ConfigPage() {
   const setActiveFieldIndex = useCallback((next: number) => {
     updateConfigSession(workspaceId, { activeFieldIndex: next });
   }, [updateConfigSession, workspaceId]);
+  const setSelectedBackupTool = useCallback((next: BackupTool) => {
+    updateConfigSession(workspaceId, { selectedBackupTool: next });
+  }, [updateConfigSession, workspaceId]);
   const setUsagePeriod = useCallback((next: UsagePeriod) => {
     updateConfigSession(workspaceId, { usagePeriod: next, selectedUsageLegend: "" });
   }, [updateConfigSession, workspaceId]);
   const setUsageBreakdownBy = useCallback((next: UsageBreakdownBy) => {
     updateConfigSession(workspaceId, { usageBreakdownBy: next, selectedUsageLegend: "" });
+  }, [updateConfigSession, workspaceId]);
+  const setSelectedUsageMonth = useCallback((next: string) => {
+    updateConfigSession(workspaceId, { selectedUsageMonth: next, selectedUsageLegend: "" });
+  }, [updateConfigSession, workspaceId]);
+  const setSelectedUsageYear = useCallback((next: string) => {
+    updateConfigSession(workspaceId, { selectedUsageYear: next, selectedUsageLegend: "" });
   }, [updateConfigSession, workspaceId]);
   const setSelectedUsageLegend = useCallback((next: string | ((current: string) => string)) => {
     updateConfigSession(workspaceId, (current) => ({
@@ -288,7 +394,13 @@ export function ConfigPage() {
   const [providerModels, setProviderModelRows] = useState<string[]>([]);
   const [newModelName, setNewModelName] = useState("");
   const [providerMessage, setProviderMessage] = useState("准备就绪");
+  const [providerTestSummary, setProviderTestSummary] = useState<ProviderTestSummary>({
+    tone: "muted",
+    label: "TEST",
+    detail: "未测试",
+  });
 
+  const [savedModelDefaults, setSavedModelDefaults] = useState<ModelDefaults>(() => getModelDefaults());
   const [modelDefaultsDraft, setModelDefaultsDraft] = useState<ModelDefaults>(() => getModelDefaults());
   const [indexConcurrencyDraft, setIndexConcurrencyDraft] = useState("8");
   const [defaultsMessage, setDefaultsMessage] = useState("准备就绪");
@@ -304,11 +416,15 @@ export function ConfigPage() {
   const [workspaceMessage, setWorkspaceMessage] = useState("准备就绪");
 
   const [usageMessage, setUsageMessage] = useState("准备就绪");
+  const [backupMessage, setBackupMessage] = useState("准备就绪");
+  const [lastBackupPath, setLastBackupPath] = useState("");
+  const [lastLogPath, setLastLogPath] = useState("");
   const [pricingDraft, setPricingDraft] = useState<PricingDraft>({
     inputPrice: "",
     outputPrice: "",
   });
   const usageChartWindowRef = useRef<HTMLDivElement>(null);
+  const backupFileInputRef = useRef<HTMLInputElement>(null);
 
   const providersQuery = useQuery({
     queryKey: ["providers"],
@@ -342,8 +458,8 @@ export function ConfigPage() {
     queryFn: getIndexSettings,
   });
 
-  const usageSummaryQuery = useQuery({
-    queryKey: ["usage-summary", usagePeriod, usageBreakdownBy],
+  const usageRangeQuery = useQuery({
+    queryKey: ["usage-summary-range", usagePeriod, usageBreakdownBy],
     queryFn: () => getUsageSummary({
       workspaceId: ALL_WORKSPACES_USAGE_SCOPE,
       period: usagePeriod,
@@ -354,6 +470,13 @@ export function ConfigPage() {
   const pricingQuery = useQuery({
     queryKey: ["usage-pricing"],
     queryFn: listPricingRules,
+  });
+
+  const restoreStatusQuery = useQuery({
+    queryKey: ["backup-restore-status"],
+    queryFn: getRestoreStatus,
+    enabled: section === "backup",
+    refetchInterval: section === "backup" ? 5_000 : false,
   });
 
   const selectedProviderRow = useMemo(() => {
@@ -401,11 +524,91 @@ export function ConfigPage() {
   }, [workspaceId, workspacesQuery.data]);
 
   const availableModelEntries = useAvailableProviderModelEntries(providersQuery.data ?? []);
+  const availableModelKeySet = useMemo(() => {
+    return new Set(availableModelEntries.map((entry) => `${entry.provider}::${entry.model}`));
+  }, [availableModelEntries]);
+  const selectedDefaultModelCount = MODEL_DEFAULT_ITEMS.filter((item) => Boolean(modelDefaultsDraft[item.key])).length;
+  const invalidDefaultModelCount = MODEL_DEFAULT_ITEMS.filter((item) => {
+    const value = modelDefaultsDraft[item.key];
+    return Boolean(value && !availableModelKeySet.has(value));
+  }).length;
+  const modelDefaultsDirty = MODEL_DEFAULT_ITEMS.some((item) => modelDefaultsDraft[item.key] !== savedModelDefaults[item.key]);
+  const modelDefaultsState = invalidDefaultModelCount > 0 ? "!" : modelDefaultsDirty ? "*" : "OK";
+  const modelDefaultsStateClass = invalidDefaultModelCount > 0 ? "is-warn" : modelDefaultsDirty ? "is-muted" : "is-ok";
+  const savedIndexConcurrency = indexSettingsQuery.data?.max_concurrency ?? 8;
+  const indexConcurrencyDirty = indexConcurrencyDraft.trim() !== String(savedIndexConcurrency);
+  const indexConcurrencyState = indexSettingsQuery.data?.pending_next_batch ? "NEXT" : indexConcurrencyDirty ? "*" : "OK";
+  const indexConcurrencyStateClass = indexSettingsQuery.data?.pending_next_batch ? "is-warn" : indexConcurrencyDirty ? "is-muted" : "is-ok";
 
+  const availableUsageRange = usageRangeQuery.data?.available_range ?? { first_bucket: "", last_bucket: "" };
+  const usageMonthOptions = useMemo(() => {
+    const firstBucket = availableUsageRange.first_bucket;
+    const lastBucket = availableUsageRange.last_bucket;
+    if (!firstBucket || !lastBucket) return [];
+    return buildContinuousUsageBucketKeys("month", firstBucket.slice(0, 7), lastBucket.slice(0, 7));
+  }, [availableUsageRange.first_bucket, availableUsageRange.last_bucket]);
+  const usageYearOptions = useMemo(() => {
+    const firstBucket = availableUsageRange.first_bucket;
+    const lastBucket = availableUsageRange.last_bucket;
+    if (!firstBucket || !lastBucket) return [];
+    return buildContinuousUsageYears(firstBucket.slice(0, 4), lastBucket.slice(0, 4));
+  }, [availableUsageRange.first_bucket, availableUsageRange.last_bucket]);
+  const effectiveUsageMonth = useMemo(() => {
+    if (usageMonthOptions.length === 0) return "";
+    return usageMonthOptions.includes(selectedUsageMonth) ? selectedUsageMonth : usageMonthOptions[usageMonthOptions.length - 1];
+  }, [selectedUsageMonth, usageMonthOptions]);
+  const effectiveUsageYear = useMemo(() => {
+    if (usageYearOptions.length === 0) return "";
+    return usageYearOptions.includes(selectedUsageYear) ? selectedUsageYear : usageYearOptions[usageYearOptions.length - 1];
+  }, [selectedUsageYear, usageYearOptions]);
+  const currentUsageDayKey = useMemo(() => formatUsageBucketKey(new Date(), "day"), []);
+  const currentUsageMonthKey = useMemo(() => formatUsageBucketKey(new Date(), "month"), []);
+  const currentUsageYearKey = currentUsageMonthKey.slice(0, 4);
+  const usageWindowEnd = useMemo(() => {
+    if (usagePeriod === "day") {
+      if (effectiveUsageMonth === currentUsageMonthKey) {
+        return currentUsageDayKey;
+      }
+      const monthDate = parseUsageBucketKey(effectiveUsageMonth, "month");
+      if (!monthDate) return "";
+      const lastDay = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
+      return formatUsageBucketKey(lastDay, "day");
+    }
+    if (!effectiveUsageYear) return "";
+    if (effectiveUsageYear === currentUsageYearKey) {
+      return currentUsageMonthKey;
+    }
+    return `${effectiveUsageYear}-12`;
+  }, [currentUsageDayKey, currentUsageMonthKey, currentUsageYearKey, effectiveUsageMonth, effectiveUsageYear, usagePeriod]);
+  const usageBucketWindow = useMemo(() => {
+    if (usagePeriod === "day") {
+      if (!effectiveUsageMonth) return { start: "", end: "" };
+      const firstBucket = availableUsageRange.first_bucket;
+      const start = firstBucket.startsWith(`${effectiveUsageMonth}-`) ? firstBucket : `${effectiveUsageMonth}-01`;
+      return { start, end: usageWindowEnd };
+    }
+    if (!effectiveUsageYear) return { start: "", end: "" };
+    const firstBucket = availableUsageRange.first_bucket;
+    const start = firstBucket.startsWith(`${effectiveUsageYear}-`) ? firstBucket : `${effectiveUsageYear}-01`;
+    return { start, end: usageWindowEnd };
+  }, [availableUsageRange.first_bucket, effectiveUsageMonth, effectiveUsageYear, usagePeriod, usageWindowEnd]);
+  const usageSummaryQuery = useQuery({
+    queryKey: ["usage-summary", usagePeriod, usageBreakdownBy, usageBucketWindow.start, usageBucketWindow.end],
+    queryFn: () => getUsageSummary({
+      workspaceId: ALL_WORKSPACES_USAGE_SCOPE,
+      period: usagePeriod,
+      breakdownBy: usageBreakdownBy,
+      startBucket: usageBucketWindow.start || undefined,
+      endBucket: usageBucketWindow.end || undefined,
+    }),
+  });
   const rawUsageBuckets = usageSummaryQuery.data?.buckets ?? [];
   const usageBuckets = useMemo<UsageBucket[]>(() => {
     const bucketMap = new Map(rawUsageBuckets.map((bucket) => [bucket.bucket, bucket] as const));
-    return buildContinuousUsageBucketKeys(usagePeriod).map((bucketKey) => {
+    if (!usageBucketWindow.start || !usageBucketWindow.end) {
+      return [];
+    }
+    return buildContinuousUsageBucketKeys(usagePeriod, usageBucketWindow.start, usageBucketWindow.end).map((bucketKey) => {
       const bucket = bucketMap.get(bucketKey);
       if (bucket) {
         return bucket;
@@ -419,9 +622,9 @@ export function ConfigPage() {
         estimated_count: 0,
         estimated_cost: 0,
         dimension_breakdown: {},
-      } satisfies UsageBucket;
+        } satisfies UsageBucket;
     });
-  }, [rawUsageBuckets, usagePeriod]);
+  }, [rawUsageBuckets, usageBucketWindow.end, usageBucketWindow.start, usagePeriod]);
   const usageTotals = usageSummaryQuery.data?.totals ?? {
     input_tokens: 0,
     output_tokens: 0,
@@ -479,6 +682,7 @@ export function ConfigPage() {
     if (!selectedProviderRow) {
       setProviderDraft(null);
       setProviderModelRows([]);
+      setProviderTestSummary({ tone: "muted", label: "TEST", detail: "未测试" });
       return;
     }
     setProviderDraft({
@@ -491,6 +695,7 @@ export function ConfigPage() {
       enabled: Boolean(selectedProviderRow.enabled),
     });
     setProviderModelRows(storedProviderModels);
+    setProviderTestSummary({ tone: "muted", label: "TEST", detail: "未测试" });
   }, [selectedProviderRow, storedProviderModels]);
 
   useEffect(() => {
@@ -506,7 +711,7 @@ export function ConfigPage() {
     requestAnimationFrame(() => {
       node.scrollLeft = Math.max(0, node.scrollWidth - node.clientWidth);
     });
-  }, [section, usageBuckets.length, usagePeriod]);
+  }, [effectiveUsageMonth, effectiveUsageYear, section, usageBuckets.length, usagePeriod]);
 
   useEffect(() => {
     const globalRule = pricingQuery.data?.find(
@@ -630,10 +835,18 @@ export function ConfigPage() {
       return testProvider(selectedProvider);
     },
     onSuccess: (result) => {
-      setProviderMessage(`${result.success ? "连接成功" : "连接失败"} · ${result.elapsed_seconds.toFixed(2)}s · ${result.message}`);
+      setProviderTestSummary({
+        tone: result.success ? "ok" : "error",
+        label: `${result.success ? "OK" : "ERR"} · ${result.elapsed_seconds.toFixed(2)}s`,
+        detail: result.message,
+      });
     },
     onError: (error) => {
-      setProviderMessage(error instanceof Error ? error.message : "连接测试失败");
+      setProviderTestSummary({
+        tone: "error",
+        label: "ERR",
+        detail: error instanceof Error ? error.message : "连接测试失败",
+      });
     },
   });
 
@@ -670,6 +883,7 @@ export function ConfigPage() {
     mutationFn: async () => setModelDefaults(modelDefaultsDraft),
     onSuccess: (defaults) => {
       setModelDefaultsDraft(defaults);
+      setSavedModelDefaults(defaults);
       setDefaultsMessage("默认模型已保存");
     },
     onError: (error) => {
@@ -865,6 +1079,67 @@ export function ConfigPage() {
     },
   });
 
+  const exportBackupMutation = useMutation({
+    mutationFn: async () => {
+      const file = await downloadDataBackup(collectChatBackupState());
+      const savedPath = await saveDownloadedFile(file, {
+        title: "保存数据备份",
+        defaultPath: file.filename,
+        filters: [{ name: "Backup", extensions: ["zip"] }],
+      });
+      return savedPath;
+    },
+    onSuccess: (savedPath) => {
+      if (savedPath) {
+        setLastBackupPath(savedPath);
+      }
+      setBackupMessage(savedPath ? "已保存" : desktopShell ? "取消" : "已下载");
+    },
+    onError: (error) => {
+      setBackupMessage(error instanceof Error ? error.message : "导出失败");
+    },
+  });
+
+  const restoreBackupMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const status = await getRestoreStatus();
+      if (!status.can_restore) {
+        throw new Error(restoreBlockedMessage(status));
+      }
+      return restoreDataBackup(file);
+    },
+    onSuccess: (result) => {
+      applyChatBackupState(result.frontend_state);
+      setBackupMessage(`恢复完成，回退快照：${result.pre_restore_backup}，正在刷新`);
+      queryClient.clear();
+      window.setTimeout(() => window.location.reload(), 800);
+    },
+    onError: (error) => {
+      setBackupMessage(error instanceof Error ? error.message : "恢复失败");
+    },
+  });
+
+  const exportLogsMutation = useMutation({
+    mutationFn: async () => {
+      const file = await downloadLogBundle();
+      const savedPath = await saveDownloadedFile(file, {
+        title: "保存运行日志",
+        defaultPath: file.filename,
+        filters: [{ name: "Diagnostics", extensions: ["zip"] }],
+      });
+      return savedPath;
+    },
+    onSuccess: (savedPath) => {
+      if (savedPath) {
+        setLastLogPath(savedPath);
+      }
+      setBackupMessage(savedPath ? "已保存" : desktopShell ? "取消" : "已下载");
+    },
+    onError: (error) => {
+      setBackupMessage(error instanceof Error ? error.message : "日志导出失败");
+    },
+  });
+
   function updateProviderDraft(patch: Partial<ProviderDraft>) {
     setProviderDraft((current) => (current ? { ...current, ...patch } : current));
   }
@@ -918,6 +1193,56 @@ export function ConfigPage() {
     setFieldDrafts((rows) => rows.filter((_, currentIndex) => currentIndex !== index));
   }
 
+  async function startRestoreFlow(file: File) {
+    const accepted = await confirmDesktopAction("覆盖当前数据并恢复 Chat？", "恢复数据");
+    if (!accepted) {
+      return;
+    }
+    await restoreBackupMutation.mutateAsync(file);
+  }
+
+  async function handleImportBackupClick() {
+    if (!desktopShell) {
+      backupFileInputRef.current?.click();
+      return;
+    }
+    const file = await openFileWithDesktopDialog({
+      title: "选择数据备份",
+      filters: [{ name: "Backup", extensions: ["zip"] }],
+      mimeType: "application/zip",
+    });
+    if (!file) {
+      return;
+    }
+    void startRestoreFlow(file);
+  }
+
+  const restoreStateLabel = restoreStatusQuery.data
+    ? restoreStatusQuery.data.can_restore
+      ? "READY"
+      : "BUSY"
+    : restoreStatusQuery.isLoading
+      ? "SYNC"
+      : "CHECK";
+
+  const backupToolItems: Array<{ key: BackupTool; detail: string; meta: string }> = [
+    {
+      key: "export",
+      detail: lastBackupPath ? "PATH" : desktopShell ? "DIALOG" : "WEB",
+      meta: "ZIP",
+    },
+    {
+      key: "restore",
+      detail: restoreStateLabel,
+      meta: "CHAT",
+    },
+    {
+      key: "logs",
+      detail: lastLogPath ? "PATH" : desktopShell ? "DIALOG" : "WEB",
+      meta: "DIAG",
+    },
+  ];
+
   const currentSectionStatus =
     section === "providers"
       ? providerMessage
@@ -925,9 +1250,11 @@ export function ConfigPage() {
         ? defaultsMessage
         : section === "fields"
           ? fieldsMessage
-          : section === "workspaces"
-            ? workspaceMessage
-            : usageMessage;
+            : section === "workspaces"
+              ? workspaceMessage
+              : section === "usage"
+                ? usageMessage
+                : backupMessage;
   const activeField = fieldDrafts[activeFieldIndex] ?? null;
 
   return (
@@ -953,13 +1280,6 @@ export function ConfigPage() {
               <span>{providerStatus(selectedProviderRow)}</span>
             </span>
           </button>
-          <button className={section === "defaults" ? "is-active" : ""} type="button" onClick={() => setSection("defaults")}>
-            <span className="v35-config-nav-icon" aria-hidden="true"><ConfigSectionIcon section="defaults" /></span>
-            <span className="v35-config-nav-copy">
-              <strong>默认配置</strong>
-              <span>{desktopShell ? "3 workflows" : "索引 / 翻译 / 对话"}</span>
-            </span>
-          </button>
           <button className={section === "fields" ? "is-active" : ""} type="button" onClick={() => setSection("fields")}>
             <span className="v35-config-nav-icon" aria-hidden="true"><ConfigSectionIcon section="fields" /></span>
             <span className="v35-config-nav-copy">
@@ -979,6 +1299,20 @@ export function ConfigPage() {
             <span className="v35-config-nav-copy">
               <strong>用量</strong>
               <span>{compactNumber(usageTotals.total_tokens)} tokens</span>
+            </span>
+          </button>
+          <button className={section === "defaults" ? "is-active" : ""} type="button" onClick={() => setSection("defaults")}>
+            <span className="v35-config-nav-icon" aria-hidden="true"><ConfigSectionIcon section="defaults" /></span>
+            <span className="v35-config-nav-copy">
+              <strong>默认配置</strong>
+              <span>{desktopShell ? "3 workflows" : "索引 / 翻译 / 对话"}</span>
+            </span>
+          </button>
+          <button className={section === "backup" ? "is-active" : ""} type="button" onClick={() => setSection("backup")}>
+            <span className="v35-config-nav-icon" aria-hidden="true"><ConfigSectionIcon section="backup" /></span>
+            <span className="v35-config-nav-copy">
+              <strong>数据</strong>
+              <span>备份 / 恢复 / 日志</span>
             </span>
           </button>
           <p className="v35-config-status">{currentSectionStatus}</p>
@@ -1006,7 +1340,7 @@ export function ConfigPage() {
                 </div>
               </div>
 
-              <article className="v35-config-paper">
+              <article className="v35-config-paper v35-config-paper-scrollable">
                 <header className="v35-config-paper-head">
                   <div>
                     <p>Provider</p>
@@ -1014,13 +1348,12 @@ export function ConfigPage() {
                   </div>
                   <div className="v35-provider-head-actions">
                     <span className={`v35-status ${selectedProviderRow?.enabled ? "is-ok" : "is-muted"}`}>{providerStatus(selectedProviderRow)}</span>
-                    <button className="v35-button" type="button" disabled={!providerDraft || testProviderMutation.isPending} onClick={() => void testProviderMutation.mutateAsync()}>测试</button>
                     <button className="v35-button v35-button-primary" type="button" disabled={!providerDraft || saveProviderMutation.isPending} onClick={() => void saveProviderMutation.mutateAsync()}>保存</button>
                   </div>
                 </header>
 
                 {providerDraft ? (
-                  <>
+                  <div className="v35-provider-body">
                     <datalist id="v35-provider-base-urls">
                       {baseUrlSuggestions.map((url) => {
                         const match = selectedProviderRow?.registry?.provider.base_urls.find((item) => item.url === url);
@@ -1096,7 +1429,17 @@ export function ConfigPage() {
                         </div>
                       </section>
                     </div>
-                  </>
+                    <section className="v35-provider-test-panel">
+                      <div className="v35-provider-test-head">
+                        <div>
+                          <span>TEST</span>
+                          <strong>{providerTestSummary.label}</strong>
+                        </div>
+                        <button className="v35-button" type="button" disabled={!providerDraft || testProviderMutation.isPending} onClick={() => void testProviderMutation.mutateAsync()}>测试</button>
+                      </div>
+                      <p className={`v35-provider-test-detail is-${providerTestSummary.tone}`}>{providerTestSummary.detail}</p>
+                    </section>
+                  </div>
                 ) : (
                   <p className="v35-muted">暂无 Provider</p>
                 )}
@@ -1111,21 +1454,21 @@ export function ConfigPage() {
 
           {section === "defaults" ? (
             <section className="v35-config-section">
-              <div className="v35-config-list">
-                <div className="v35-config-list-item is-active">
-                  <strong>界面尺寸</strong>
-                  <span>{UI_LAYOUT_SIZE_OPTIONS.find((option) => option.value === uiLayoutSize)?.label ?? "大"}</span>
-                  <em>当前布局</em>
+              <div className="v35-config-default-summary" aria-label="默认配置状态">
+                <div className="v35-config-default-summary-item">
+                  <span>UI</span>
+                  <strong>{uiLayoutSizeCode(uiLayoutSize)}</strong>
+                  <em>OK</em>
                 </div>
-                <div className="v35-config-list-item">
-                  <strong>默认模型</strong>
-                  <span>{availableModelEntries.length} available</span>
-                  <em>本地偏好</em>
+                <div className="v35-config-default-summary-item">
+                  <span>MODEL</span>
+                  <strong>{selectedDefaultModelCount}/{MODEL_DEFAULT_ITEMS.length}</strong>
+                  <em>{modelDefaultsState}</em>
                 </div>
-                <div className="v35-config-list-item">
-                  <strong>索引并发</strong>
-                  <span>{indexSettingsQuery.data?.max_concurrency ?? 8} / 20</span>
-                  <em>{indexSettingsQuery.data?.pending_next_batch ? "下批生效" : "当前配置"}</em>
+                <div className="v35-config-default-summary-item">
+                  <span>INDEX</span>
+                  <strong>{indexSettingsQuery.data?.max_concurrency ?? 8}</strong>
+                  <em>{indexConcurrencyState}</em>
                 </div>
               </div>
 
@@ -1133,77 +1476,107 @@ export function ConfigPage() {
                 <header className="v35-config-paper-head">
                   <div>
                     <p>Defaults</p>
-                    <h2>指定默认模型与界面尺寸</h2>
+                    <h2>默认配置</h2>
                   </div>
                 </header>
 
-                <div className="v35-config-form-grid">
-                  <div className="v35-field v35-span-2">
-                    <span>字体布局大小</span>
-                    <div className="v35-ui-size-switch" role="radiogroup" aria-label="字体布局大小">
-                      {UI_LAYOUT_SIZE_OPTIONS.map((option) => (
-                        <button
-                          key={option.value}
-                          className={uiLayoutSize === option.value ? "is-active" : ""}
-                          type="button"
-                          role="radio"
-                          aria-checked={uiLayoutSize === option.value}
-                          onClick={() => {
-                            setUiLayoutSize(option.value as UiLayoutSize);
-                            setDefaultsMessage(`界面尺寸已切换为${option.label}`);
-                          }}
-                        >
-                          <strong>{option.label}</strong>
-                          <span>{option.description}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <label className="v35-field v35-span-2">
-                    <span>生成索引</span>
-                    <select className="v35-input" value={modelDefaultsDraft.indexing} onChange={(event) => setModelDefaultsDraft((current) => ({ ...current, indexing: event.target.value }))}>
-                      <option value="">未指定</option>
-                      {availableModelEntries.map((entry) => (
-                        <option key={`indexing_${entry.provider}_${entry.model}`} value={`${entry.provider}::${entry.model}`}>{entry.provider} · {entry.model}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="v35-field v35-span-2">
-                    <span>翻译</span>
-                    <select className="v35-input" value={modelDefaultsDraft.translation} onChange={(event) => setModelDefaultsDraft((current) => ({ ...current, translation: event.target.value }))}>
-                      <option value="">未指定</option>
-                      {availableModelEntries.map((entry) => (
-                        <option key={`translation_${entry.provider}_${entry.model}`} value={`${entry.provider}::${entry.model}`}>{entry.provider} · {entry.model}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="v35-field v35-span-2">
-                    <span>对话</span>
-                    <select className="v35-input" value={modelDefaultsDraft.chat} onChange={(event) => setModelDefaultsDraft((current) => ({ ...current, chat: event.target.value }))}>
-                      <option value="">未指定</option>
-                      {availableModelEntries.map((entry) => (
-                        <option key={`chat_${entry.provider}_${entry.model}`} value={`${entry.provider}::${entry.model}`}>{entry.provider} · {entry.model}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="v35-field v35-span-2">
-                    <span>索引最大并发量</span>
-                    <input
-                      className="v35-input"
-                      type="number"
-                      min={indexSettingsQuery.data?.min_concurrency ?? 1}
-                      max={indexSettingsQuery.data?.max_allowed_concurrency ?? 20}
-                      value={indexConcurrencyDraft}
-                      onChange={(event) => setIndexConcurrencyDraft(event.target.value)}
-                    />
-                    <em>默认 8，上限 20；如当前有索引批次运行，保存后从下一批任务生效。</em>
-                  </label>
-                </div>
+                <div className="v35-defaults-stack">
+                  <div className="v35-defaults-two-col">
+                    <section className="v35-defaults-block">
+                      <header className="v35-defaults-block-head">
+                        <div>
+                          <span>UI</span>
+                          <strong>界面尺寸</strong>
+                        </div>
+                        <span className="v35-status is-ok">OK</span>
+                      </header>
+                      <div className="v35-ui-size-switch" role="radiogroup" aria-label="字体布局大小">
+                        {UI_LAYOUT_SIZE_OPTIONS.map((option) => (
+                          <button
+                            key={option.value}
+                            className={uiLayoutSize === option.value ? "is-active" : ""}
+                            type="button"
+                            role="radio"
+                            aria-checked={uiLayoutSize === option.value}
+                            onClick={() => {
+                              setUiLayoutSize(option.value as UiLayoutSize);
+                              setDefaultsMessage(`界面尺寸已切换为${option.label}`);
+                            }}
+                          >
+                            <strong>{option.label}</strong>
+                            <span>{uiLayoutSizeCode(option.value as UiLayoutSize)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
 
-                <footer className="v35-config-actions">
-                  <button className="v35-button v35-button-primary" type="button" disabled={saveDefaultsMutation.isPending} onClick={() => void saveDefaultsMutation.mutateAsync()}>保存默认配置</button>
-                  <button className="v35-button" type="button" disabled={saveIndexSettingsMutation.isPending} onClick={() => void saveIndexSettingsMutation.mutateAsync()}>保存索引并发</button>
-                </footer>
+                    <section className="v35-defaults-block">
+                      <header className="v35-defaults-block-head">
+                        <div>
+                          <span>MODEL</span>
+                          <strong>默认模型</strong>
+                        </div>
+                        <span className={`v35-status ${modelDefaultsStateClass}`}>{modelDefaultsState}</span>
+                      </header>
+                      <div className="v35-default-model-grid">
+                        {MODEL_DEFAULT_ITEMS.map((item) => {
+                          const value = modelDefaultsDraft[item.key];
+                          const isUnavailable = Boolean(value && !availableModelKeySet.has(value));
+                          return (
+                            <label className="v35-field" key={item.key}>
+                              <span>{item.code} · {item.label}</span>
+                              <select
+                                className="v35-input"
+                                value={value}
+                                disabled={availableModelEntries.length === 0 && !value}
+                                onChange={(event) => setModelDefaultsDraft((current) => ({ ...current, [item.key]: event.target.value }))}
+                              >
+                                <option value="">-</option>
+                                {isUnavailable ? <option value={value}>! {formatModelDefaultKey(value)}</option> : null}
+                                {availableModelEntries.map((entry) => (
+                                  <option key={`${item.key}_${entry.provider}_${entry.model}`} value={`${entry.provider}::${entry.model}`}>{entry.provider} · {entry.model}</option>
+                                ))}
+                              </select>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {availableModelEntries.length === 0 ? (
+                        <div className="v35-defaults-empty">
+                          <span>MODEL 0</span>
+                          <button className="v35-button v35-button-compact" type="button" onClick={() => setSection("providers")}>Provider</button>
+                        </div>
+                      ) : null}
+                      <footer className="v35-defaults-inline-actions">
+                        <button className="v35-button v35-button-primary" type="button" disabled={!modelDefaultsDirty || saveDefaultsMutation.isPending} onClick={() => void saveDefaultsMutation.mutateAsync()}>保存</button>
+                      </footer>
+                    </section>
+                  </div>
+
+                  <section className="v35-defaults-block">
+                    <header className="v35-defaults-block-head">
+                      <div>
+                        <span>INDEX</span>
+                        <strong>索引并发</strong>
+                      </div>
+                      <span className={`v35-status ${indexConcurrencyStateClass}`}>{indexConcurrencyState}</span>
+                    </header>
+                    <div className="v35-defaults-index-row">
+                      <label className="v35-field">
+                        <span>{indexSettingsQuery.data?.min_concurrency ?? 1}-{indexSettingsQuery.data?.max_allowed_concurrency ?? 20}</span>
+                        <input
+                          className="v35-input"
+                          type="number"
+                          min={indexSettingsQuery.data?.min_concurrency ?? 1}
+                          max={indexSettingsQuery.data?.max_allowed_concurrency ?? 20}
+                          value={indexConcurrencyDraft}
+                          onChange={(event) => setIndexConcurrencyDraft(event.target.value)}
+                        />
+                      </label>
+                      <button className="v35-button" type="button" disabled={!indexConcurrencyDirty || saveIndexSettingsMutation.isPending} onClick={() => void saveIndexSettingsMutation.mutateAsync()}>保存</button>
+                    </div>
+                  </section>
+                </div>
               </article>
             </section>
           ) : null}
@@ -1379,6 +1752,25 @@ export function ConfigPage() {
                   <button className={usagePeriod === "day" ? "is-active" : ""} type="button" onClick={() => setUsagePeriod("day")}>日</button>
                   <button className={usagePeriod === "month" ? "is-active" : ""} type="button" onClick={() => setUsagePeriod("month")}>月</button>
                 </div>
+                <div className="v35-usage-scope-select">
+                  <select
+                    aria-label={usagePeriod === "day" ? "选择月份" : "选择年份"}
+                    className="v35-input"
+                    value={usagePeriod === "day" ? effectiveUsageMonth : effectiveUsageYear}
+                    disabled={usagePeriod === "day" ? usageMonthOptions.length === 0 : usageYearOptions.length === 0}
+                    onChange={(event) => {
+                      if (usagePeriod === "day") {
+                        setSelectedUsageMonth(event.target.value);
+                        return;
+                      }
+                      setSelectedUsageYear(event.target.value);
+                    }}
+                  >
+                    {(usagePeriod === "day" ? usageMonthOptions : usageYearOptions).map((value) => (
+                      <option key={value} value={value}>{value}</option>
+                    ))}
+                  </select>
+                </div>
                 <div className="v35-usage-dimension-switch" aria-label="统计维度">
                   {USAGE_BREAKDOWN_ORDER.map((dimension) => (
                     <button className={usageBreakdownBy === dimension ? "is-active" : ""} key={dimension} type="button" onClick={() => setUsageBreakdownBy(dimension)}>
@@ -1397,13 +1789,6 @@ export function ConfigPage() {
                   <span className="v35-status is-ok">{usageBreakdownLabel(usageBreakdownBy)}</span>
                 </header>
 
-                <div className="v35-usage-metrics">
-                  <div><span>输入</span><strong>{compactNumber(activeUsageMetrics.input_tokens)}</strong></div>
-                  <div><span>输出</span><strong>{compactNumber(activeUsageMetrics.output_tokens)}</strong></div>
-                  <div><span>请求</span><strong>{compactNumber(activeUsageMetrics.request_count)}</strong></div>
-                  <div><span>预算</span><strong>{formatCost(activeUsageMetrics.estimated_cost)}</strong></div>
-                </div>
-
                 <div className="v35-usage-legend" aria-label="维度图例">
                   {usageLegendItems.map((item) => (
                     <button className={`v35-usage-legend-item ${selectedUsageLegend === item.value ? "is-active" : ""}`} key={item.value} type="button" onClick={() => setSelectedUsageLegend((current) => current === item.value ? "" : item.value)}>
@@ -1415,42 +1800,50 @@ export function ConfigPage() {
                   {usageLegendItems.length === 0 ? <span className="v35-muted">暂无图例</span> : null}
                 </div>
 
-                <div className="v35-usage-chart-frame" onClick={(event) => {
-                  const target = event.target as HTMLElement;
-                  if (!target.closest(".v35-usage-bar-item")) {
-                    setSelectedUsageLegend("");
-                  }
-                }}>
-                  <div className="v35-usage-axis" aria-hidden="true">
-                    {usageAxisTicks.map((tick) => <span key={`${tick.ratio}_${tick.value}`}>{compactNumber(tick.value)}</span>)}
-                  </div>
-                  <div className="v35-usage-chart-window" ref={usageChartWindowRef}>
-                    <div className="v35-usage-chart" aria-label="token 用量柱状图">
-                      {usageBuckets.map((bucket: UsageBucket) => {
-                        const totalHeight = bucket.total_tokens > 0
-                          ? Math.max(6, Math.round((bucket.total_tokens / maxBucketTokens) * 100))
-                          : 0;
-                        return (
-                          <div className="v35-usage-bar-item" key={bucket.bucket} title={`${bucket.bucket} · ${compactNumber(bucket.total_tokens)} tokens`}>
-                            <div className="v35-usage-bar-track">
-                              <div className={`v35-usage-bar ${bucket.total_tokens > 0 ? "" : "is-empty"}`} style={{ height: `${totalHeight}%` }}>
-                                {usageLegendItems.filter((item) => Number(bucket.dimension_breakdown[item.value] || 0) > 0).map((item) => {
-                                  const share = bucket.total_tokens > 0 ? Math.max(8, Math.round((Number(bucket.dimension_breakdown[item.value] || 0) / bucket.total_tokens) * 100)) : 0;
-                                  const segmentClass = selectedUsageLegend
-                                    ? selectedUsageLegend === item.value
-                                      ? `${item.colorClass} is-highlighted`
-                                      : `${item.colorClass} is-dimmed`
-                                    : item.colorClass;
-                                  return <span className={segmentClass} key={`${bucket.bucket}_${item.value}`} style={{ height: `${share}%` }} />;
-                                })}
-                              </div>
-                            </div>
-                            <strong>{usagePeriod === "month" ? bucket.bucket.slice(5) : bucket.bucket.slice(5).replace("-", "/")}</strong>
-                            <em>{compactNumber(bucket.total_tokens)}</em>
-                          </div>
-                        );
-                      })}
+                <div className="v35-usage-main">
+                  <div className="v35-usage-chart-frame" onClick={(event) => {
+                    const target = event.target as HTMLElement;
+                    if (!target.closest(".v35-usage-bar-item")) {
+                      setSelectedUsageLegend("");
+                    }
+                  }}>
+                    <div className="v35-usage-axis" aria-hidden="true">
+                      {usageAxisTicks.map((tick) => <span key={`${tick.ratio}_${tick.value}`}>{compactNumber(tick.value)}</span>)}
                     </div>
+                    <div className="v35-usage-chart-window" ref={usageChartWindowRef}>
+                      <div className="v35-usage-chart" aria-label="token 用量柱状图">
+                        {usageBuckets.map((bucket: UsageBucket) => {
+                          const totalHeight = bucket.total_tokens > 0
+                            ? Math.max(6, Math.round((bucket.total_tokens / maxBucketTokens) * 100))
+                            : 0;
+                          return (
+                            <div className="v35-usage-bar-item" key={bucket.bucket} title={`${bucket.bucket} · ${compactNumber(bucket.total_tokens)} tokens`}>
+                              <div className="v35-usage-bar-track">
+                                <div className={`v35-usage-bar ${bucket.total_tokens > 0 ? "" : "is-empty"}`} style={{ height: `${totalHeight}%` }}>
+                                  {usageLegendItems.filter((item) => Number(bucket.dimension_breakdown[item.value] || 0) > 0).map((item) => {
+                                    const share = bucket.total_tokens > 0 ? Math.max(8, Math.round((Number(bucket.dimension_breakdown[item.value] || 0) / bucket.total_tokens) * 100)) : 0;
+                                    const segmentClass = selectedUsageLegend
+                                      ? selectedUsageLegend === item.value
+                                        ? `${item.colorClass} is-highlighted`
+                                        : `${item.colorClass} is-dimmed`
+                                      : item.colorClass;
+                                    return <span className={segmentClass} key={`${bucket.bucket}_${item.value}`} style={{ height: `${share}%` }} />;
+                                  })}
+                                </div>
+                              </div>
+                              <strong>{usagePeriod === "month" ? bucket.bucket.slice(5) : bucket.bucket.slice(5).replace("-", "/")}</strong>
+                              <em>{compactNumber(bucket.total_tokens)}</em>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="v35-usage-metrics">
+                    <div><span>输入</span><strong>{compactNumber(activeUsageMetrics.input_tokens)}</strong></div>
+                    <div><span>输出</span><strong>{compactNumber(activeUsageMetrics.output_tokens)}</strong></div>
+                    <div><span>请求</span><strong>{compactNumber(activeUsageMetrics.request_count)}</strong></div>
+                    <div><span>预算</span><strong>{formatCost(activeUsageMetrics.estimated_cost)}</strong></div>
                   </div>
                 </div>
 
@@ -1461,6 +1854,166 @@ export function ConfigPage() {
                     <button className="v35-button v35-button-primary" type="button" disabled={savePricingMutation.isPending} onClick={() => void savePricingMutation.mutateAsync()}>保存</button>
                   </div>
                 </section>
+              </article>
+            </section>
+          ) : null}
+
+          {section === "backup" ? (
+            <section className="v35-config-section">
+              <div className="v35-config-list">
+                {backupToolItems.map((item) => (
+                  <button
+                    key={item.key}
+                    className={`v35-config-list-item ${selectedBackupTool === item.key ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => setSelectedBackupTool(item.key)}
+                  >
+                    <strong>{backupToolLabel(item.key)}</strong>
+                    <span>{item.detail}</span>
+                    <em>{item.meta}</em>
+                  </button>
+                ))}
+              </div>
+
+              <article className="v35-config-paper v35-config-paper-defaults v35-backup-paper">
+                <header className="v35-config-paper-head">
+                  <div>
+                    <p>{backupToolCode(selectedBackupTool)}</p>
+                    <h2>{backupToolLabel(selectedBackupTool)}</h2>
+                  </div>
+                  <span className={`v35-status ${selectedBackupTool === "restore" ? "is-warn" : selectedBackupTool === "logs" ? "is-muted" : "is-ok"}`}>
+                    {selectedBackupTool === "restore" ? restoreStateLabel : selectedBackupTool === "logs" ? "DIAG" : "ZIP"}
+                  </span>
+                </header>
+
+                <div className="v35-backup-detail-body">
+                  {selectedBackupTool === "export" ? (
+                    <section className="v35-defaults-block v35-backup-block">
+                      <header className="v35-defaults-block-head">
+                        <div>
+                          <span>BACKUP</span>
+                          <strong>ZIP</strong>
+                        </div>
+                        <span className="v35-status is-ok">SAVE</span>
+                      </header>
+                      <div className="v35-backup-pills" aria-label="备份范围">
+                        <span>DB</span>
+                        <span>FILES</span>
+                        <span>CHAT</span>
+                        <span>KEY</span>
+                      </div>
+                      <footer className="v35-defaults-inline-actions v35-backup-actions">
+                        <div className="v35-backup-action-main">
+                          <button className="v35-button v35-button-primary" type="button" disabled={exportBackupMutation.isPending} onClick={() => void exportBackupMutation.mutateAsync()}>
+                            <span className="v35-backup-button-icon" aria-hidden="true"><BackupActionIcon kind="export" /></span>
+                            <span>备份</span>
+                          </button>
+                        </div>
+                        <div className="v35-backup-action-side">
+                          <span className="v35-backup-state">{desktopShell ? (lastBackupPath ? "PATH" : "DIALOG") : "WEB"}</span>
+                          <button className="v35-icon-button" type="button" title="显示文件" disabled={!desktopShell || !lastBackupPath} onClick={() => {
+                            void revealDesktopPath(lastBackupPath).catch(() => setBackupMessage("定位失败"));
+                          }}>
+                            <BackupActionIcon kind="reveal" />
+                          </button>
+                        </div>
+                      </footer>
+                    </section>
+                  ) : null}
+
+                  {selectedBackupTool === "restore" ? (
+                    <section className="v35-defaults-block v35-backup-block">
+                      <header className="v35-defaults-block-head">
+                        <div>
+                          <span>RESTORE</span>
+                          <strong>{restoreStateLabel}</strong>
+                        </div>
+                        <span className={`v35-status ${restoreStatusQuery.data?.can_restore ? "is-ok" : "is-warn"}`}>{restoreStatusQuery.data?.can_restore ? "READY" : "BUSY"}</span>
+                      </header>
+                      <div className="v35-backup-pills" aria-label="恢复规则">
+                        <span>SNAP</span>
+                        <span>CHAT</span>
+                        <span>OVER</span>
+                      </div>
+                      <input
+                        ref={backupFileInputRef}
+                        hidden
+                        type="file"
+                        accept=".zip,application/zip"
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0] ?? null;
+                          event.currentTarget.value = "";
+                          if (!file) return;
+                          void startRestoreFlow(file);
+                        }}
+                      />
+                      {restoreStatusQuery.data && !restoreStatusQuery.data.can_restore ? (
+                        <p className="v35-backup-detail-note is-warn">{restoreBlockedMessage(restoreStatusQuery.data)}</p>
+                      ) : null}
+                      <footer className="v35-defaults-inline-actions v35-backup-actions">
+                        <div className="v35-backup-action-main">
+                          <button className="v35-button" type="button" disabled={restoreBackupMutation.isPending} onClick={() => void handleImportBackupClick()}>
+                            <span className="v35-backup-button-icon" aria-hidden="true"><BackupActionIcon kind="restore" /></span>
+                            <span>恢复</span>
+                          </button>
+                        </div>
+                        <div className="v35-backup-action-side">
+                          <span className="v35-backup-state">{desktopShell ? "DIALOG" : "WEB"}</span>
+                        </div>
+                      </footer>
+                    </section>
+                  ) : null}
+
+                  {selectedBackupTool === "logs" ? (
+                    <section className="v35-defaults-block v35-backup-block">
+                      <header className="v35-defaults-block-head">
+                        <div>
+                          <span>LOGS</span>
+                          <strong>DIAG</strong>
+                        </div>
+                        <span className="v35-status is-muted">ZIP</span>
+                      </header>
+                      <div className="v35-backup-pills" aria-label="日志范围">
+                        <span>APP</span>
+                        <span>SIDECAR</span>
+                        <span>UI</span>
+                        <span>JSON</span>
+                      </div>
+                      <footer className="v35-defaults-inline-actions v35-backup-actions">
+                        <div className="v35-backup-action-main">
+                          <button className="v35-button" type="button" disabled={exportLogsMutation.isPending} onClick={() => void exportLogsMutation.mutateAsync()}>
+                            <span className="v35-backup-button-icon" aria-hidden="true"><BackupActionIcon kind="logs" /></span>
+                            <span>日志</span>
+                          </button>
+                        </div>
+                        <div className="v35-backup-action-side">
+                          <span className="v35-backup-state">{desktopShell ? (lastLogPath ? "PATH" : "DIALOG") : "WEB"}</span>
+                          <button className="v35-icon-button" type="button" title="显示文件" disabled={!desktopShell || !lastLogPath} onClick={() => {
+                            void revealDesktopPath(lastLogPath).catch(() => setBackupMessage("定位失败"));
+                          }}>
+                            <BackupActionIcon kind="reveal" />
+                          </button>
+                        </div>
+                      </footer>
+                    </section>
+                  ) : null}
+
+                  <section className="v35-defaults-block v35-backup-block">
+                    <header className="v35-defaults-block-head">
+                      <div>
+                        <span>SCOPE</span>
+                        <strong>LOCAL</strong>
+                      </div>
+                      <span className="v35-status is-warn">KEY</span>
+                    </header>
+                    <div className="v35-backup-pills" aria-label="本地边界">
+                      <span>LOCAL</span>
+                      <span>APPDATA</span>
+                      <span>NO PAGE</span>
+                    </div>
+                    <p className="v35-backup-detail-note">Chat 会话可恢复；页面状态不恢复。</p>
+                  </section>
+                </div>
               </article>
             </section>
           ) : null}

@@ -7,11 +7,12 @@ import signal
 import subprocess
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 
-from ..config import BASE_DIR
+from ..config import BASE_DIR, LOG_DIR, ensure_dirs
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -124,3 +125,23 @@ def get_tutorial_markdown() -> dict:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to read tutorial: {exc}")
     return {"markdown": text}
+
+
+@router.post("/frontend_log")
+def write_frontend_log(payload: dict = Body(...)) -> dict:
+    ensure_dirs()
+    entry = {
+        "created_at": datetime.now(UTC).isoformat(),
+        "level": str(payload.get("level") or "error")[:40],
+        "source": str(payload.get("source") or "frontend")[:120],
+        "message": str(payload.get("message") or "")[:4000],
+        "stack": str(payload.get("stack") or "")[:8000],
+        "url": str(payload.get("url") or "")[:1000],
+        "user_agent": str(payload.get("user_agent") or "")[:1000],
+    }
+    try:
+        with (LOG_DIR / "frontend.log").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to write frontend log: {exc}")
+    return {"ok": True}

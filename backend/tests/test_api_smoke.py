@@ -44,4 +44,4 @@ def test_usage_summary_endpoint_supports_all_workspaces_scope() -> None:
     res = client.get("/api/usage/summary", params={"workspace_id": "__all__"})
     assert res.status_code == 200
     data = res.json()
-    assert set(data.keys()) == {"period", "breakdown_by", "buckets", "totals"}
+    assert set(data.keys()) == {"period", "breakdown_by", "available_range", "buckets", "totals"}
