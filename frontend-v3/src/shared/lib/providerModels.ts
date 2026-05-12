@@ -1,6 +1,7 @@
 import { useMemo, useSyncExternalStore } from "react";
 
 import type { ProviderSummary } from "../api/providers";
+import { CLIENT_STATE_HYDRATED_EVENT, queuePersistClientState } from "./clientState";
 
 const STORAGE_KEY = "aindexer_v35_provider_models";
 const CHANGE_EVENT = "aindexer_v35_provider_models_changed";
@@ -38,6 +39,7 @@ function writeModelMap(map: ProviderModelMap): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
     window.dispatchEvent(new CustomEvent(CHANGE_EVENT));
+    queuePersistClientState();
   } catch {
     // ignore storage failures
   }
@@ -59,9 +61,11 @@ function subscribeProviderModelMap(onStoreChange: () => void): () => void {
 
   window.addEventListener("storage", handleStorage);
   window.addEventListener(CHANGE_EVENT, handleChange);
+  window.addEventListener(CLIENT_STATE_HYDRATED_EVENT, handleChange);
   return () => {
     window.removeEventListener("storage", handleStorage);
     window.removeEventListener(CHANGE_EVENT, handleChange);
+    window.removeEventListener(CLIENT_STATE_HYDRATED_EVENT, handleChange);
   };
 }
 

@@ -12,6 +12,7 @@ import {
   type ChatHistoryMessage,
   type ChatSource,
 } from "../shared/api/chat";
+import { queuePersistClientState } from "../shared/lib/clientState";
 import type { ProviderModelEntry } from "../shared/lib/providerModels";
 
 export interface WorkbenchChatMessage {
@@ -129,6 +130,7 @@ function readStore(): Record<string, WorkbenchChatSession> {
 function writeStore(store: Record<string, WorkbenchChatSession>): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    queuePersistClientState();
   } catch {
     // ignore storage failures
   }
@@ -480,4 +482,34 @@ export const useWorkbenchChatStore = create<WorkbenchChatState>((set, get) => ({
 
 export function getWorkbenchChatSessionKey(workspaceId: string, docId: string): string {
   return sessionKey(workspaceId, docId);
+}
+
+export function hydrateWorkbenchChatSessionsFromStorage(): void {
+  const store = readStore();
+  const sessions = Object.fromEntries(
+    Object.entries(store).map(([key, session]) => {
+      const [workspaceId, ...docParts] = key.split(":");
+      const docId = docParts.join(":");
+      return [key, normalizeSession(session, workspaceId, docId)];
+    }),
+  );
+  useWorkbenchChatStore.setState((state) => {
+    const nextLoadedSessions = { ...state.loadedSessions };
+    const nextSendingBySession = { ...state.sendingBySession };
+    const nextStatusBySession = { ...state.statusBySession };
+    for (const key of Object.keys(sessions)) {
+      nextLoadedSessions[key] = true;
+      nextSendingBySession[key] = nextSendingBySession[key] ?? false;
+      nextStatusBySession[key] = nextStatusBySession[key] ?? "Ready";
+    }
+    return {
+      sessions: {
+        ...state.sessions,
+        ...sessions,
+      },
+      sendingBySession: nextSendingBySession,
+      statusBySession: nextStatusBySession,
+      loadedSessions: nextLoadedSessions,
+    };
+  });
 }

@@ -34,6 +34,8 @@ interface CanvasPanelProps {
   isError: boolean;
   canEdit: boolean;
   savePending: boolean;
+  editorStatusLabel: string;
+  editorStatusTone: "editing" | "dirty" | "saving" | "saved" | "error";
   canCopyApa: boolean;
 }
 
@@ -142,6 +144,8 @@ export function CanvasPanel({
   isError,
   canEdit,
   savePending,
+  editorStatusLabel,
+  editorStatusTone,
   canCopyApa,
 }: CanvasPanelProps) {
   const desktopShell = isDesktopShell();
@@ -266,7 +270,7 @@ export function CanvasPanel({
           isEditing ? (
             <div className="v35-canvas-editor">
               <header className="v35-canvas-editor-head">
-                <span className="v35-editor-state">编辑中</span>
+                <span className={`v35-editor-state is-${editorStatusTone}`}>{editorStatusLabel}</span>
                 <span className="v35-editor-count">{previewDraft.length}</span>
               </header>
 

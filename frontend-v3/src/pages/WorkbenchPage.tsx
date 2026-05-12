@@ -23,8 +23,10 @@ import { buildExportMarkdownUrl } from "../shared/api/export";
 import { getActiveIndexRuns, getIndexDetail, getIndexMarkdown, runAllIndexes, runIndex, streamIndex, cancelIndex, updateIndexEditor, type IndexProgressEvent } from "../shared/api/index";
 import { listProviders } from "../shared/api/providers";
 import { searchDocuments } from "../shared/api/search";
-import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
+import { confirmDesktopAction } from "../shared/lib/desktopFiles";
+import { parseModelDefaultKey, useModelDefaults } from "../shared/lib/modelDefaults";
 import { type ProviderModelEntry, useProviderModels } from "../shared/lib/providerModels";
+import { notifyToast } from "../shared/ui/toast";
 
 function buildStats(totalRows: FileItem[]): WorkbenchStats {
   let indexed = 0;
@@ -179,7 +181,9 @@ export function WorkbenchPage() {
   const [selectedBulkDocIds, setSelectedBulkDocIds] = useState<string[]>([]);
   const [chatQuestion, setChatQuestion] = useState("");
   const [statusText, setStatusText] = useState("准备就绪");
+  const [previewSaveFailed, setPreviewSaveFailed] = useState(false);
   const [streamingDocIds, setStreamingDocIds] = useState<string[]>([]);
+  const appliedIndexingDefaultRef = useRef("");
   const ensureChatSession = useWorkbenchChatStore((state) => state.ensureSession);
   const submitChatQuestion = useWorkbenchChatStore((state) => state.submitQuestion);
   const stopChatGeneration = useWorkbenchChatStore((state) => state.stopGeneration);
@@ -249,6 +253,11 @@ export function WorkbenchPage() {
     },
     onSuccess: async ({ uploaded, duplicated }) => {
       setStatusText(`上传完成：新增 ${uploaded}，重复 ${duplicated}`);
+      notifyToast({
+        tone: "success",
+        title: "导入完成",
+        message: duplicated ? `新增 ${uploaded}，重复 ${duplicated}` : `新增 ${uploaded}`,
+      });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
         queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
@@ -256,7 +265,9 @@ export function WorkbenchPage() {
       ]);
     },
     onError: (error) => {
-      setStatusText(error instanceof Error ? error.message : "上传失败");
+      const message = error instanceof Error ? error.message : "上传失败";
+      setStatusText(message);
+      notifyToast({ tone: "error", title: "导入失败", message });
     },
   });
 
@@ -269,6 +280,11 @@ export function WorkbenchPage() {
     },
     onSuccess: async (result) => {
       setStatusText(`批量索引已启动：${result.queued} 条，跳过 ${result.skipped} 条`);
+      notifyToast({
+        tone: "info",
+        title: "批量索引已启动",
+        message: `${result.queued} 条进入队列，跳过 ${result.skipped} 条`,
+      });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
         queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
@@ -276,7 +292,9 @@ export function WorkbenchPage() {
       ]);
     },
     onError: (error) => {
-      setStatusText(error instanceof Error ? error.message : "批量索引失败");
+      const message = error instanceof Error ? error.message : "批量索引失败";
+      setStatusText(message);
+      notifyToast({ tone: "error", title: "批量索引失败", message });
     },
   });
 
@@ -284,6 +302,7 @@ export function WorkbenchPage() {
     onMutate: async (docId: string) => {
       setStreamingDocIds((current) => (current.includes(docId) ? current : [...current, docId]));
       setStatusText("索引任务已启动");
+      notifyToast({ tone: "info", title: "索引已启动", message: "任务会在文献行内显示进度" });
       await queryClient.invalidateQueries({ queryKey: ["index-runs-active"] });
       queryClient.setQueryData<FileItem[]>(["files", workspaceId], (current) => {
         if (!current) return current;
@@ -312,6 +331,7 @@ export function WorkbenchPage() {
     },
     onSuccess: async () => {
       setStatusText("索引任务已完成");
+      notifyToast({ tone: "success", title: "索引完成" });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
         queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
@@ -319,7 +339,9 @@ export function WorkbenchPage() {
       ]);
     },
     onError: (error) => {
-      setStatusText(error instanceof Error ? error.message : "索引启动失败");
+      const message = error instanceof Error ? error.message : "索引启动失败";
+      setStatusText(message);
+      notifyToast({ tone: "error", title: "索引失败", message });
     },
     onSettled: async (_data, _error, docId) => {
       setStreamingDocIds((current) => current.filter((item) => item !== docId));
@@ -331,13 +353,16 @@ export function WorkbenchPage() {
     mutationFn: async (docId: string) => cancelIndex(docId, workspaceId),
     onSuccess: async () => {
       setStatusText("已发送取消请求");
+      notifyToast({ tone: "info", title: "正在取消索引" });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
         queryClient.invalidateQueries({ queryKey: ["index-runs-active"] }),
       ]);
     },
     onError: (error) => {
-      setStatusText(error instanceof Error ? error.message : "取消失败");
+      const message = error instanceof Error ? error.message : "取消失败";
+      setStatusText(message);
+      notifyToast({ tone: "error", title: "取消失败", message });
     },
   });
 
@@ -345,6 +370,7 @@ export function WorkbenchPage() {
     mutationFn: async (docId: string) => deleteFile(docId, workspaceId),
     onSuccess: async (_, docId) => {
       setStatusText("文献已删除");
+      notifyToast({ tone: "success", title: "文献已删除" });
       if (selectedDocId === docId) {
         setSelectedDocId("");
         setIsEditingPreview(false);
@@ -356,7 +382,9 @@ export function WorkbenchPage() {
       ]);
     },
     onError: (error) => {
-      setStatusText(error instanceof Error ? error.message : "删除失败");
+      const message = error instanceof Error ? error.message : "删除失败";
+      setStatusText(message);
+      notifyToast({ tone: "error", title: "删除失败", message });
     },
   });
 
@@ -381,6 +409,8 @@ export function WorkbenchPage() {
     },
     onSuccess: async () => {
       setStatusText("索引内容已保存");
+      setPreviewSaveFailed(false);
+      notifyToast({ tone: "success", title: "已保存" });
       setIsEditingPreview(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["index-markdown", workspaceId, selectedDocId] }),
@@ -390,13 +420,18 @@ export function WorkbenchPage() {
       ]);
     },
     onError: (error) => {
-      setStatusText(error instanceof Error ? error.message : "保存失败");
+      const message = error instanceof Error ? error.message : "保存失败";
+      setStatusText(message);
+      setPreviewSaveFailed(true);
+      notifyToast({ tone: "error", title: "保存失败", message });
     },
   });
 
   const fileRows = filesQuery.data ?? [];
   const providerRows = providersQuery.data ?? [];
-  const indexingDefault = parseModelDefaultKey(getModelDefault("indexing"));
+  const modelDefaults = useModelDefaults();
+  const indexingDefaultKey = modelDefaults.indexing;
+  const indexingDefault = useMemo(() => parseModelDefaultKey(indexingDefaultKey), [indexingDefaultKey]);
   const configuredProviderRow = useMemo(() => {
     return providerRows.find((item) => item.provider === provider) ?? null;
   }, [provider, providerRows]);
@@ -460,6 +495,44 @@ export function WorkbenchPage() {
     }
     return renderMarkdownToHtml(previewMarkdown);
   }, [previewMarkdown]);
+  const previewBaseline = useMemo(() => ({
+    markdown: previewMarkdown,
+    displayName: selectedFileRow?.display_name || selectedSearchRow?.display_name || "",
+    title: indexDetailQuery.data?.title || selectedSearchRow?.title || "",
+    authors: formatAuthorsDraft(indexDetailQuery.data?.authors ?? selectedSearchRow?.authors),
+    year: indexDetailQuery.data?.year ? String(indexDetailQuery.data.year) : selectedSearchRow?.year ? String(selectedSearchRow.year) : "",
+  }), [
+    indexDetailQuery.data?.authors,
+    indexDetailQuery.data?.title,
+    indexDetailQuery.data?.year,
+    previewMarkdown,
+    selectedFileRow?.display_name,
+    selectedSearchRow?.authors,
+    selectedSearchRow?.display_name,
+    selectedSearchRow?.title,
+    selectedSearchRow?.year,
+  ]);
+  const previewDirty = isEditingPreview && (
+    previewDraft !== previewBaseline.markdown
+    || previewDisplayNameDraft !== previewBaseline.displayName
+    || previewTitleDraft !== previewBaseline.title
+    || previewAuthorsDraft !== previewBaseline.authors
+    || previewYearDraft !== previewBaseline.year
+  );
+  const editorStatusLabel = savePreviewMutation.isPending
+    ? "保存中"
+    : previewSaveFailed
+      ? "保存失败"
+      : previewDirty
+        ? "未保存"
+        : "编辑中";
+  const editorStatusTone: "editing" | "dirty" | "saving" | "saved" | "error" = savePreviewMutation.isPending
+    ? "saving"
+    : previewSaveFailed
+      ? "error"
+      : previewDirty
+        ? "dirty"
+        : "editing";
 
   const selectedMeta = useMemo(() => {
     if (!selectedSearchRow && !selectedFileRow) {
@@ -498,6 +571,27 @@ export function WorkbenchPage() {
   useEffect(() => {
     setSelectedBulkDocIds((current) => current.filter((docId) => searchRows.some((row) => row.doc_id === docId)));
   }, [searchRows]);
+
+  useEffect(() => {
+    if (!indexingDefault || !indexingDefaultKey) {
+      return;
+    }
+    if (appliedIndexingDefaultRef.current === indexingDefaultKey) {
+      return;
+    }
+    const defaultProviderRow = providerRows.find((item) => item.enabled && item.provider === indexingDefault.provider);
+    if (!defaultProviderRow) {
+      return;
+    }
+    appliedIndexingDefaultRef.current = indexingDefaultKey;
+    if (provider === indexingDefault.provider && model === indexingDefault.model) {
+      return;
+    }
+    updateWorkbenchSession(workspaceId, {
+      provider: indexingDefault.provider,
+      model: indexingDefault.model,
+    });
+  }, [indexingDefault, indexingDefaultKey, model, provider, providerRows, updateWorkbenchSession, workspaceId]);
 
   useEffect(() => {
     if (providerRows.length === 0) {
@@ -602,8 +696,10 @@ export function WorkbenchPage() {
     try {
       await navigator.clipboard.writeText(previewMarkdown);
       setStatusText("预览内容已复制");
+      notifyToast({ tone: "success", title: "已复制", message: "索引内容" });
     } catch {
       setStatusText("复制失败，请手动复制");
+      notifyToast({ tone: "error", title: "复制失败", message: "请手动复制" });
     }
   };
 
@@ -615,8 +711,10 @@ export function WorkbenchPage() {
     try {
       await navigator.clipboard.writeText(selectedApaCitation);
       setStatusText("APA 已复制");
+      notifyToast({ tone: "success", title: "已复制", message: "APA" });
     } catch {
       setStatusText("复制失败，请手动复制");
+      notifyToast({ tone: "error", title: "复制失败", message: "请手动复制" });
     }
   };
 
@@ -638,6 +736,10 @@ export function WorkbenchPage() {
     if (docIds.length === 0) {
       return;
     }
+    const confirmed = await confirmDesktopAction(`将删除 ${docIds.length} 篇文献及其索引结果。`, "删除文献");
+    if (!confirmed) {
+      return;
+    }
     const results = await Promise.allSettled(docIds.map((docId) => deleteFile(docId, workspaceId)));
     const deletedIds = docIds.filter((_, index) => results[index].status === "fulfilled");
     if (deletedIds.includes(selectedDocId)) {
@@ -657,6 +759,20 @@ export function WorkbenchPage() {
       ]);
     }
     setStatusText(`删除 ${deletedIds.length}/${docIds.length}`);
+    notifyToast({
+      tone: deletedIds.length === docIds.length ? "success" : "warning",
+      title: `已删除 ${deletedIds.length}/${docIds.length}`,
+    });
+  };
+
+  const handleDeleteDocument = async (docId: string) => {
+    const fileRow = filesById.get(docId);
+    const label = fileRow?.display_name || fileRow?.filename || docId;
+    const confirmed = await confirmDesktopAction(`删除“${label}”及其索引结果？`, "删除文献");
+    if (!confirmed) {
+      return;
+    }
+    await deleteMutation.mutateAsync(docId);
   };
 
   const handleBulkRegenerate = async () => {
@@ -673,7 +789,8 @@ export function WorkbenchPage() {
         queryClient.invalidateQueries({ queryKey: ["index-runs-active"] }),
       ]);
     }
-    setStatusText(`重生 ${queuedCount}/${docIds.length}`);
+    setStatusText(`重生成 ${queuedCount}/${docIds.length}`);
+    notifyToast({ tone: "info", title: `已启动 ${queuedCount}/${docIds.length}` });
   };
 
   const handleBulkExportTxt = async () => {
@@ -716,6 +833,7 @@ export function WorkbenchPage() {
     setPreviewYearDraft(indexDetailQuery.data?.year ? String(indexDetailQuery.data.year) : selectedSearchRow?.year ? String(selectedSearchRow.year) : "");
     setPreviewMode("raw");
     setIsEditingPreview(true);
+    setPreviewSaveFailed(false);
   };
 
   const handleCancelEdit = () => {
@@ -725,6 +843,7 @@ export function WorkbenchPage() {
     setPreviewAuthorsDraft(formatAuthorsDraft(indexDetailQuery.data?.authors ?? selectedSearchRow?.authors));
     setPreviewYearDraft(indexDetailQuery.data?.year ? String(indexDetailQuery.data.year) : selectedSearchRow?.year ? String(selectedSearchRow.year) : "");
     setIsEditingPreview(false);
+    setPreviewSaveFailed(false);
     setStatusText("已取消编辑");
   };
 
@@ -764,6 +883,7 @@ export function WorkbenchPage() {
             selectedTemplateId={templateId}
             onTemplateChange={setTemplateId}
             controlsDisabled={workspaceIndexingActive}
+            uploadPending={uploadMutation.isPending}
             onUploadFiles={(files) => {
               void uploadMutation.mutateAsync(files);
             }}
@@ -813,7 +933,7 @@ export function WorkbenchPage() {
               void cancelMutation.mutateAsync(docId);
             }}
             onDelete={(docId) => {
-              void deleteMutation.mutateAsync(docId);
+              void handleDeleteDocument(docId);
             }}
             isLoading={searchQueryResult.isLoading}
             isFetching={searchQueryResult.isFetching}
@@ -873,6 +993,8 @@ export function WorkbenchPage() {
           isError={previewQuery.isError}
           canEdit={canEditPreview}
           savePending={savePreviewMutation.isPending}
+          editorStatusLabel={editorStatusLabel}
+          editorStatusTone={editorStatusTone}
           canCopyApa={Boolean(selectedApaCitation)}
         />
 
@@ -892,6 +1014,7 @@ export function WorkbenchPage() {
               return;
             }
             stopChatGeneration(workspaceId, selectedDocId);
+            notifyToast({ tone: "info", title: "已停止回答" });
           }}
           onChatReset={() => {
             if (!selectedDocId) {
@@ -899,6 +1022,7 @@ export function WorkbenchPage() {
             }
             setChatQuestion("");
             resetChatSession(workspaceId, selectedDocId);
+            notifyToast({ tone: "success", title: "会话已重置" });
           }}
         />
       </div>

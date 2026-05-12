@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import { queuePersistClientState } from "../shared/lib/clientState";
+
 export type UiLayoutSize = "small" | "medium" | "large";
 
 const UI_LAYOUT_SIZE_STORAGE_KEY = "aindexer_v35_ui_layout_size";
@@ -28,6 +30,7 @@ export function getStoredUiLayoutSize(): UiLayoutSize {
 function persistUiLayoutSize(value: UiLayoutSize) {
   try {
     window.localStorage.setItem(UI_LAYOUT_SIZE_STORAGE_KEY, value);
+    queuePersistClientState();
   } catch {
     // ignore storage failures
   }
@@ -52,3 +55,9 @@ export const useShellStore = create<ShellState>((set) => ({
     set({ uiLayoutSize: normalized });
   },
 }));
+
+export function hydrateShellStateFromStorage(): void {
+  useShellStore.setState({
+    uiLayoutSize: getStoredUiLayoutSize(),
+  });
+}

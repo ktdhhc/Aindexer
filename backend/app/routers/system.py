@@ -21,6 +21,8 @@ from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 
 from ..config import DATA_DIR, LOG_DIR, SOURCE_ROOT, ensure_dirs
+from ..services.client_state import get_client_state as read_client_state
+from ..services.client_state import set_client_state as write_client_state
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -439,6 +441,21 @@ def exit_app() -> dict:
 @router.get("/tutorial")
 def get_tutorial_markdown() -> dict:
     return {"markdown": TUTORIAL_MARKDOWN}
+
+
+@router.get("/data_dir")
+def get_data_dir() -> dict:
+    return {"data_dir": str(DATA_DIR)}
+
+
+@router.get("/client_state")
+def get_client_state() -> dict:
+    return read_client_state()
+
+
+@router.put("/client_state")
+def update_client_state(payload: dict = Body(...)) -> dict:
+    return write_client_state(payload)
 
 
 @router.get("/updates/latest")

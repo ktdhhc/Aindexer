@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import APP_LOG_PATH, FRONTEND_ROOT, LOG_DIR, ensure_dirs
 from .db import init_db
+from .migration import run_data_root_migration
 from .routers import (
     chat,
     export,
@@ -94,6 +95,7 @@ def _configure_static_mime_types() -> None:
 def create_app() -> FastAPI:
     _configure_logging()
     _configure_static_mime_types()
+    run_data_root_migration()
     init_db()
     translation_router = importlib.import_module("app.translation.router").router
     app = FastAPI(title="Aindexer", version="0.1.0")

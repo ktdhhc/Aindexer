@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import { queuePersistClientState } from "../shared/lib/clientState";
+
 const STORAGE_KEY = "aindexer_v3_workspace_id";
 const DEFAULT_WORKSPACE_ID = "ws_default";
 
@@ -26,11 +28,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     const nextId = String(workspaceId || "").trim() || DEFAULT_WORKSPACE_ID;
     try {
       window.localStorage.setItem(STORAGE_KEY, nextId);
+      queuePersistClientState();
     } catch {
       // ignore storage errors
     }
     set({ workspaceId: nextId });
   },
 }));
+
+export function hydrateWorkspaceIdFromStorage(): void {
+  useWorkspaceStore.setState({
+    workspaceId: readWorkspaceId(),
+  });
+}
 
 export { DEFAULT_WORKSPACE_ID };

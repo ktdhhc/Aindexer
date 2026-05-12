@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { cancelTranslationRequest, streamTranslateSelection, translateSelection, type TranslationResult } from "../shared/api/translation";
+import { queuePersistClientState } from "../shared/lib/clientState";
 import type { PdfSelectionMode } from "../features/translator/PdfViewer";
 
 export type InspectorTab = "result" | "history";
@@ -166,6 +167,7 @@ function persistTranslatorState(byWorkspace: Record<string, TranslatorWorkspaceS
       } satisfies PersistedTranslatorWorkspaceState]),
     );
     window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(serialized));
+    queuePersistClientState();
   } catch {
     // ignore storage failures
   }
@@ -428,3 +430,9 @@ export const useTranslatorStore = create<TranslatorState>((set, get) => ({
     })));
   },
 }));
+
+export function hydrateTranslatorStateFromStorage(): void {
+  useTranslatorStore.setState({
+    byWorkspace: getStoredTranslatorState(),
+  });
+}

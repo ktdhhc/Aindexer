@@ -15,6 +15,7 @@ import {
   type ChatSource,
 } from "../shared/api/chat";
 import type { FileItem } from "../shared/api/files";
+import { queuePersistClientState } from "../shared/lib/clientState";
 import type { ProviderModelEntry } from "../shared/lib/providerModels";
 
 export interface ChatMessage {
@@ -187,6 +188,7 @@ function readSessionStore(): ChatSessionStore {
 function writeSessionStore(store: ChatSessionStore): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    queuePersistClientState();
   } catch {
     // ignore storage failures
   }
@@ -285,6 +287,28 @@ function sessionSortTimestamp(session: ChatSession): string {
   return latestMessageAt || session.createdAt;
 }
 
+function sessionMessageCount(session: ChatSession): number {
+  return session.messages.filter((message) => message.role === "user" || message.role === "assistant").length;
+}
+
+function pickPreferredSessionId(sessions: ChatSession[], currentActiveSessionId = ""): string {
+  if (sessions.length === 0) {
+    return "";
+  }
+
+  const currentActiveSession = sessions.find((session) => session.id === currentActiveSessionId) ?? null;
+  const sessionsWithMessages = sessions.filter((session) => sessionMessageCount(session) > 0);
+  if (currentActiveSession && (sessionMessageCount(currentActiveSession) > 0 || sessionsWithMessages.length === 0)) {
+    return currentActiveSession.id;
+  }
+  if (sessionsWithMessages.length > 0) {
+    return [...sessionsWithMessages]
+      .sort((left, right) => sessionSortTimestamp(right).localeCompare(sessionSortTimestamp(left)))[0]
+      .id;
+  }
+  return sessions[0].id;
+}
+
 function sortSessions(sessions: ChatSession[]): ChatSession[] {
   return [...sessions].sort((a, b) => sessionSortTimestamp(b).localeCompare(sessionSortTimestamp(a)));
 }
@@ -335,9 +359,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
       activeSessionIds: {
         ...current.activeSessionIds,
-        [workspaceId]: current.activeSessionIds[workspaceId] && initialSessions.some((session) => session.id === current.activeSessionIds[workspaceId])
-          ? current.activeSessionIds[workspaceId]
-          : initialSessions[0].id,
+        [workspaceId]: pickPreferredSessionId(initialSessions, current.activeSessionIds[workspaceId] || ""),
       },
       sendingByWorkspace: {
         ...current.sendingByWorkspace,
@@ -921,3 +943,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 }));
+
+export function hydrateChatSessionsFromStorage(): void {
+  const store = readSessionStore();
+  const sessionsByWorkspace = Object.fromEntries(
+    Object.entries(store).map(([workspaceId, sessions]) => [
+      workspaceId,
+      sortSessions((Array.isArray(sessions) ? sessions : []).map(normalizeSession)),
+    ]),
+  );
+  useChatStore.setState((state) => {
+    const nextActiveSessionIds = { ...state.activeSessionIds };
+    const nextLoadedWorkspaces = { ...state.loadedWorkspaces };
+    const nextSendingByWorkspace = { ...state.sendingByWorkspace };
+    const nextStatusByWorkspace = { ...state.statusByWorkspace };
+    for (const [workspaceId, sessions] of Object.entries(sessionsByWorkspace)) {
+      if (sessions.length === 0) continue;
+      if (!nextActiveSessionIds[workspaceId] || !sessions.some((session) => session.id === nextActiveSessionIds[workspaceId])) {
+        nextActiveSessionIds[workspaceId] = pickPreferredSessionId(sessions, nextActiveSessionIds[workspaceId] || "");
+      }
+      nextLoadedWorkspaces[workspaceId] = true;
+      nextSendingByWorkspace[workspaceId] = nextSendingByWorkspace[workspaceId] ?? false;
+      nextStatusByWorkspace[workspaceId] = nextStatusByWorkspace[workspaceId] ?? "Ready";
+    }
+    return {
+      sessionsByWorkspace: {
+        ...state.sessionsByWorkspace,
+        ...sessionsByWorkspace,
+      },
+      activeSessionIds: nextActiveSessionIds,
+      sendingByWorkspace: nextSendingByWorkspace,
+      statusByWorkspace: nextStatusByWorkspace,
+      loadedWorkspaces: nextLoadedWorkspaces,
+    };
+  });
+}

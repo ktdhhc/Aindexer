@@ -20,7 +20,8 @@ import { searchDocuments, type SearchItem } from "../shared/api/search";
 import {
   useAvailableProviderModelEntries,
 } from "../shared/lib/providerModels";
-import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
+import { parseModelDefaultKey, useModelDefaults } from "../shared/lib/modelDefaults";
+import { notifyToast } from "../shared/ui/toast";
 
 const PdfViewer = lazy(() => import("../features/translator/PdfViewer").then((module) => ({ default: module.PdfViewer })));
 
@@ -50,6 +51,27 @@ function formatTime(value?: string | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+}
+
+async function copyText(value: string, label: string): Promise<void> {
+  const text = String(value || "");
+  if (!text.trim()) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    notifyToast({ tone: "success", title: "已复制", message: label });
+  } catch {
+    notifyToast({ tone: "error", title: "复制失败", message: "请手动复制" });
+  }
+}
+
+function PdfSkeleton() {
+  return (
+    <div className="v35-translation-pages v35-pdf-skeleton" aria-label="正在加载 PDF 预览">
+      <div />
+      <div />
+      <div />
+    </div>
+  );
 }
 
 function normalizeSearchText(value: string | number | null | undefined): string {
@@ -117,6 +139,7 @@ export function TranslatorPage() {
   const cancelStoredTranslation = useTranslatorStore((state) => state.cancelActiveTranslation);
 
   const autoDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const appliedTranslationDefaultRef = useRef("");
   const lastAutoSourceRef = useRef("");
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const readerPaneRef = useRef<HTMLElement | null>(null);
@@ -185,7 +208,9 @@ export function TranslatorPage() {
     return pdfDocuments.find((item) => item.id === selectedDocumentId) ?? null;
   }, [pdfDocuments, selectedDocumentId]);
 
-  const translationDefault = parseModelDefaultKey(getModelDefault("translation"));
+  const modelDefaults = useModelDefaults();
+  const translationDefaultKey = modelDefaults.translation;
+  const translationDefault = useMemo(() => parseModelDefaultKey(translationDefaultKey), [translationDefaultKey]);
 
   const modelOptions = useAvailableProviderModelEntries(providersQuery.data ?? []);
 
@@ -226,6 +251,23 @@ export function TranslatorPage() {
       setSelectedDocumentId(workspaceId, docs[0].id);
     }
   }, [pdfDocuments, selectedDocumentId, setSelectedDocumentId, workspaceId]);
+
+  useEffect(() => {
+    if (!translationDefault || !translationDefaultKey) {
+      return;
+    }
+    if (appliedTranslationDefaultRef.current === translationDefaultKey) {
+      return;
+    }
+    const defaultKey = `${translationDefault.provider}::${translationDefault.model}`;
+    if (!modelOptions.some((entry) => `${entry.provider}::${entry.model}` === defaultKey)) {
+      return;
+    }
+    appliedTranslationDefaultRef.current = translationDefaultKey;
+    if (selectedModelKey !== defaultKey) {
+      setSelectedModelKey(workspaceId, defaultKey);
+    }
+  }, [modelOptions, selectedModelKey, setSelectedModelKey, translationDefault, translationDefaultKey, workspaceId]);
 
   useEffect(() => {
     const options = modelOptions;
@@ -271,6 +313,7 @@ export function TranslatorPage() {
     }
     translateMutation.reset();
     await cancelStoredTranslation(workspaceId);
+    notifyToast({ tone: "info", title: "已停止翻译" });
   }
 
   const handlePdfSelection = useCallback(
@@ -335,7 +378,7 @@ export function TranslatorPage() {
   }, [historyQuery.refetch, latestResult, selectedDocumentId]);
 
   const canStartTranslate = Boolean(
-    selectedDocumentId && selectedModelEntry && !isTranslating,
+    selectedDocumentId && selectedModelEntry && !isTranslating && normalizeText(sourceText),
   );
   const visibleTranslationText = latestResult?.translated_text || streamedTranslationText;
   const translationParagraphs = useMemo(
@@ -560,7 +603,7 @@ export function TranslatorPage() {
           </header>
 
           {pdfFileUrl ? (
-            <Suspense fallback={<div className="v35-translation-pages"><p className="v35-muted">正在加载 PDF 预览...</p></div>}>
+            <Suspense fallback={<PdfSkeleton />}>
               <PdfViewer
                 className="v35-pdf-viewer"
                 url={pdfFileUrl}
@@ -684,7 +727,7 @@ export function TranslatorPage() {
                      取消
                    </button>
                   ) : visibleTranslationText ? (
-                    <button className="v35-button" type="button" onClick={() => void navigator.clipboard?.writeText(visibleTranslationText)}>
+                    <button className="v35-button" type="button" onClick={() => void copyText(visibleTranslationText, "译文")}>
                       复制
                     </button>
                   ) : null}
@@ -699,6 +742,7 @@ export function TranslatorPage() {
                   ) : !isTranslating ? (
                     <p className="v35-muted">输入原文后翻译</p>
                   ) : null}
+                  {isTranslating && translationParagraphs.length > 0 ? <span className="v35-stream-caret" aria-hidden="true" /> : null}
                  {latestResult && !isTranslating ? (
                    <footer>
                       {latestResult.provider} · {latestResult.model} · {latestResult.target_lang} ·{" "}
@@ -734,6 +778,7 @@ export function TranslatorPage() {
                             cached: true,
                           });
                           setInspectorTab(workspaceId, "result");
+                          notifyToast({ tone: "success", title: "已恢复历史译文" });
                         }}
                       >
                         恢复

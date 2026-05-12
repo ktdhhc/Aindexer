@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import platform
 import shutil
+import sys
 import tempfile
 import zipfile
 from datetime import UTC, datetime
@@ -67,7 +68,8 @@ def _build_manifest(include_frontend_state: bool, include_logs: bool) -> dict[st
     return {
         "schema_version": 1,
         "created_at": datetime.now(UTC).isoformat(),
-        "source_runtime": "v4",
+        "source_runtime": getattr(sys, "frozen", False) and "v4-packaged" or "v4-dev",
+        "data_dir": str(DATA_DIR),
         "included_scopes": scopes,
     }
 
@@ -167,6 +169,7 @@ def _restore_status_payload() -> dict[str, Any]:
         "active_index_runs": active_index_total,
         "active_translation_requests": active_translation_total,
         "active_index_detail": index_status,
+        "data_dir": str(DATA_DIR),
     }
 
 
@@ -297,7 +300,7 @@ async def restore_backup_all(archive: UploadFile = File(...)) -> dict:
 
         shutil.copy2(db_src, DB_PATH)
 
-    return {"ok": True, "pre_restore_backup": snapshot.name, "frontend_state": frontend_state}
+    return {"ok": True, "pre_restore_backup": snapshot.name, "frontend_state": frontend_state, "data_dir": str(DATA_DIR)}
 
 
 @router.get("/backup/restore/status")

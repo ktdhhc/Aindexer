@@ -2,6 +2,7 @@ import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef } from "
 
 import type { WorkbenchChatMessage } from "../../app/workbenchChatStore";
 import { resolveAssistantCitedSources, stripAssistantCitationFooter } from "../../shared/api/chat";
+import { notifyToast } from "../../shared/ui/toast";
 import { renderMarkdownToHtml } from "./utils";
 
 function ChatIcon() {
@@ -51,6 +52,17 @@ function formatTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "--:--";
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+async function copyText(value: string, label: string): Promise<void> {
+  const text = String(value || "");
+  if (!text.trim()) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    notifyToast({ tone: "success", title: "已复制", message: label });
+  } catch {
+    notifyToast({ tone: "error", title: "复制失败", message: "请手动复制" });
+  }
 }
 
 interface NotesPanelProps {
@@ -162,7 +174,7 @@ export function NotesPanel({
                     aria-label="复制回答"
                     title="复制"
                     onClick={() => {
-                      void navigator.clipboard?.writeText(displayContent);
+                      void copyText(displayContent, "回答");
                     }}
                   >
                     <CopyIcon />
@@ -194,7 +206,7 @@ export function NotesPanel({
                 aria-label="复制最后回答"
                 title="复制最后回答"
                 onClick={() => {
-                  void navigator.clipboard?.writeText(latestAssistantText);
+                  void copyText(latestAssistantText, "最后回答");
                 }}
               >
                 <CopyIcon />

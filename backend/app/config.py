@@ -96,6 +96,9 @@ INDEX_DIR = DATA_DIR / "indexes"
 EXPORT_DIR = DATA_DIR / "exports"
 DB_PATH = DATA_DIR / "app.db"
 APP_LOG_PATH = LOG_DIR / "app.log"
+RUNTIME_DIR = DATA_DIR / "runtime"
+
+print(f"[aindexer] DATA_DIR={DATA_DIR}")
 
 APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
 APP_PORT = int(os.getenv("APP_PORT", "8000"))
@@ -108,3 +111,4 @@ def ensure_dirs() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)

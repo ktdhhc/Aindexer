@@ -14,13 +14,14 @@ import {
 } from "../shared/api/chat";
 import { listFiles, type FileItem } from "../shared/api/files";
 import { listProviders } from "../shared/api/providers";
-import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
+import { parseModelDefaultKey, useModelDefaults } from "../shared/lib/modelDefaults";
 import { renderMarkdownToHtml } from "../features/workbench/utils";
 import {
   type ProviderModelEntry,
   useAvailableProviderModelEntries,
 } from "../shared/lib/providerModels";
 import { isDesktopShell } from "../shared/lib/runtime";
+import { notifyToast } from "../shared/ui/toast";
 
 const CHAT_MODES: Array<{ mode: ChatMode; label: string; icon: "scan" | "focus" | "path" }> = [
   { mode: "wide", label: "全景", icon: "scan" },
@@ -103,6 +104,17 @@ function parseModelKey(value: string): ProviderModelEntry | null {
 
 function isThreadNearBottom(node: HTMLDivElement): boolean {
   return node.scrollHeight - node.scrollTop - node.clientHeight <= THREAD_BOTTOM_THRESHOLD;
+}
+
+async function copyText(value: string, label: string): Promise<void> {
+  const text = String(value || "");
+  if (!text.trim()) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    notifyToast({ tone: "success", title: "已复制", message: label });
+  } catch {
+    notifyToast({ tone: "error", title: "复制失败", message: "请手动复制" });
+  }
 }
 
 function thinkingExpansionKey(messageId: string, blockId: string): string {
@@ -272,6 +284,7 @@ export function ChatPage() {
   const autoFollowEnabledRef = useRef(true);
   const resumeSmoothUntilRef = useRef(0);
   const suppressAutoFollowUntilRef = useRef(0);
+  const appliedChatDefaultRef = useRef("");
 
   const preserveThreadScroll = useCallback((apply: () => void) => {
     const node = threadRef.current;
@@ -303,7 +316,9 @@ export function ChatPage() {
     queryFn: () => listFiles(workspaceId),
   });
 
-  const chatDefault = parseModelDefaultKey(getModelDefault("chat"));
+  const modelDefaults = useModelDefaults();
+  const chatDefaultKey = modelDefaults.chat;
+  const chatDefault = useMemo(() => parseModelDefaultKey(chatDefaultKey), [chatDefaultKey]);
 
   const modelOptions = useAvailableProviderModelEntries(providersQuery.data ?? []);
 
@@ -403,6 +418,23 @@ export function ChatPage() {
   }, [editingSessionId, sessions, updateChatPageSession, workspaceId]);
 
   useEffect(() => {
+    if (!chatDefault || !chatDefaultKey) {
+      return;
+    }
+    if (appliedChatDefaultRef.current === chatDefaultKey) {
+      return;
+    }
+    const defaultKey = `${chatDefault.provider}::${chatDefault.model}`;
+    if (!modelOptions.some((entry) => `${entry.provider}::${entry.model}` === defaultKey)) {
+      return;
+    }
+    appliedChatDefaultRef.current = chatDefaultKey;
+    if (selectedModelKey !== defaultKey) {
+      setSelectedModelKey(defaultKey);
+    }
+  }, [chatDefault, chatDefaultKey, modelOptions, selectedModelKey, setSelectedModelKey]);
+
+  useEffect(() => {
     if (modelOptions.length === 0) {
       setSelectedModelKey("");
       return;
@@ -414,7 +446,7 @@ export function ChatPage() {
           : `${modelOptions[0].provider}::${modelOptions[0].model}`;
       setSelectedModelKey(defaultKey);
     }
-  }, [chatDefault, modelOptions, selectedModelKey]);
+  }, [chatDefault, modelOptions, selectedModelKey, setSelectedModelKey]);
 
   useEffect(() => {
     const node = threadRef.current;
@@ -561,12 +593,14 @@ export function ChatPage() {
 
   function stopGeneration() {
     stopChatGeneration(workspaceId);
+    notifyToast({ tone: "info", title: "已停止生成" });
   }
 
   function createSession() {
     createChatSession(workspaceId, activeMode);
     setQuestion("");
     textareaRef.current?.focus();
+    notifyToast({ tone: "success", title: "已新建会话" });
   }
 
   function deleteSession(sessionId: string) {
@@ -580,6 +614,7 @@ export function ChatPage() {
       };
     });
     deleteChatSession(workspaceId, sessionId);
+    notifyToast({ tone: "success", title: "会话已删除" });
   }
 
   function toggleTrace(messageId: string) {
@@ -703,7 +738,7 @@ export function ChatPage() {
                                 {(step.sources ?? []).length > 0 ? (
                                   <div className="v35-chat-inline-trace-sources">
                                     {(step.sources ?? []).map((source) => (
-                                      <button key={`${source.source_kind || "index"}:${source.doc_id}:${source.source_id || ""}`} type="button" onClick={() => void navigator.clipboard?.writeText(source.doc_id)}>
+                                      <button key={`${source.source_kind || "index"}:${source.doc_id}:${source.source_id || ""}`} type="button" onClick={() => void copyText(source.doc_id, "文献 ID")}>
                                         <strong>{source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}</strong>
                                       </button>
                                     ))}
@@ -732,7 +767,7 @@ export function ChatPage() {
                         key={`${source.source_kind || "index"}:${source.doc_id}:${source.source_id || ""}`}
                         type="button"
                         title={source.doc_id}
-                        onClick={() => void navigator.clipboard?.writeText(source.doc_id)}
+                        onClick={() => void copyText(source.doc_id, "文献 ID")}
                       >
                         {source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}
                       </button>
@@ -740,7 +775,7 @@ export function ChatPage() {
                     {message.contextStats ? <span className="v35-chat-context-stat">{formatCompression(message.contextStats)}</span> : null}
                     {desktopShell ? (
                       <div className="v35-chat-footer-actions">
-                        <button className="v35-icon-button" type="button" aria-label="复制回答" title="复制回答" onClick={() => void navigator.clipboard?.writeText(displayContent)}>
+                        <button className="v35-icon-button" type="button" aria-label="复制回答" title="复制回答" onClick={() => void copyText(displayContent, "回答")}>
                           <CopyIcon />
                         </button>
                         {message.role === "user" ? (
@@ -750,7 +785,7 @@ export function ChatPage() {
                         ) : null}
                       </div>
                     ) : (
-                      <button className="v35-chat-text-action" type="button" onClick={() => void navigator.clipboard?.writeText(displayContent)}>
+                      <button className="v35-chat-text-action" type="button" onClick={() => void copyText(displayContent, "回答")}>
                         复制
                       </button>
                     )}
@@ -934,7 +969,7 @@ export function ChatPage() {
                 {latestSources.length > 0 ? (
                   <div className="v35-chat-wide-source-list">
                     {latestSources.map((source) => (
-                      <button key={source.doc_id} type="button" title={source.doc_id} onClick={() => void navigator.clipboard?.writeText(source.doc_id)}>
+                      <button key={source.doc_id} type="button" title={source.doc_id} onClick={() => void copyText(source.doc_id, "文献 ID")}>
                         <strong>{source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}</strong>
                         <span>{source.title || source.doc_id}</span>
                       </button>
@@ -954,7 +989,7 @@ export function ChatPage() {
                 {latestSources.length > 0 ? (
                   <div className="v35-chat-wide-source-list">
                     {latestSources.map((source) => (
-                      <button key={`${source.source_kind || "index"}:${source.doc_id}:${source.source_id || ""}`} type="button" title={source.doc_id} onClick={() => void navigator.clipboard?.writeText(source.doc_id)}>
+                      <button key={`${source.source_kind || "index"}:${source.doc_id}:${source.source_id || ""}`} type="button" title={source.doc_id} onClick={() => void copyText(source.doc_id, "文献 ID")}>
                         <strong>{source.source_id ? `[${source.source_id}] ` : ""}{source.display_name}</strong>
                         <span>{formatSourceMeta(source) || source.doc_id}</span>
                       </button>

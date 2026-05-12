@@ -4,31 +4,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 
 import { router } from "./app/router";
+import { ClientStateHydrator } from "./app/ClientStateHydrator";
 import { getStoredUiLayoutSize } from "./app/shellStore";
 import { recordFrontendLog } from "./shared/api/backup";
 import { isDesktopShell } from "./shared/lib/runtime";
+import { ToastHost } from "./shared/ui/toast";
 import "./styles.css";
 import "./shared/styles/v35.css";
-
-function seedDefaultProviderModels(): void {
-  const STORAGE_KEY = "aindexer_v35_provider_models";
-  try {
-    if (window.localStorage.getItem(STORAGE_KEY)) {
-      return;
-    }
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        openai: ["gpt-5.4"],
-        deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
-        ali: ["deepseek-v4-flash", "kimi-k2.5", "qwen3.6-flash", "MiniMax-M2.5"],
-      }),
-    );
-  } catch {
-    // ignore storage failures
-  }
-}
-seedDefaultProviderModels();
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -93,6 +75,8 @@ createRoot(rootElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
+      <ClientStateHydrator />
+      <ToastHost />
     </QueryClientProvider>
   </StrictMode>,
 );

@@ -1,4 +1,4 @@
-import type { ChangeEvent } from "react";
+import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
 
 import type { FieldTemplate } from "../../shared/api/fields";
 import type { ProviderSummary } from "../../shared/api/providers";
@@ -16,6 +16,7 @@ interface WorkbenchToolbarProps {
   onTemplateChange: (value: string) => void;
   onUploadFiles: (files: File[]) => void;
   controlsDisabled?: boolean;
+  uploadPending?: boolean;
 }
 
 function UploadIcon() {
@@ -40,8 +41,11 @@ export function WorkbenchToolbar({
   onTemplateChange,
   onUploadFiles,
   controlsDisabled = false,
+  uploadPending = false,
 }: WorkbenchToolbarProps) {
   const desktopShell = isDesktopShell();
+  const [isDragActive, setIsDragActive] = useState(false);
+  const dragDepthRef = useRef(0);
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
     if (files.length > 0) {
@@ -49,14 +53,49 @@ export function WorkbenchToolbar({
     }
     event.currentTarget.value = "";
   };
+  const handleDragEnter = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    if (event.dataTransfer.types.includes("Files")) {
+      setIsDragActive(true);
+    }
+  };
+  const handleDragOver = (event: DragEvent<HTMLElement>) => {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsDragActive(true);
+  };
+  const handleDragLeave = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setIsDragActive(false);
+    }
+  };
+  const handleDrop = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDragActive(false);
+    const files = Array.from(event.dataTransfer.files || []);
+    if (files.length > 0) {
+      onUploadFiles(files);
+    }
+  };
 
   return (
     <section className="v35-panel v35-toolbar" aria-label="编辑台工具栏">
-      <div className="v35-upload-tool">
+      <div
+        className={`v35-upload-tool ${isDragActive ? "is-drag-active" : ""} ${uploadPending ? "is-uploading" : ""}`}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         <div className="v35-upload-mark">+</div>
         <div>
-          <h2 className="v35-section-title">{desktopShell ? "导入" : "导入文献"}</h2>
-          <p className="v35-muted">{desktopShell ? "PDF DOCX TXT" : "PDF / DOCX / TXT"}</p>
+          <h2 className="v35-section-title">{uploadPending ? "正在导入" : desktopShell ? "导入" : "导入文献"}</h2>
+          <p className="v35-muted">{isDragActive ? "松手导入文献" : desktopShell ? "PDF DOCX TXT" : "PDF / DOCX / TXT"}</p>
         </div>
         <label
           className={`v35-button v35-button-primary v35-button-compact v35-file-label${desktopShell ? " is-icon-only" : ""}`}
@@ -73,6 +112,7 @@ export function WorkbenchToolbar({
           type="file"
           accept=".pdf,.txt,.docx"
           multiple
+          disabled={uploadPending}
           onChange={handleFileChange}
         />
       </div>

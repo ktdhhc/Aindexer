@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import { queuePersistClientState } from "../shared/lib/clientState";
 import type { UsageBreakdownBy, UsagePeriod } from "../shared/api/usage";
 
 export type ConfigPageSection = "providers" | "defaults" | "fields" | "workspaces" | "usage" | "backup";
@@ -235,6 +236,7 @@ function persistPageSessions(
 ) {
   try {
     window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ configByWorkspace, workbenchByWorkspace, chatByWorkspace }));
+    queuePersistClientState();
   } catch {
     // ignore storage failures
   }
@@ -366,3 +368,12 @@ export const usePageSessionStore = create<PageSessionState>((set) => ({
     });
   },
 }));
+
+export function hydratePageSessionsFromStorage(): void {
+  const next = readStoredPageSessions();
+  usePageSessionStore.setState({
+    configByWorkspace: next.configByWorkspace,
+    workbenchByWorkspace: next.workbenchByWorkspace,
+    chatByWorkspace: next.chatByWorkspace,
+  });
+}
