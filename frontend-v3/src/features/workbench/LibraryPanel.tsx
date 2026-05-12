@@ -12,6 +12,8 @@ interface LibraryPanelProps {
   rows: SearchItem[];
   filesById: Map<string, FileItem>;
   selectedDocId: string;
+  multiSelectMode: boolean;
+  selectedBulkDocIds: string[];
   searchInput: string;
   onSearchInputChange: (value: string) => void;
   onSearchSubmit: () => void;
@@ -21,9 +23,18 @@ interface LibraryPanelProps {
   onSortDirectionChange: (value: LibrarySortDirection) => void;
   onRefresh: () => void;
   onSelect: (docId: string) => void;
+  onToggleMultiSelectMode: () => void;
+  onToggleBulkDocId: (docId: string) => void;
   indexableCount: number;
+  selectedBulkCount: number;
   runAllDisabled: boolean;
   onRunAll: () => void;
+  onBulkDelete: () => void;
+  onBulkRegenerate: () => void;
+  onBulkExportTxt: () => void;
+  bulkDeleteDisabled: boolean;
+  bulkRegenerateDisabled: boolean;
+  bulkExportDisabled: boolean;
   onRun: (docId: string) => void;
   onCancel: (docId: string) => void;
   onDelete: (docId: string) => void;
@@ -91,6 +102,26 @@ function DeleteIcon() {
   );
 }
 
+function SelectIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <rect x="4.5" y="4.5" width="11" height="11" rx="2.2" />
+      <path d="m7.6 10 1.7 1.7 3.4-3.4" />
+    </svg>
+  );
+}
+
+function TxtIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M5 6.2h10" />
+      <path d="M8.2 6.2v7.6" />
+      <path d="M11.8 6.2v7.6" />
+      <path d="M6.4 13.8h6.8" />
+    </svg>
+  );
+}
+
 function StageIcon({ tone }: { tone: "ok" | "warn" | "error" | "muted" | "default" }) {
   return (
     <span className={`v35-stage-dot is-${tone}`} aria-hidden="true" />
@@ -105,6 +136,8 @@ export function LibraryPanel({
   rows,
   filesById,
   selectedDocId,
+  multiSelectMode,
+  selectedBulkDocIds,
   searchInput,
   onSearchInputChange,
   onSearchSubmit,
@@ -114,9 +147,18 @@ export function LibraryPanel({
   onSortDirectionChange,
   onRefresh,
   onSelect,
+  onToggleMultiSelectMode,
+  onToggleBulkDocId,
   indexableCount,
+  selectedBulkCount,
   runAllDisabled,
   onRunAll,
+  onBulkDelete,
+  onBulkRegenerate,
+  onBulkExportTxt,
+  bulkDeleteDisabled,
+  bulkRegenerateDisabled,
+  bulkExportDisabled,
   onRun,
   onCancel,
   onDelete,
@@ -128,6 +170,7 @@ export function LibraryPanel({
   deletePending,
 }: LibraryPanelProps) {
   const desktopShell = isDesktopShell();
+  const selectedBulkDocIdSet = new Set(selectedBulkDocIds);
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     onSearchSubmit();
@@ -141,6 +184,15 @@ export function LibraryPanel({
           <p className="v35-muted">{indexableCount} 待索引</p>
         </div>
         <div className="v35-column-actions">
+          <button
+            type="button"
+            className={`v35-button v35-button-compact v35-workbench-icon-button ${multiSelectMode ? "is-active" : ""}`}
+            title="多选"
+            aria-label="多选"
+            onClick={onToggleMultiSelectMode}
+          >
+            <SelectIcon />
+          </button>
           <button
             type="button"
             className="v35-button v35-button-compact v35-workbench-icon-button"
@@ -206,6 +258,17 @@ export function LibraryPanel({
         </label>
       </div>
 
+      {multiSelectMode ? (
+        <div className="v35-library-batchbar" aria-label="批量操作">
+          <span className="v35-status is-muted">{selectedBulkCount}</span>
+          <div className="v35-library-batch-actions">
+            <button type="button" className="v35-button v35-button-compact v35-workbench-icon-button" title="重新生成" aria-label="重新生成" disabled={bulkRegenerateDisabled} onClick={onBulkRegenerate}><RegenerateIcon /></button>
+            <button type="button" className="v35-button v35-button-compact v35-workbench-icon-button" title="导出 TXT" aria-label="导出 TXT" disabled={bulkExportDisabled} onClick={onBulkExportTxt}><TxtIcon /></button>
+            <button type="button" className="v35-button v35-button-compact v35-workbench-icon-button v35-button-danger" title="删除" aria-label="删除" disabled={bulkDeleteDisabled} onClick={onBulkDelete}><DeleteIcon /></button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="v35-library-list">
         {isLoading ? <p className="v35-muted">正在加载文献...</p> : null}
         {isFetching && !isLoading ? <p className="v35-muted">搜索中...</p> : null}
@@ -228,25 +291,35 @@ export function LibraryPanel({
           const hasYear = typeof row.year === "number" && Number.isFinite(row.year);
           const displayName = stripDocumentExtension(row.display_name || row.filename || row.doc_id);
           const showStageChip = running && compactStage.label !== statusMeta.label;
+          const bulkSelected = selectedBulkDocIdSet.has(row.doc_id);
 
           return (
             <article
               key={row.doc_id}
-              className={`v35-paper-row ${selectedDocId === row.doc_id ? "is-active" : ""}`}
+              className={`v35-paper-row ${selectedDocId === row.doc_id ? "is-active" : ""} ${multiSelectMode ? "is-multi-mode" : ""} ${bulkSelected ? "is-multi-selected" : ""}`}
               role="button"
               tabIndex={0}
               onClick={() => {
+                if (multiSelectMode) {
+                  onToggleBulkDocId(row.doc_id);
+                  return;
+                }
                 onSelect(row.doc_id);
               }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
+                  if (multiSelectMode) {
+                    onToggleBulkDocId(row.doc_id);
+                    return;
+                  }
                   onSelect(row.doc_id);
                 }
               }}
             >
               <div className="v35-row-status">
                 <h3 title={displayName}>{displayName}</h3>
+                {multiSelectMode ? <span className={`v35-row-selector ${bulkSelected ? "is-selected" : ""}`} aria-hidden="true" /> : null}
               </div>
               <div className="v35-row-meta" title={stageMessage || undefined}>
                 {fileType ? <span className="v35-mini-chip">{fileType}</span> : null}
@@ -263,7 +336,7 @@ export function LibraryPanel({
                 ) : null}
               </div>
               <div className="v35-row-actions">
-                {running ? (
+                {multiSelectMode ? null : running ? (
                   <button
                     type="button"
                     className="v35-button v35-button-compact v35-workbench-icon-button"

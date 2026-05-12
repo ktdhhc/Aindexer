@@ -34,25 +34,39 @@ function saveWithBrowserDownload(file: DownloadedFile): void {
   window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
 }
 
-export async function saveDownloadedFile(file: DownloadedFile, options: SaveWithDesktopDialogOptions): Promise<string | null> {
+export async function pickDesktopSavePath(options: SaveWithDesktopDialogOptions): Promise<string | null> {
   if (!isDesktopShell()) {
-    saveWithBrowserDownload(file);
     return null;
   }
-  const [{ save }, { writeFile }] = await Promise.all([
-    import("@tauri-apps/plugin-dialog"),
-    import("@tauri-apps/plugin-fs"),
-  ]);
+  const { save } = await import("@tauri-apps/plugin-dialog");
   const targetPath = await save({
     title: options.title,
     defaultPath: options.defaultPath,
     filters: options.filters,
   });
+  return targetPath || null;
+}
+
+export async function writeDownloadedFileToPath(file: DownloadedFile, targetPath: string): Promise<string | null> {
+  if (!isDesktopShell()) {
+    saveWithBrowserDownload(file);
+    return null;
+  }
+  const { writeFile } = await import("@tauri-apps/plugin-fs");
+  await writeFile(targetPath, new Uint8Array(await file.blob.arrayBuffer()));
+  return targetPath;
+}
+
+export async function saveDownloadedFile(file: DownloadedFile, options: SaveWithDesktopDialogOptions): Promise<string | null> {
+  if (!isDesktopShell()) {
+    saveWithBrowserDownload(file);
+    return null;
+  }
+  const targetPath = await pickDesktopSavePath(options);
   if (!targetPath) {
     return null;
   }
-  await writeFile(targetPath, new Uint8Array(await file.blob.arrayBuffer()));
-  return targetPath;
+  return writeDownloadedFileToPath(file, targetPath);
 }
 
 export async function openFileWithDesktopDialog(options: OpenWithDesktopDialogOptions): Promise<File | null> {
@@ -98,4 +112,12 @@ export async function revealDesktopPath(path: string): Promise<void> {
   }
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("reveal_in_folder", { path });
+}
+
+export async function launchDesktopInstallerAndExit(path: string): Promise<void> {
+  if (!isDesktopShell() || !path) {
+    return;
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("launch_installer_and_exit", { path });
 }

@@ -4,4 +4,4 @@
   X-Frame-Options: SAMEORIGIN
 
 /assets/*
-  Cache-Control: public, max-age=3600
+  Cache-Control: no-cache

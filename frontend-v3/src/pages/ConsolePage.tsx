@@ -330,9 +330,11 @@ export function ConsolePage() {
       if (trimmedYear && !Number.isFinite(nextYear)) {
         throw new Error("年份格式不正确");
       }
+      const currentAuthors = searchableRows.find((item) => item.doc_id === selectedPreviewDocId)?.authors ?? [];
       return updateIndexEditor(selectedPreviewDocId, workspaceId, {
         title: editorTitle.trim(),
         display_name: editorTitle.trim(),
+        authors: currentAuthors,
         year: Number.isFinite(nextYear) ? nextYear : null,
         generated_at: editorDate.trim() || null,
         markdown: editorContent,

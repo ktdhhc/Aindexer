@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Aindexer - 本地文献索引与精读工作台</title>
   <meta name="description" content="为长期阅读、整理和回看的本地文献工作台。" />
-  <link rel="icon" href="assets/brand-mark.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="assets/styles.css" />
+  <link rel="icon" href="assets/brand-mark.svg?v=20260511d" type="image/svg+xml" />
+  <link rel="stylesheet" href="assets/styles.css?v=20260511d" />
 </head>
 <body data-page="home">
   <header class="header">
@@ -15,7 +15,7 @@
         <span class="logo">A</span>
         <span>
           <span class="brand-title">Aindexer</span>
-          <span class="brand-subtitle">本地文献工作台</span>
+          <span class="brand-subtitle">本地文献管理</span>
         </span>
       </a>
 
@@ -46,8 +46,11 @@
           <p class="hero-copy">在同一个地方上传、整理、回看、翻译和追问，不再在文件夹、笔记和临时对话之间来回切换</p>
           <p class="personal-copy">[让读文献像呼吸一样简单]</p>
           <div class="actions">
-            <a class="btn primary" href="https://github.com/ktdhhc/Aindexer" target="_blank" rel="noreferrer">查看 GitHub</a>
-            <a class="btn" href="guide/">使用说明</a>
+            <a class="btn" href="https://github.com/ktdhhc/Aindexer" target="_blank" rel="noreferrer">查看 GitHub</a>
+            <a class="btn primary" href="https://github.com/ktdhhc/Aindexer/releases/latest/download/Aindexer-Setup.exe">
+              <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h8v8H3V3m10 0h8v8h-8V3M3 13h8v8H3v-8m10 0h8v8h-8v-8Z" fill="currentColor"/></svg>
+              下载 Windows 版
+            </a>
           </div>
         </div>
 
@@ -59,9 +62,9 @@
           <div class="workbench-body">
             <aside class="rail">
               <p class="mini-title">文献库</p>
-              <div class="doc-row"><strong>多模态检索综述</strong><span>已整理 · pdf</span></div>
-              <div class="doc-row"><strong>长上下文评估</strong><span>待补充 · docx</span></div>
-              <div class="doc-row"><strong>翻译质量校验</strong><span>处理中 · pdf</span></div>
+              <div class="doc-row"><strong>检索综述</strong><span>已整理 · pdf</span></div>
+              <div class="doc-row"><strong>长上下文总结</strong><span>待补充 · docx</span></div>
+              <div class="doc-row"><strong>划词翻译</strong><span>处理中 · pdf</span></div>
             </aside>
             <section class="canvas">
               <h2 class="paper-title">结构化索引草稿</h2>
@@ -73,8 +76,7 @@
                 <span class="paper-line"></span>
               </div>
               <div class="index-block">
-                <h3>核心观点</h3>
-                <p>[截图占位：这里替换成主页真实截图后，这段可以删掉。]</p>
+                <h3>核心观点：</h3>
               </div>
             </section>
             <aside class="notes">
@@ -108,11 +110,19 @@
                 <span>侧栏快速问答</span>
               </div>
             </div>
-            <div class="page-preview"><div><strong>[主页截图占位]</strong><span>文献列表、文献预览、右侧辅助区。</span></div></div>
+            <div class="page-preview">
+              <figure class="page-shot">
+                <img src="assets/main page/主页截图.png?v=20260510e" alt="Aindexer 主页截图" loading="lazy" />
+              </figure>
+            </div>
           </article>
 
           <article class="page-entry reverse">
-            <div class="page-preview"><div><strong>[翻译页截图占位]</strong><span>PDF 原文与翻译结果对照。</span></div></div>
+            <div class="page-preview">
+              <figure class="page-shot">
+                <img src="assets/main page/翻译页截图.png?v=20260510e" alt="Aindexer 翻译页截图" loading="lazy" />
+              </figure>
+            </div>
             <div>
               <span class="page-kicker">02</span>
               <h3>翻译页：原文和理解放在一起</h3>
@@ -135,7 +145,11 @@
                 <span>探索：无从下手？把决定权交给ai</span>
               </div>
             </div>
-            <div class="page-preview"><div><strong>[问答页截图占位]</strong><span>围绕文献上下文继续提问。</span></div></div>
+            <div class="page-preview">
+              <figure class="page-shot">
+                <img src="assets/main page/对话页截图.png?v=20260510e" alt="Aindexer 对话页截图" loading="lazy" />
+              </figure>
+            </div>
           </article>
         </div>
       </div>
@@ -175,10 +189,10 @@
     <section class="cta">
       <div class="container cta-inner">
         <h2>终极目标是干掉Zotero</h2>
-        <p>[作者说明占位：可以写项目状态、适合谁用，或者你为什么把它做成开源工具。]</p>
+        <p>多格式引用、项目级管理、在线检索、持久记忆等功能正在路上...</p>
         <div class="actions actions-center">
           <a class="btn primary" href="https://github.com/ktdhhc/Aindexer" target="_blank" rel="noreferrer">访问 GitHub</a>
-          <a class="btn" href="mailto:your-email@example.com">[联系我占位]</a>
+          <a class="btn" href="mailto:your-email@example.com">1642012059@qq.com</a>
         </div>
       </div>
     </section>
@@ -186,7 +200,7 @@
 
   <footer class="footer">
     <div class="container footer-inner">
-      <p>© 2026 Aindexer. [版权 / 作者信息占位]</p>
+      <p>© 2026 Aindexer. Created by ktdhhc. View on GitHub.</p>
       <div class="footer-links">
         <a href="./">产品介绍</a>
         <a href="guide/">使用说明</a>
@@ -195,6 +209,6 @@
     </div>
   </footer>
 
-  <script src="assets/main.js" defer></script>
+  <script src="assets/main.js?v=20260511d" defer></script>
 </body>
 </html>

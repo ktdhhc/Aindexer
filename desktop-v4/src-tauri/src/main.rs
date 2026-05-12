@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::{
     env, fs,
     net::{TcpListener, TcpStream},
@@ -11,6 +13,11 @@ use std::{
 use tauri::{Manager, WindowEvent};
 
 struct SidecarState(Mutex<Option<Child>>);
+
+#[tauri::command]
+fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
 
 #[tauri::command]
 fn reveal_in_folder(path: String) -> Result<(), String> {
@@ -48,11 +55,54 @@ fn reveal_in_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn launch_installer_and_exit(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SidecarState>,
+    path: String,
+) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if !target.exists() {
+        return Err(format!("installer does not exist: {}", target.display()));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .arg("/C")
+            .arg("start")
+            .arg("")
+            .arg(&target)
+            .spawn()
+            .map_err(|err| format!("failed to start installer: {err}"))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&target)
+            .spawn()
+            .map_err(|err| format!("failed to start installer: {err}"))?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(&target)
+            .spawn()
+            .map_err(|err| format!("failed to start installer: {err}"))?;
+    }
+
+    stop_sidecar(&state.0);
+    app.exit(0);
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![reveal_in_folder])
+        .invoke_handler(tauri::generate_handler![get_app_version, reveal_in_folder, launch_installer_and_exit])
         .setup(|app| {
             app.manage(SidecarState(Mutex::new(None)));
 
@@ -110,8 +160,15 @@ fn spawn_sidecar<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(Child,
         .env("AINDEXER_RUNTIME_ROOT", &sidecar_dir)
         .env("AINDEXER_BACKEND_ROOT", &backend_dir)
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        command.creation_flags(0x08000000);
+    }
 
     let mut child = command.spawn().map_err(|err| {
         format!(

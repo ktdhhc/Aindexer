@@ -327,6 +327,29 @@ def test_update_index_editor_write_failure_keeps_old_index_fields(tmp_path: Path
     assert doc["display_name"] != "Edited name"
 
 
+def test_update_index_editor_updates_authors(tmp_path: Path, monkeypatch) -> None:
+    _setup_db(tmp_path, monkeypatch)
+    doc_id = _create_doc(tmp_path)
+    repository.save_index(doc_id, _record(), provider="openai", model="test-model")
+
+    payload = index_router.update_index_editor(
+        doc_id,
+        {
+            "markdown": "updated markdown",
+            "title": "Indexed title",
+            "display_name": "paper",
+            "authors": ["Alice", "Bob"],
+            "year": 2026,
+        },
+        workspace_id="ws_default",
+    )
+
+    saved = repository.get_index(doc_id)
+    assert payload == {"ok": True}
+    assert saved is not None
+    assert saved.authors == ["Alice", "Bob"]
+
+
 def test_update_index_write_failure_does_not_save_structured_record(tmp_path: Path, monkeypatch) -> None:
     _setup_db(tmp_path, monkeypatch)
     doc_id = _create_doc(tmp_path)

@@ -751,12 +751,14 @@ def update_index_editor_fields(
     *,
     title: str,
     display_name: str,
+    authors: list[str] | None,
     year: int | None,
     generated_at: str | None,
     workspace_id: str | None = None,
 ) -> bool:
     cleaned_title = str(title or "").strip()
     cleaned_name = str(display_name or "").strip()
+    cleaned_authors = [str(item or "").strip() for item in (authors or []) if str(item or "").strip()]
     with get_conn() as conn:
         if workspace_id is None:
             doc_row = conn.execute(
@@ -785,8 +787,8 @@ def update_index_editor_fields(
             (next_name, utcnow(), doc_id),
         )
         conn.execute(
-            "UPDATE index_records SET title = ?, year = ?, updated_at = ? WHERE doc_id = ?",
-            (next_title, next_year, next_generated_at, doc_id),
+            "UPDATE index_records SET title = ?, authors_json = ?, year = ?, updated_at = ? WHERE doc_id = ?",
+            (next_title, json.dumps(cleaned_authors, ensure_ascii=False), next_year, next_generated_at, doc_id),
         )
         return True
 
@@ -1477,29 +1479,20 @@ def delete_provider_config(provider: str) -> bool:
 def reset_provider_configs_to_defaults() -> None:
     now = utcnow()
     defaults = [
-        ("openai", "https://api.openai.com/v1", "gpt-4.1-mini", 0.1, 120, 1, now),
+        ("openai", "https://api.openai.com/v1", "gpt-5.4", 0.1, 120, 1, now),
         (
             "deepseek",
             "https://api.deepseek.com/v1",
-            "deepseek-chat",
+            "deepseek-v4-flash",
             0.1,
             120,
             1,
             now,
         ),
         (
-            "glm",
-            "https://open.bigmodel.cn/api/paas/v4",
-            "glm-4-flash",
-            0.1,
-            120,
-            1,
-            now,
-        ),
-        (
-            "openrouter",
-            "https://openrouter.ai/api/v1",
-            "openai/gpt-4o-mini",
+            "ali",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "deepseek-v4-flash",
             0.1,
             120,
             1,

@@ -58,7 +58,6 @@ function collectInstaller() {
 }
 
 runStep("building frontend-v3", commandName("npm"), ["run", "build"], frontendDir);
-runStep("syncing desktop version", commandName("npm"), ["run", "sync:version"], desktopDir);
 runStep(
   "building packaged sidecar",
   python,

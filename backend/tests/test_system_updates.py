@@ -42,6 +42,25 @@ def test_version_compare_supports_v_prefixed_tags() -> None:
     assert system._is_newer_version("0.1.1", "v0.1.1") is False
 
 
+def test_download_latest_update_installer_blocks_same_or_newer_current_version(monkeypatch) -> None:
+    monkeypatch.setattr(
+        system,
+        "_load_latest_update_payload",
+        lambda force_refresh=False: {
+            "latest_version": "0.1.1",
+            "download_url": "https://example.com/Aindexer-V4-0.1.1-setup.exe",
+            "download_filename": "Aindexer V4_0.1.1_x64-setup.exe",
+            "download_size": 123,
+        },
+    )
+
+    client = TestClient(create_app())
+    response = client.get("/api/system/updates/latest/download", params={"current_version": "0.1.1"})
+
+    assert response.status_code == 409
+    assert "禁止下载安装包" in response.json()["detail"]
+
+
 def test_fetch_latest_update_payload_falls_back_to_prerelease_feed(monkeypatch) -> None:
     def fake_get(url: str, **_: object) -> httpx.Response:
         if url == system.UPDATE_API_URL:

@@ -5,6 +5,12 @@ export interface DownloadedFile {
   filename: string;
 }
 
+export interface DownloadProgressState {
+  receivedBytes: number;
+  totalBytes: number;
+  percent: number | null;
+}
+
 export interface LatestDesktopUpdateInfo {
   repo: string;
   source: string;
@@ -60,16 +66,57 @@ export function getLatestDesktopUpdate(currentVersion?: string, forceRefresh = f
   return fetchJson<LatestDesktopUpdateInfo>(buildUpdateQuery(currentVersion, forceRefresh));
 }
 
-export async function downloadLatestDesktopInstaller(): Promise<DownloadedFile> {
-  const response = await fetch("/api/system/updates/latest/download");
+export async function downloadLatestDesktopInstaller(
+  currentVersion: string,
+  onProgress?: (state: DownloadProgressState) => void,
+  signal?: AbortSignal,
+): Promise<DownloadedFile> {
+  const params = new URLSearchParams({ current_version: currentVersion });
+  const response = await fetch(`/api/system/updates/latest/download?${params.toString()}`, { signal });
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, "下载安装包失败"));
   }
+
+  const fallbackFilename = "Aindexer-latest-setup.exe";
+  const filename = filenameFromDisposition(
+    response.headers.get("Content-Disposition"),
+    fallbackFilename,
+  );
+  const totalBytes = Number.parseInt(response.headers.get("Content-Length") || "0", 10) || 0;
+
+  if (!response.body) {
+    const blob = await response.blob();
+    onProgress?.({
+      receivedBytes: blob.size,
+      totalBytes,
+      percent: totalBytes > 0 ? 100 : null,
+    });
+    return { blob, filename };
+  }
+
+  const reader = response.body.getReader();
+  const chunks: BlobPart[] = [];
+  let receivedBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (!value) {
+      continue;
+    }
+    chunks.push(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+    receivedBytes += value.byteLength;
+    onProgress?.({
+      receivedBytes,
+      totalBytes,
+      percent: totalBytes > 0 ? Math.min(100, Math.round((receivedBytes / totalBytes) * 100)) : null,
+    });
+  }
+
   return {
-    blob: await response.blob(),
-    filename: filenameFromDisposition(
-      response.headers.get("Content-Disposition"),
-      "Aindexer-latest-setup.exe",
-    ),
+    blob: new Blob(chunks, { type: response.headers.get("Content-Type") || "application/octet-stream" }),
+    filename,
   };
 }

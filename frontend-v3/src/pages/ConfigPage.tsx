@@ -45,6 +45,7 @@ import {
 } from "../shared/api/backup";
 import {
   downloadLatestDesktopInstaller,
+  type DownloadProgressState,
   getLatestDesktopUpdate,
   type LatestDesktopUpdateInfo,
 } from "../shared/api/system";
@@ -59,7 +60,7 @@ import {
 } from "../shared/api/usage";
 import { UI_LAYOUT_SIZE_OPTIONS, useShellStore, type UiLayoutSize } from "../app/shellStore";
 import { applyChatBackupState, collectChatBackupState } from "../shared/lib/backupState";
-import { confirmDesktopAction, openFileWithDesktopDialog, revealDesktopPath, saveDownloadedFile } from "../shared/lib/desktopFiles";
+import { confirmDesktopAction, launchDesktopInstallerAndExit, openFileWithDesktopDialog, pickDesktopSavePath, revealDesktopPath, saveDownloadedFile, writeDownloadedFileToPath } from "../shared/lib/desktopFiles";
 import { getModelDefaults, setModelDefaults, type ModelDefaults } from "../shared/lib/modelDefaults";
 import { setProviderModels, useAvailableProviderModelEntries, useProviderModels } from "../shared/lib/providerModels";
 import { isDesktopShell } from "../shared/lib/runtime";
@@ -88,6 +89,19 @@ interface ProviderTestSummary {
 }
 
 type BackupTool = "export" | "restore" | "logs" | "updates";
+
+type UpdateDownloadPhase = "idle" | "download" | "save";
+
+interface UpdateDownloadDialogState {
+  open: boolean;
+  phase: UpdateDownloadPhase;
+  filename: string;
+  receivedBytes: number;
+  totalBytes: number;
+  percent: number | null;
+}
+
+const UPDATE_INSTALLER_PATH_STORAGE_KEY = "aindexer_v35_last_installer_path";
 
 function uniqueTrimmed(values: string[]): string[] {
   return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))];
@@ -164,6 +178,26 @@ function compactNumber(value?: number | null): string {
 
 function formatCost(value?: number | null): string {
   return `￥${Number(value || 0).toFixed(4)}`;
+}
+
+function readStoredUpdateInstallerPath(): string {
+  try {
+    return String(window.localStorage.getItem(UPDATE_INSTALLER_PATH_STORAGE_KEY) || "");
+  } catch {
+    return "";
+  }
+}
+
+function persistUpdateInstallerPath(value: string): void {
+  try {
+    if (value) {
+      window.localStorage.setItem(UPDATE_INSTALLER_PATH_STORAGE_KEY, value);
+      return;
+    }
+    window.localStorage.removeItem(UPDATE_INSTALLER_PATH_STORAGE_KEY);
+  } catch {
+    // ignore storage failures
+  }
 }
 
 function usageFeatureLabel(value: string): string {
@@ -444,7 +478,6 @@ export function ConfigPage() {
 
   const [newTemplateName, setNewTemplateName] = useState("");
   const [templateNameDraft, setTemplateNameDraft] = useState("");
-  const [templateDescriptionDraft, setTemplateDescriptionDraft] = useState("");
   const [fieldDrafts, setFieldDrafts] = useState<FieldDefinition[]>([]);
   const [fieldsMessage, setFieldsMessage] = useState("准备就绪");
 
@@ -457,15 +490,24 @@ export function ConfigPage() {
   const [updateMessage, setUpdateMessage] = useState("准备就绪");
   const [lastBackupPath, setLastBackupPath] = useState("");
   const [lastLogPath, setLastLogPath] = useState("");
-  const [lastInstallerPath, setLastInstallerPath] = useState("");
+  const [lastInstallerPath, setLastInstallerPath] = useState(() => readStoredUpdateInstallerPath());
   const [desktopVersion, setDesktopVersion] = useState("");
   const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
+  const [updateDownloadDialog, setUpdateDownloadDialog] = useState<UpdateDownloadDialogState>({
+    open: false,
+    phase: "idle",
+    filename: "",
+    receivedBytes: 0,
+    totalBytes: 0,
+    percent: null,
+  });
   const [pricingDraft, setPricingDraft] = useState<PricingDraft>({
     inputPrice: "",
     outputPrice: "",
   });
   const usageChartWindowRef = useRef<HTMLDivElement>(null);
   const backupFileInputRef = useRef<HTMLInputElement>(null);
+  const updateDownloadAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!desktopShell) {
@@ -473,8 +515,8 @@ export function ConfigPage() {
       return;
     }
     let cancelled = false;
-    import("@tauri-apps/api/app")
-      .then(({ getVersion }) => getVersion())
+    import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke<string>("get_app_version"))
       .then((version) => {
         if (!cancelled) {
           setDesktopVersion(String(version || ""));
@@ -489,6 +531,10 @@ export function ConfigPage() {
       cancelled = true;
     };
   }, [desktopShell]);
+
+  useEffect(() => {
+    persistUpdateInstallerPath(lastInstallerPath);
+  }, [lastInstallerPath]);
 
   const providersQuery = useQuery({
     queryKey: ["providers"],
@@ -811,11 +857,9 @@ export function ConfigPage() {
   useEffect(() => {
     if (!selectedTemplateRow) {
       setTemplateNameDraft("");
-      setTemplateDescriptionDraft("");
       return;
     }
     setTemplateNameDraft(selectedTemplateRow.name);
-    setTemplateDescriptionDraft(selectedTemplateRow.description || "");
   }, [selectedTemplateRow]);
 
   useEffect(() => {
@@ -1003,7 +1047,6 @@ export function ConfigPage() {
       }
       return updateFieldTemplate(selectedTemplateId, {
         name,
-        description: templateDescriptionDraft.trim(),
       });
     },
     onSuccess: async () => {
@@ -1225,26 +1268,87 @@ export function ConfigPage() {
     },
   });
 
+  const handleUpdateDownloadProgress = useCallback((state: DownloadProgressState) => {
+    setUpdateDownloadDialog((current) => ({
+      ...current,
+      receivedBytes: state.receivedBytes,
+      totalBytes: state.totalBytes,
+      percent: state.percent,
+    }));
+  }, []);
+
   const downloadUpdateMutation = useMutation({
-    mutationFn: async (payload: LatestDesktopUpdateInfo | undefined) => {
+    mutationFn: async ({ payload, targetPath }: { payload: LatestDesktopUpdateInfo; targetPath: string | null }) => {
       if (!payload?.download_url) {
         throw new Error("当前 release 未提供可下载的安装包");
       }
-      const file = await downloadLatestDesktopInstaller();
-      const savedPath = await saveDownloadedFile(file, {
-        title: "保存更新安装包",
-        defaultPath: file.filename,
-        filters: [{ name: "Windows Installer", extensions: ["exe", "msi"] }],
+      if (!desktopVersion) {
+        throw new Error("当前版本未知，无法下载安装包");
+      }
+      const controller = new AbortController();
+      updateDownloadAbortRef.current = controller;
+      setUpdateDownloadDialog({
+        open: true,
+        phase: "download",
+        filename: payload.download_filename || "Aindexer-latest-setup.exe",
+        receivedBytes: 0,
+        totalBytes: payload.download_size || 0,
+        percent: 0,
       });
+      const file = await downloadLatestDesktopInstaller(desktopVersion, handleUpdateDownloadProgress, controller.signal);
+      setUpdateDownloadDialog((current) => ({
+        ...current,
+        phase: "save",
+        filename: file.filename,
+        receivedBytes: file.blob.size,
+        totalBytes: file.blob.size,
+        percent: 100,
+      }));
+      const savedPath = targetPath
+        ? await writeDownloadedFileToPath(file, targetPath)
+        : await saveDownloadedFile(file, {
+            title: "保存更新安装包",
+            defaultPath: file.filename,
+            filters: [{ name: "Windows Installer", extensions: ["exe", "msi"] }],
+          });
       return savedPath;
     },
-    onSuccess: (savedPath) => {
+    onSuccess: async (savedPath) => {
+      updateDownloadAbortRef.current = null;
+      setUpdateDownloadDialog({
+        open: false,
+        phase: "idle",
+        filename: "",
+        receivedBytes: 0,
+        totalBytes: 0,
+        percent: null,
+      });
       if (savedPath) {
         setLastInstallerPath(savedPath);
+        setUpdateMessage("安装包已保存");
+        const accepted = await confirmDesktopAction("关闭当前软件并启动安装包？", "开始更新");
+        if (!accepted) {
+          return;
+        }
+        await launchDesktopInstallerAndExit(savedPath);
+        return;
       }
       setUpdateMessage(savedPath ? "安装包已保存" : desktopShell ? "取消下载" : "已开始下载");
     },
     onError: (error) => {
+      updateDownloadAbortRef.current = null;
+      setUpdateDownloadDialog({
+        open: false,
+        phase: "idle",
+        filename: "",
+        receivedBytes: 0,
+        totalBytes: 0,
+        percent: null,
+      });
+      if (error instanceof Error && error.name === "AbortError") {
+        setUpdateMessage("已取消下载");
+        return;
+      }
       setUpdateMessage(error instanceof Error ? error.message : "下载安装包失败");
     },
   });
@@ -1293,6 +1397,42 @@ export function ConfigPage() {
       }
       return nextRows;
     });
+  }
+
+  async function startUpdateDownloadFlow(payload: LatestDesktopUpdateInfo | undefined) {
+    if (!payload?.download_url || !payload.has_update) {
+      setUpdateMessage("当前没有可安装的新版本");
+      return;
+    }
+    if (!desktopShell || !desktopVersion) {
+      setUpdateMessage("仅桌面端可执行更新安装");
+      return;
+    }
+
+    const accepted = await confirmDesktopAction(`下载 ${payload.latest_version} 并准备安装？`, "下载更新");
+    if (!accepted) {
+      setUpdateMessage("取消下载");
+      return;
+    }
+
+    let targetPath = lastInstallerPath;
+    if (!targetPath) {
+      targetPath = await pickDesktopSavePath({
+        title: "保存更新安装包",
+        defaultPath: payload.download_filename || "Aindexer-latest-setup.exe",
+        filters: [{ name: "Windows Installer", extensions: ["exe", "msi"] }],
+      }) || "";
+    }
+    if (!targetPath) {
+      setUpdateMessage("取消下载");
+      return;
+    }
+
+    void downloadUpdateMutation.mutateAsync({ payload, targetPath });
+  }
+
+  function cancelUpdateDownload() {
+    updateDownloadAbortRef.current?.abort();
   }
 
   function updateField(index: number, patch: Partial<FieldDefinition>) {
@@ -1743,19 +1883,16 @@ export function ConfigPage() {
                     <p>Template</p>
                     <h2>{selectedTemplateRow?.name || "未选择"}</h2>
                   </div>
-                  <button className="v35-button" type="button" onClick={addField}>新增字段</button>
+                  <div className="v35-provider-head-actions">
+                    <input
+                      className="v35-input v35-input-compact"
+                      value={templateNameDraft}
+                      onChange={(event) => setTemplateNameDraft(event.target.value)}
+                      placeholder="模板名称"
+                    />
+                    <button className="v35-button" type="button" onClick={addField}>新增字段</button>
+                  </div>
                 </header>
-
-                <div className="v35-config-form-grid">
-                  <label className="v35-field">
-                    <span>模板名称</span>
-                    <input className="v35-input" value={templateNameDraft} onChange={(event) => setTemplateNameDraft(event.target.value)} />
-                  </label>
-                  <label className="v35-field v35-span-2">
-                    <span>描述</span>
-                    <textarea className="v35-textarea" value={templateDescriptionDraft} onChange={(event) => setTemplateDescriptionDraft(event.target.value)} />
-                  </label>
-                </div>
 
                 <div className="v35-template-designer">
                   <div className="v35-field-strip" aria-label="字段目录">
@@ -1974,21 +2111,23 @@ export function ConfigPage() {
                       </div>
                     </div>
                   </div>
-                  <div className="v35-usage-metrics">
-                    <div><span>输入</span><strong>{compactNumber(activeUsageMetrics.input_tokens)}</strong></div>
-                    <div><span>输出</span><strong>{compactNumber(activeUsageMetrics.output_tokens)}</strong></div>
-                    <div><span>请求</span><strong>{compactNumber(activeUsageMetrics.request_count)}</strong></div>
-                    <div><span>预算</span><strong>{formatCost(activeUsageMetrics.estimated_cost)}</strong></div>
+                  <div className="v35-usage-side">
+                    <div className="v35-usage-metrics">
+                      <div><span>输入</span><strong>{compactNumber(activeUsageMetrics.input_tokens)}</strong></div>
+                      <div><span>输出</span><strong>{compactNumber(activeUsageMetrics.output_tokens)}</strong></div>
+                      <div><span>请求</span><strong>{compactNumber(activeUsageMetrics.request_count)}</strong></div>
+                      <div><span>预算</span><strong>{formatCost(activeUsageMetrics.estimated_cost)}</strong></div>
+                    </div>
+
+                    <section className="v35-usage-pricing">
+                      <div className="v35-usage-pricing-form">
+                        <input className="v35-input" type="number" min="0" step="0.0001" value={pricingDraft.inputPrice} onChange={(event) => setPricingDraft((current) => ({ ...current, inputPrice: event.target.value }))} placeholder="输入 / 1M" />
+                        <input className="v35-input" type="number" min="0" step="0.0001" value={pricingDraft.outputPrice} onChange={(event) => setPricingDraft((current) => ({ ...current, outputPrice: event.target.value }))} placeholder="输出 / 1M" />
+                        <button className="v35-button v35-button-primary" type="button" disabled={savePricingMutation.isPending} onClick={() => void savePricingMutation.mutateAsync()}>保存</button>
+                      </div>
+                    </section>
                   </div>
                 </div>
-
-                <section className="v35-usage-pricing">
-                  <div className="v35-usage-pricing-form">
-                    <input className="v35-input" type="number" min="0" step="0.0001" value={pricingDraft.inputPrice} onChange={(event) => setPricingDraft((current) => ({ ...current, inputPrice: event.target.value }))} placeholder="输入 / 1M" />
-                    <input className="v35-input" type="number" min="0" step="0.0001" value={pricingDraft.outputPrice} onChange={(event) => setPricingDraft((current) => ({ ...current, outputPrice: event.target.value }))} placeholder="输出 / 1M" />
-                    <button className="v35-button v35-button-primary" type="button" disabled={savePricingMutation.isPending} onClick={() => void savePricingMutation.mutateAsync()}>保存</button>
-                  </div>
-                </section>
               </article>
             </section>
           ) : null}
@@ -2177,8 +2316,10 @@ export function ConfigPage() {
                             <button
                               className="v35-button v35-button-primary"
                               type="button"
-                              disabled={!latestUpdateQuery.data?.download_url || downloadUpdateMutation.isPending}
-                              onClick={() => void downloadUpdateMutation.mutateAsync(latestUpdateQuery.data)}
+                              disabled={!desktopShell || !desktopVersion || !latestUpdateQuery.data?.has_update || !latestUpdateQuery.data?.download_url || downloadUpdateMutation.isPending}
+                              onClick={() => {
+                                void startUpdateDownloadFlow(latestUpdateQuery.data);
+                              }}
                             >
                               <span>下载安装包</span>
                             </button>
@@ -2287,6 +2428,36 @@ export function ConfigPage() {
           ) : null}
         </main>
       </div>
+      {updateDownloadDialog.open ? (
+        <div className="v35-update-progress-overlay" role="dialog" aria-modal="true" aria-label="更新下载进度">
+          <section className="v35-update-progress-dialog">
+            <header className="v35-defaults-block-head">
+              <div>
+                <span>UPDATE</span>
+                <strong>{updateDownloadDialog.phase === "save" ? "SAVE" : "DOWN"}</strong>
+              </div>
+              <span className={`v35-status ${updateDownloadDialog.phase === "save" ? "is-ok" : "is-warn"}`}>
+                {updateDownloadDialog.percent !== null ? `${updateDownloadDialog.percent}%` : "..."}
+              </span>
+            </header>
+            <div className="v35-update-progress-meta">
+              <strong>{updateDownloadDialog.filename || "installer"}</strong>
+              <span>{formatUpdateBytes(updateDownloadDialog.receivedBytes)} / {formatUpdateBytes(updateDownloadDialog.totalBytes)}</span>
+            </div>
+            <div className="v35-index-progress v35-update-progress-bar is-running" aria-label="下载进度">
+              <i className="v35-index-progress-track" aria-hidden="true">
+                <span
+                  className="v35-index-progress-fill"
+                  style={{ width: `${Math.max(8, updateDownloadDialog.percent ?? 28)}%` }}
+                />
+              </i>
+            </div>
+            <footer className="v35-defaults-inline-actions">
+              <button className="v35-button" type="button" onClick={cancelUpdateDownload}>取消</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }

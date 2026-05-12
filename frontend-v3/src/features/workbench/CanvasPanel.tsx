@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+
 import type { PreviewMode } from "./types";
 import { isDesktopShell } from "../../shared/lib/runtime";
 
@@ -16,19 +18,23 @@ interface CanvasPanelProps {
   onPreviewDisplayNameDraftChange: (value: string) => void;
   previewTitleDraft: string;
   onPreviewTitleDraftChange: (value: string) => void;
+  previewAuthorsDraft: string;
+  onPreviewAuthorsDraftChange: (value: string) => void;
   previewYearDraft: string;
   onPreviewYearDraftChange: (value: string) => void;
   onEditStart: () => void;
   onEditCancel: () => void;
   onEditSave: () => void;
   onRefresh: () => void;
-  onCopy: () => void;
+  onCopyIndex: () => void;
+  onCopyApa: () => void;
   onOpenOriginal: () => void;
   onExport: () => void;
   isLoading: boolean;
   isError: boolean;
   canEdit: boolean;
   savePending: boolean;
+  canCopyApa: boolean;
 }
 
 function RefreshIcon() {
@@ -96,6 +102,15 @@ function CloseIcon() {
   );
 }
 
+function CitationIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M6.2 7.2h2.6v2.1L7.2 12H5.8l1.1-2H6.2a1 1 0 0 1-1-1V8.2a1 1 0 0 1 1-1Z" />
+      <path d="M11.2 7.2h2.6v2.1L12.2 12h-1.4l1.1-2h-.7a1 1 0 0 1-1-1V8.2a1 1 0 0 1 1-1Z" />
+    </svg>
+  );
+}
+
 export function CanvasPanel({
   selectedDocId,
   selectedTitle,
@@ -111,22 +126,49 @@ export function CanvasPanel({
   onPreviewDisplayNameDraftChange,
   previewTitleDraft,
   onPreviewTitleDraftChange,
+  previewAuthorsDraft,
+  onPreviewAuthorsDraftChange,
   previewYearDraft,
   onPreviewYearDraftChange,
   onEditStart,
   onEditCancel,
   onEditSave,
   onRefresh,
-  onCopy,
+  onCopyIndex,
+  onCopyApa,
   onOpenOriginal,
   onExport,
   isLoading,
   isError,
   canEdit,
   savePending,
+  canCopyApa,
 }: CanvasPanelProps) {
   const desktopShell = isDesktopShell();
   const hasPreview = Boolean(previewMarkdown);
+  const [copyMenuOpen, setCopyMenuOpen] = useState(false);
+  const copyMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!copyMenuOpen) {
+      return;
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!copyMenuRef.current?.contains(event.target as Node)) {
+        setCopyMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [copyMenuOpen]);
+
+  useEffect(() => {
+    if (!hasPreview || isEditing) {
+      setCopyMenuOpen(false);
+    }
+  }, [hasPreview, isEditing]);
 
   return (
     <section className="v35-paper-panel v35-column v35-canvas-panel" aria-label="文档画布">
@@ -159,7 +201,47 @@ export function CanvasPanel({
             </button>
           </div>
           <button className="v35-button v35-button-compact v35-workbench-icon-button" type="button" title="刷新预览" aria-label="刷新预览" disabled={!selectedDocId} onClick={onRefresh}><RefreshIcon /></button>
-          <button className="v35-button v35-button-compact v35-workbench-icon-button" type="button" title="复制索引内容" aria-label="复制索引内容" disabled={!hasPreview || isEditing} onClick={onCopy}><CopyIcon /></button>
+          <div className="v35-canvas-copy-group" ref={copyMenuRef}>
+            <button
+              className="v35-button v35-button-compact v35-workbench-icon-button"
+              type="button"
+              title="复制"
+              aria-label="复制"
+              disabled={!hasPreview || isEditing}
+              onClick={() => {
+                setCopyMenuOpen((current) => !current);
+              }}
+            >
+              <CopyIcon />
+            </button>
+            {copyMenuOpen ? (
+              <div className="v35-canvas-copy-menu" role="menu" aria-label="复制菜单">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setCopyMenuOpen(false);
+                    onCopyIndex();
+                  }}
+                >
+                  <CopyIcon />
+                  <span>IDX</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!canCopyApa}
+                  onClick={() => {
+                    setCopyMenuOpen(false);
+                    onCopyApa();
+                  }}
+                >
+                  <CitationIcon />
+                  <span>APA</span>
+                </button>
+              </div>
+            ) : null}
+          </div>
           <button className="v35-button v35-button-compact v35-workbench-icon-button" type="button" title="打开原文" aria-label="打开原文" disabled={!selectedDocId} onClick={onOpenOriginal}><OriginalIcon /></button>
           <button className="v35-button v35-button-compact v35-workbench-icon-button" type="button" title="导出 Markdown" aria-label="导出 Markdown" disabled={!selectedDocId} onClick={onExport}><ExportIcon /></button>
           {!isEditing ? (
@@ -199,6 +281,20 @@ export function CanvasPanel({
                         onPreviewTitleDraftChange(event.target.value);
                       }}
                       placeholder="索引标题"
+                    />
+                  </label>
+                </div>
+
+                <div className="v35-canvas-editor-title-row">
+                  <label className="v35-editor-field">
+                    <span className="v35-editor-label">作者</span>
+                    <input
+                      className="v35-editor-input"
+                      value={previewAuthorsDraft}
+                      onChange={(event) => {
+                        onPreviewAuthorsDraftChange(event.target.value);
+                      }}
+                      placeholder="作者，逗号分隔"
                     />
                   </label>
                 </div>

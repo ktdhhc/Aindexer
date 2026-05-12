@@ -20,7 +20,7 @@ from ..services.provider_client import ProviderClient, ProviderConfig
 
 router = APIRouter()
 
-DEFAULT_PROVIDERS = {"openai", "deepseek", "glm", "openrouter"}
+DEFAULT_PROVIDERS = {"openai", "deepseek", "ali"}
 DIRECT_PROVIDER_API_STYLES = {"openai_compatible"}
 
 

@@ -7,6 +7,12 @@ const CHANGE_EVENT = "aindexer_v35_provider_models_changed";
 
 type ProviderModelMap = Record<string, string[]>;
 
+const DEFAULT_PROVIDER_MODELS: ProviderModelMap = {
+  openai: ["gpt-5.4"],
+  deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
+  ali: ["deepseek-v4-flash", "kimi-k2.5", "qwen3.6-flash", "MiniMax-M2.5"],
+};
+
 function normalizeProvider(provider: string): string {
   return String(provider || "").trim().toLowerCase();
 }
@@ -19,12 +25,12 @@ function readModelMap(): ProviderModelMap {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      return {};
+      return { ...DEFAULT_PROVIDER_MODELS };
     }
     const parsed = JSON.parse(raw) as ProviderModelMap;
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
-    return {};
+    return { ...DEFAULT_PROVIDER_MODELS };
   }
 }
 

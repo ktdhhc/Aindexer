@@ -67,7 +67,6 @@ def build_sidecar() -> Path:
         "-m",
         "PyInstaller",
         "--noconfirm",
-        "--clean",
         "--onedir",
         "--contents-directory",
         CONTENTS_DIR,

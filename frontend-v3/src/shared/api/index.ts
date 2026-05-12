@@ -8,7 +8,9 @@ export interface IndexMarkdownPayload {
 export interface IndexDetailPayload {
   doc_id: string;
   title: string;
+  authors: string[];
   year: number | null;
+  apa_citation: string;
   updated_at: string | null;
 }
 
@@ -16,6 +18,7 @@ export interface IndexEditorPayload {
   markdown: string;
   title: string;
   display_name: string;
+  authors: string[];
   year: number | null;
   generated_at: string | null;
 }

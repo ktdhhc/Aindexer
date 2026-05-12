@@ -27,6 +27,17 @@ function syncCargoVersion(version) {
   }
 }
 
+function syncTauriConfigVersion(version) {
+  const tauriConfPath = path.join(desktopDir, "src-tauri", "tauri.conf.json");
+  const tauriConf = fs.readFileSync(tauriConfPath, "utf-8");
+  const pattern = /"version"\s*:\s*"[^"]*"/;
+  const nextTauriConf = tauriConf.replace(pattern, `"version": "${version}"`);
+
+  if (nextTauriConf !== tauriConf) {
+    fs.writeFileSync(tauriConfPath, nextTauriConf, "utf-8");
+  }
+}
+
 function main() {
   const packageJson = readJson(packageJsonPath);
   const version = String(packageJson.version || "").trim();
@@ -35,6 +46,7 @@ function main() {
   }
 
   syncCargoVersion(version);
+  syncTauriConfigVersion(version);
   console.log(`[version] desktop-v4 version synced: ${version}`);
 }
 

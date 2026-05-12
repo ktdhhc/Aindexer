@@ -751,6 +751,9 @@ def update_index_editor(
     markdown = str(payload.get("markdown", ""))
     title = str(payload.get("title", ""))
     display_name = str(payload.get("display_name", ""))
+    raw_authors = payload.get("authors")
+    authors = [str(item or "").strip() for item in raw_authors] if isinstance(raw_authors, list) else []
+    authors = [item for item in authors if item]
     generated_at = payload.get("generated_at")
     raw_year = payload.get("year")
     year_text = str(raw_year or "").strip()
@@ -765,6 +768,7 @@ def update_index_editor(
         doc_id,
         title=title,
         display_name=display_name,
+        authors=authors,
         year=year,
         generated_at=str(generated_at or ""),
         workspace_id=workspace,

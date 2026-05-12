@@ -20,7 +20,7 @@ import { listFieldTemplates } from "../shared/api/fields";
 import { buildOriginalFileUrl, deleteFile, listFiles, uploadFile } from "../shared/api/files";
 import type { FileItem } from "../shared/api/files";
 import { buildExportMarkdownUrl } from "../shared/api/export";
-import { getActiveIndexRuns, getIndexDetail, getIndexMarkdown, runAllIndexes, streamIndex, cancelIndex, updateIndexEditor, type IndexProgressEvent } from "../shared/api/index";
+import { getActiveIndexRuns, getIndexDetail, getIndexMarkdown, runAllIndexes, runIndex, streamIndex, cancelIndex, updateIndexEditor, type IndexProgressEvent } from "../shared/api/index";
 import { listProviders } from "../shared/api/providers";
 import { searchDocuments } from "../shared/api/search";
 import { getModelDefault, parseModelDefaultKey } from "../shared/lib/modelDefaults";
@@ -55,6 +55,37 @@ function buildStats(totalRows: FileItem[]): WorkbenchStats {
 
 function normalizeLibrarySearchText(value: string | number | null | undefined): string {
   return String(value || "").trim().toLowerCase();
+}
+
+function downloadTextFile(filename: string, content: string): void {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function batchExportFileName(): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mi = String(now.getMinutes()).padStart(2, "0");
+  return `library-export-${yyyy}${mm}${dd}-${hh}${mi}.txt`;
+}
+
+function formatAuthorsDraft(authors?: string[] | null): string {
+  return (authors ?? []).map((item) => String(item || "").trim()).filter(Boolean).join(", ");
+}
+
+function parseAuthorsDraft(value: string): string[] {
+  return String(value || "")
+    .split(/[\n,，;；]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function matchesLibrarySearch(
@@ -142,7 +173,10 @@ export function WorkbenchPage() {
   const [previewDraft, setPreviewDraft] = useState("");
   const [previewDisplayNameDraft, setPreviewDisplayNameDraft] = useState("");
   const [previewTitleDraft, setPreviewTitleDraft] = useState("");
+  const [previewAuthorsDraft, setPreviewAuthorsDraft] = useState("");
   const [previewYearDraft, setPreviewYearDraft] = useState("");
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [selectedBulkDocIds, setSelectedBulkDocIds] = useState<string[]>([]);
   const [chatQuestion, setChatQuestion] = useState("");
   const [statusText, setStatusText] = useState("准备就绪");
   const [streamingDocIds, setStreamingDocIds] = useState<string[]>([]);
@@ -339,6 +373,7 @@ export function WorkbenchPage() {
       return updateIndexEditor(selectedDocId, workspaceId, {
         display_name: previewDisplayNameDraft.trim(),
         title: previewTitleDraft.trim(),
+        authors: parseAuthorsDraft(previewAuthorsDraft),
         year: Number.isFinite(nextYear) ? nextYear : null,
         generated_at: indexDetailQuery.data?.updated_at || null,
         markdown: previewDraft,
@@ -396,6 +431,9 @@ export function WorkbenchPage() {
   const selectedSearchRow = useMemo(() => {
     return searchRows.find((row) => row.doc_id === selectedDocId) ?? null;
   }, [searchRows, selectedDocId]);
+  const searchRowsById = useMemo(() => {
+    return new Map(searchRows.map((row) => [row.doc_id, row]));
+  }, [searchRows]);
 
   const selectedFileRow = useMemo(() => {
     return filesById.get(selectedDocId) ?? null;
@@ -453,7 +491,13 @@ export function WorkbenchPage() {
 
   useEffect(() => {
     setStreamingDocIds([]);
+    setMultiSelectMode(false);
+    setSelectedBulkDocIds([]);
   }, [workspaceId]);
+
+  useEffect(() => {
+    setSelectedBulkDocIds((current) => current.filter((docId) => searchRows.some((row) => row.doc_id === docId)));
+  }, [searchRows]);
 
   useEffect(() => {
     if (providerRows.length === 0) {
@@ -501,6 +545,7 @@ export function WorkbenchPage() {
       setPreviewDraft("");
       setPreviewDisplayNameDraft("");
       setPreviewTitleDraft("");
+      setPreviewAuthorsDraft("");
       setPreviewYearDraft("");
       return;
     }
@@ -524,8 +569,9 @@ export function WorkbenchPage() {
     setPreviewDraft(previewMarkdown);
     setPreviewDisplayNameDraft(selectedFileRow?.display_name || selectedSearchRow?.display_name || "");
     setPreviewTitleDraft(indexDetailQuery.data?.title || selectedSearchRow?.title || "");
+    setPreviewAuthorsDraft(formatAuthorsDraft(indexDetailQuery.data?.authors ?? selectedSearchRow?.authors));
     setPreviewYearDraft(indexDetailQuery.data?.year ? String(indexDetailQuery.data.year) : selectedSearchRow?.year ? String(selectedSearchRow.year) : "");
-  }, [indexDetailQuery.data?.title, indexDetailQuery.data?.year, isEditingPreview, previewMarkdown, selectedDocId, selectedFileRow?.display_name, selectedSearchRow?.display_name, selectedSearchRow?.title, selectedSearchRow?.year]);
+  }, [indexDetailQuery.data?.authors, indexDetailQuery.data?.title, indexDetailQuery.data?.year, isEditingPreview, previewMarkdown, selectedDocId, selectedFileRow?.display_name, selectedSearchRow?.authors, selectedSearchRow?.display_name, selectedSearchRow?.title, selectedSearchRow?.year]);
 
   const previousWorkspaceActiveRunCountRef = useRef(0);
 
@@ -541,6 +587,11 @@ export function WorkbenchPage() {
   }, [queryClient, workspaceActiveRunCount, workspaceId]);
 
   const selectedTitle = selectedSearchRow?.display_name || selectedSearchRow?.title || selectedFileRow?.display_name || "未选择文献";
+  const selectedApaCitation = String(indexDetailQuery.data?.apa_citation || "").trim();
+  const selectedBulkCount = selectedBulkDocIds.length;
+  const bulkExportDisabled = selectedBulkCount === 0;
+  const bulkDeleteDisabled = selectedBulkCount === 0 || deleteMutation.isPending;
+  const bulkRegenerateDisabled = selectedBulkCount === 0 || runMutation.isPending || !provider || !templateId;
 
   const handleSearchSubmit = () => {};
 
@@ -554,6 +605,94 @@ export function WorkbenchPage() {
     } catch {
       setStatusText("复制失败，请手动复制");
     }
+  };
+
+  const handleCopyApa = async () => {
+    if (!selectedApaCitation) {
+      setStatusText("无 APA");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(selectedApaCitation);
+      setStatusText("APA 已复制");
+    } catch {
+      setStatusText("复制失败，请手动复制");
+    }
+  };
+
+  const handleToggleMultiSelectMode = () => {
+    setMultiSelectMode((current) => {
+      if (current) {
+        setSelectedBulkDocIds([]);
+      }
+      return !current;
+    });
+  };
+
+  const handleToggleBulkDocId = useCallback((docId: string) => {
+    setSelectedBulkDocIds((current) => current.includes(docId) ? current.filter((item) => item !== docId) : [...current, docId]);
+  }, []);
+
+  const handleBulkDelete = async () => {
+    const docIds = [...selectedBulkDocIds];
+    if (docIds.length === 0) {
+      return;
+    }
+    const results = await Promise.allSettled(docIds.map((docId) => deleteFile(docId, workspaceId)));
+    const deletedIds = docIds.filter((_, index) => results[index].status === "fulfilled");
+    if (deletedIds.includes(selectedDocId)) {
+      setSelectedDocId("");
+      setIsEditingPreview(false);
+      setPreviewDraft("");
+      setPreviewDisplayNameDraft("");
+      setPreviewTitleDraft("");
+      setPreviewAuthorsDraft("");
+      setPreviewYearDraft("");
+    }
+    setSelectedBulkDocIds((current) => current.filter((docId) => !deletedIds.includes(docId)));
+    if (deletedIds.length > 0) {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
+      ]);
+    }
+    setStatusText(`删除 ${deletedIds.length}/${docIds.length}`);
+  };
+
+  const handleBulkRegenerate = async () => {
+    const docIds = [...selectedBulkDocIds];
+    if (docIds.length === 0 || !provider || !templateId) {
+      return;
+    }
+    const results = await Promise.allSettled(docIds.map((docId) => runIndex(docId, workspaceId, provider, model || null, templateId)));
+    const queuedCount = results.filter((item) => item.status === "fulfilled").length;
+    if (queuedCount > 0) {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["files", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["search", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["index-runs-active"] }),
+      ]);
+    }
+    setStatusText(`重生 ${queuedCount}/${docIds.length}`);
+  };
+
+  const handleBulkExportTxt = async () => {
+    const docIds = [...selectedBulkDocIds];
+    if (docIds.length === 0) {
+      return;
+    }
+    const sections = await Promise.all(docIds.map(async (docId) => {
+      const searchRow = searchRowsById.get(docId);
+      const detailResult = await getIndexDetail(docId, workspaceId).catch(() => null);
+      const markdownResult = await getIndexMarkdown(docId, workspaceId).catch(() => null);
+      const title = detailResult?.title || searchRow?.title || searchRow?.display_name || searchRow?.filename || docId;
+      const apa = String(detailResult?.apa_citation || "").trim();
+      const markdown = String(markdownResult?.markdown || "").trim();
+      const header = [title, apa].filter(Boolean).join("\n");
+      return `${header}${header ? "\n\n" : ""}${markdown || "[index unavailable]"}`;
+    }));
+    downloadTextFile(batchExportFileName(), sections.join("\n\n\n"));
+    setStatusText(`TXT ${docIds.length}`);
   };
 
   const handleRefresh = async () => {
@@ -573,6 +712,7 @@ export function WorkbenchPage() {
     setPreviewDraft(previewMarkdown);
     setPreviewDisplayNameDraft(selectedFileRow?.display_name || selectedSearchRow?.display_name || "");
     setPreviewTitleDraft(indexDetailQuery.data?.title || selectedSearchRow?.title || "");
+    setPreviewAuthorsDraft(formatAuthorsDraft(indexDetailQuery.data?.authors ?? selectedSearchRow?.authors));
     setPreviewYearDraft(indexDetailQuery.data?.year ? String(indexDetailQuery.data.year) : selectedSearchRow?.year ? String(selectedSearchRow.year) : "");
     setPreviewMode("raw");
     setIsEditingPreview(true);
@@ -582,6 +722,7 @@ export function WorkbenchPage() {
     setPreviewDraft(previewMarkdown);
     setPreviewDisplayNameDraft(selectedFileRow?.display_name || selectedSearchRow?.display_name || "");
     setPreviewTitleDraft(indexDetailQuery.data?.title || selectedSearchRow?.title || "");
+    setPreviewAuthorsDraft(formatAuthorsDraft(indexDetailQuery.data?.authors ?? selectedSearchRow?.authors));
     setPreviewYearDraft(indexDetailQuery.data?.year ? String(indexDetailQuery.data.year) : selectedSearchRow?.year ? String(selectedSearchRow.year) : "");
     setIsEditingPreview(false);
     setStatusText("已取消编辑");
@@ -631,26 +772,43 @@ export function WorkbenchPage() {
           <LibraryPanel
             rows={searchRows}
             filesById={filesById}
-            selectedDocId={selectedDocId}
-            searchInput={searchInput}
-            onSearchInputChange={setSearchInput}
-            onSearchSubmit={handleSearchSubmit}
+          selectedDocId={selectedDocId}
+          multiSelectMode={multiSelectMode}
+          selectedBulkDocIds={selectedBulkDocIds}
+          searchInput={searchInput}
+          onSearchInputChange={setSearchInput}
+          onSearchSubmit={handleSearchSubmit}
             sortField={searchSortField}
             sortDirection={searchSortDirection}
             onSortFieldChange={setSearchSortField}
             onSortDirectionChange={setSearchSortDirection}
-            onRefresh={() => {
-              void handleRefresh();
-            }}
-            onSelect={setSelectedDocId}
-            indexableCount={indexableCount}
-            runAllDisabled={runAllMutation.isPending || !provider || indexableCount === 0}
-            onRunAll={() => {
-              void runAllMutation.mutateAsync();
-            }}
-            onRun={(docId) => {
-              void runMutation.mutateAsync(docId);
-            }}
+          onRefresh={() => {
+            void handleRefresh();
+          }}
+          onSelect={setSelectedDocId}
+          onToggleMultiSelectMode={handleToggleMultiSelectMode}
+          onToggleBulkDocId={handleToggleBulkDocId}
+          indexableCount={indexableCount}
+          selectedBulkCount={selectedBulkCount}
+          runAllDisabled={runAllMutation.isPending || !provider || indexableCount === 0}
+          onRunAll={() => {
+            void runAllMutation.mutateAsync();
+          }}
+          onBulkDelete={() => {
+            void handleBulkDelete();
+          }}
+          onBulkRegenerate={() => {
+            void handleBulkRegenerate();
+          }}
+          onBulkExportTxt={() => {
+            void handleBulkExportTxt();
+          }}
+          bulkDeleteDisabled={bulkDeleteDisabled}
+          bulkRegenerateDisabled={bulkRegenerateDisabled}
+          bulkExportDisabled={bulkExportDisabled}
+          onRun={(docId) => {
+            void runMutation.mutateAsync(docId);
+          }}
             onCancel={(docId) => {
               void cancelMutation.mutateAsync(docId);
             }}
@@ -681,6 +839,8 @@ export function WorkbenchPage() {
           onPreviewDisplayNameDraftChange={setPreviewDisplayNameDraft}
           previewTitleDraft={previewTitleDraft}
           onPreviewTitleDraftChange={setPreviewTitleDraft}
+          previewAuthorsDraft={previewAuthorsDraft}
+          onPreviewAuthorsDraftChange={setPreviewAuthorsDraft}
           previewYearDraft={previewYearDraft}
           onPreviewYearDraftChange={setPreviewYearDraft}
           onEditStart={handleStartEdit}
@@ -691,8 +851,11 @@ export function WorkbenchPage() {
           onRefresh={() => {
             void previewQuery.refetch();
           }}
-          onCopy={() => {
+          onCopyIndex={() => {
             void handleCopy();
+          }}
+          onCopyApa={() => {
+            void handleCopyApa();
           }}
           onOpenOriginal={() => {
             if (!selectedDocId) {
@@ -710,6 +873,7 @@ export function WorkbenchPage() {
           isError={previewQuery.isError}
           canEdit={canEditPreview}
           savePending={savePreviewMutation.isPending}
+          canCopyApa={Boolean(selectedApaCitation)}
         />
 
         <NotesPanel

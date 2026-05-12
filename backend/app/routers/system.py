@@ -455,8 +455,14 @@ def get_latest_update(current_version: str = Query(default=""), force_refresh: b
 
 
 @router.get("/updates/latest/download")
-def download_latest_update_installer() -> StreamingResponse:
+def download_latest_update_installer(current_version: str = Query(default="")) -> StreamingResponse:
     payload = _load_latest_update_payload(force_refresh=True)
+    normalized_current = _normalize_version(current_version)
+    latest_version = str(payload.get("latest_version") or "")
+    if not normalized_current:
+        raise HTTPException(status_code=400, detail="缺少当前版本，无法下载安装包")
+    if not _is_newer_version(normalized_current, latest_version):
+        raise HTTPException(status_code=409, detail="当前版本已是最新或更高版本，禁止下载安装包")
     download_url = str(payload.get("download_url") or "").strip()
     filename = str(payload.get("download_filename") or "Aindexer-latest-setup.exe").strip()
     size = int(payload.get("download_size") or 0)

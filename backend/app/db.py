@@ -730,11 +730,11 @@ def _seed_default_field_templates(conn: sqlite3.Connection) -> None:
 def _seed_default_providers(conn: sqlite3.Connection) -> None:
     now = utcnow()
     providers = [
-        ("openai", "https://api.openai.com/v1", "gpt-4.1-mini", None, 0.1, 120, 1, now),
+        ("openai", "https://api.openai.com/v1", "gpt-5.4", None, 0.1, 120, 1, now),
         (
             "deepseek",
             "https://api.deepseek.com/v1",
-            "deepseek-chat",
+            "deepseek-v4-flash",
             None,
             0.1,
             120,
@@ -742,19 +742,9 @@ def _seed_default_providers(conn: sqlite3.Connection) -> None:
             now,
         ),
         (
-            "glm",
-            "https://open.bigmodel.cn/api/paas/v4",
-            "glm-4-flash",
-            None,
-            0.1,
-            120,
-            1,
-            now,
-        ),
-        (
-            "openrouter",
-            "https://openrouter.ai/api/v1",
-            "openai/gpt-4o-mini",
+            "ali",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "deepseek-v4-flash",
             None,
             0.1,
             120,
