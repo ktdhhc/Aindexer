@@ -21,6 +21,15 @@ SPEC_ROOT = BUILD_ROOT / "spec"
 WORK_ROOT = BUILD_ROOT / "work"
 SIDECAR_NAME = "aindexer-sidecar"
 CONTENTS_DIR = "_internal"
+EXCLUDED_MODULES = [
+    "pytest",
+    "py",
+    "pandas",
+    "pyarrow",
+    "openpyxl",
+    "scipy",
+    "matplotlib",
+]
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
@@ -94,6 +103,8 @@ def build_sidecar() -> Path:
         f"{(BACKEND / 'app' / 'provider_registry' / 'model_name_registry.json')}{sep}backend/app/provider_registry",
         str(BACKEND / "desktop_v4_sidecar.py"),
     ]
+    for module_name in EXCLUDED_MODULES:
+        args.extend(["--exclude-module", module_name])
     run(args, cwd=ROOT)
     return DIST_ROOT / SIDECAR_NAME
 

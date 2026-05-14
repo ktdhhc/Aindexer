@@ -10,9 +10,19 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tauri::{Manager, WindowEvent};
+use serde::Deserialize;
+use tauri::{Manager, Window, WindowEvent};
+use tauri_plugin_dialog::{DialogExt, FileDialogBuilder, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_fs::FsExt;
 
 struct SidecarState(Mutex<Option<Child>>);
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveDialogFilter {
+    name: String,
+    extensions: Vec<String>,
+}
 
 #[tauri::command]
 fn get_app_version() -> String {
@@ -53,6 +63,110 @@ fn reveal_in_folder(path: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+async fn confirm_desktop_action<R: tauri::Runtime>(
+    window: Window<R>,
+    message: String,
+    title: String,
+) -> Result<bool, String> {
+    let mut dialog = window
+        .dialog()
+        .message(message)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "继续".to_string(),
+            "取消".to_string(),
+        ))
+        .kind(MessageDialogKind::Warning);
+    #[cfg(desktop)]
+    {
+        dialog = dialog.parent(&window);
+    }
+    if !title.trim().is_empty() {
+        dialog = dialog.title(title);
+    }
+    Ok(dialog.blocking_show())
+}
+
+#[tauri::command]
+async fn pick_save_path<R: tauri::Runtime>(
+    window: Window<R>,
+    title: String,
+    default_path: String,
+    filters: Vec<SaveDialogFilter>,
+) -> Result<Option<String>, String> {
+    let mut dialog_builder = window.dialog().file();
+    #[cfg(desktop)]
+    {
+        dialog_builder = dialog_builder.set_parent(&window);
+    }
+    if !title.trim().is_empty() {
+        dialog_builder = dialog_builder.set_title(title);
+    }
+    if !default_path.trim().is_empty() {
+        dialog_builder = set_save_dialog_default_path(dialog_builder, PathBuf::from(default_path));
+    }
+    for filter in filters {
+        let extensions: Vec<&str> = filter.extensions.iter().map(|s| s.as_str()).collect();
+        dialog_builder = dialog_builder.add_filter(filter.name, &extensions);
+    }
+
+    let Some(file_path) = dialog_builder.blocking_save_file() else {
+        return Ok(None);
+    };
+
+    let target_path = file_path
+        .into_path()
+        .map_err(|err| format!("failed to resolve selected save path: {err}"))?;
+    if let Some(scope) = window.try_fs_scope() {
+        scope
+            .allow_file(&target_path)
+            .map_err(|err| format!("failed to grant fs scope for selected path: {err}"))?;
+    }
+    let tauri_scope = window.state::<tauri::scope::Scopes>();
+    tauri_scope
+        .allow_file(&target_path)
+        .map_err(|err| format!("failed to grant runtime scope for selected path: {err}"))?;
+    Ok(Some(target_path.display().to_string()))
+}
+
+#[tauri::command]
+async fn pick_open_file<R: tauri::Runtime>(
+    window: Window<R>,
+    title: String,
+    filters: Vec<SaveDialogFilter>,
+) -> Result<Option<String>, String> {
+    let mut dialog_builder = window.dialog().file();
+    #[cfg(desktop)]
+    {
+        dialog_builder = dialog_builder.set_parent(&window);
+    }
+    if !title.trim().is_empty() {
+        dialog_builder = dialog_builder.set_title(title);
+    }
+    for filter in filters {
+        let extensions: Vec<&str> = filter.extensions.iter().map(|s| s.as_str()).collect();
+        dialog_builder = dialog_builder.add_filter(filter.name, &extensions);
+    }
+
+    let Some(file_path) = dialog_builder.blocking_pick_file() else {
+        return Ok(None);
+    };
+
+    let selected_path = file_path
+        .into_path()
+        .map_err(|err| format!("failed to resolve selected file path: {err}"))?;
+    if let Some(scope) = window.try_fs_scope() {
+        scope
+            .allow_file(&selected_path)
+            .map_err(|err| format!("failed to grant fs scope for selected file: {err}"))?;
+    }
+    let tauri_scope = window.state::<tauri::scope::Scopes>();
+    tauri_scope
+        .allow_file(&selected_path)
+        .map_err(|err| format!("failed to grant runtime scope for selected file: {err}"))?;
+    Ok(Some(selected_path.display().to_string()))
 }
 
 #[tauri::command]
@@ -102,7 +216,14 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![get_app_version, reveal_in_folder, launch_installer_and_exit])
+        .invoke_handler(tauri::generate_handler![
+            confirm_desktop_action,
+            get_app_version,
+            reveal_in_folder,
+            launch_installer_and_exit,
+            pick_save_path,
+            pick_open_file
+        ])
         .setup(|app| {
             app.manage(SidecarState(Mutex::new(None)));
 
@@ -110,7 +231,13 @@ fn main() {
                 return Ok(());
             }
 
-            let (child, port) = spawn_sidecar(app.handle()).map_err(to_setup_error)?;
+            let (child, port) = match spawn_sidecar(app.handle()) {
+                Ok(value) => value,
+                Err(message) => {
+                    show_startup_error(app.handle(), &message);
+                    return Err(Box::new(to_setup_error(message)));
+                }
+            };
             let state = app.state::<SidecarState>();
             if let Ok(mut guard) = state.0.lock() {
                 *guard = Some(child);
@@ -142,8 +269,7 @@ fn spawn_sidecar<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(Child,
     let (sidecar_path, sidecar_dir) = resolve_sidecar_path(app)?;
     let backend_dir = resolve_backend_dir(&sidecar_dir);
     let data_dir = resolve_data_dir()?;
-    fs::create_dir_all(&data_dir)
-        .map_err(|err| format!("failed to create data dir {}: {err}", data_dir.display()))?;
+    ensure_data_dir_writable(&data_dir)?;
 
     let mut command = Command::new(&sidecar_path);
     command
@@ -305,6 +431,10 @@ fn resolve_data_dir() -> Result<PathBuf, String> {
         return Ok(PathBuf::from(path));
     }
 
+    if let Some(base) = env::var_os("LOCALAPPDATA") {
+        return Ok(PathBuf::from(base).join("Aindexer").join("v4").join("data"));
+    }
+
     if let Some(base) = env::var_os("APPDATA") {
         return Ok(PathBuf::from(base).join("Aindexer").join("v4").join("data"));
     }
@@ -317,8 +447,60 @@ fn resolve_data_dir() -> Result<PathBuf, String> {
             .join("data"));
     }
 
-    let cwd = env::current_dir().map_err(|err| format!("failed to resolve current dir: {err}"))?;
-    Ok(cwd.join("data"))
+    Err("failed to resolve a default desktop data directory".to_string())
+}
+
+fn ensure_data_dir_writable(data_dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(data_dir).map_err(|err| {
+        format_data_dir_error(
+            data_dir,
+            format!("无法创建数据目录：{err}"),
+        )
+    })?;
+
+    let probe_path = data_dir.join(".aindexer-write-test");
+    fs::write(&probe_path, b"ok").map_err(|err| {
+        format_data_dir_error(
+            data_dir,
+            format!("无法写入数据目录：{err}"),
+        )
+    })?;
+    let _ = fs::remove_file(&probe_path);
+    Ok(())
+}
+
+fn set_save_dialog_default_path<R: tauri::Runtime>(
+    mut dialog_builder: FileDialogBuilder<R>,
+    default_path: PathBuf,
+) -> FileDialogBuilder<R> {
+    if default_path.is_file() || !default_path.exists() {
+        if let (Some(parent), Some(file_name)) = (default_path.parent(), default_path.file_name()) {
+            if parent.components().count() > 0 {
+                dialog_builder = dialog_builder.set_directory(parent);
+            }
+            dialog_builder.set_file_name(file_name.to_string_lossy())
+        } else {
+            dialog_builder.set_directory(default_path)
+        }
+    } else {
+        dialog_builder.set_directory(default_path)
+    }
+}
+
+fn format_data_dir_error(data_dir: &Path, detail: String) -> String {
+    format!(
+        "Aindexer 无法启动，因为桌面版默认数据目录不可写：{}\n\n{}\n\n当前安装版默认把数据保存在用户本地数据目录中（Windows 下通常为 LOCALAPPDATA\\Aindexer\\v4\\data）。请确认当前账号对该目录有写权限，或显式设置 AINDEXER_DATA_DIR 到一个可写路径。",
+        data_dir.display(),
+        detail,
+    )
+}
+
+fn show_startup_error<R: tauri::Runtime>(app: &tauri::AppHandle<R>, message: &str) {
+    app.dialog()
+        .message(message)
+        .title("Aindexer 启动失败")
+        .kind(MessageDialogKind::Error)
+        .blocking_show();
 }
 
 fn to_setup_error(message: impl Into<String>) -> std::io::Error {

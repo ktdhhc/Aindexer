@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -12,6 +12,10 @@ const desktopDir = path.join(rootDir, "desktop-v4");
 const backendDir = path.join(rootDir, "backend");
 const frontendDir = path.join(rootDir, "frontend-v3");
 const isWindows = process.platform === "win32";
+const backendVenvPython = isWindows
+  ? path.join(backendDir, ".venv", "Scripts", "python.exe")
+  : path.join(backendDir, ".venv", "bin", "python");
+const backendPython = resolveBackendPython();
 const defaultBackendPort = 18000;
 const defaultFrontendPort = 16733;
 
@@ -43,6 +47,33 @@ function spawnManaged(name, command, args, cwd, extraEnv = {}) {
     }
   });
   return child;
+}
+
+function canExecute(command, args, cwd) {
+  try {
+    const result = spawnSync(command, args, {
+      cwd,
+      env: process.env,
+      stdio: "ignore",
+      shell: isWindows && command.endsWith(".cmd"),
+    });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function resolveBackendPython() {
+  if (process.env.AINDEXER_PYTHON) {
+    return process.env.AINDEXER_PYTHON;
+  }
+  if (fs.existsSync(backendVenvPython)) {
+    if (canExecute(backendVenvPython, ["--version"], backendDir)) {
+      return backendVenvPython;
+    }
+    console.warn(`[dev] ignoring broken backend venv python at ${backendVenvPython}`);
+  }
+  return "python";
 }
 
 function isPortOpen(port) {
@@ -202,12 +233,12 @@ async function main() {
   const tauriConfigPath = writeTauriDevConfig(frontendPort);
 
   console.log(
-    `[dev] starting desktop-v4 stack on frontend=${frontendPort} backend=${backendPort} data=${dataDir}`,
+    `[dev] starting desktop-v4 stack on frontend=${frontendPort} backend=${backendPort} data=${dataDir} python=${backendPython}`,
   );
 
   spawnManaged(
     "backend",
-    "python",
+    backendPython,
     ["-m", "uvicorn", "app.main:app", "--reload", "--host", "127.0.0.1", "--port", String(backendPort)],
     backendDir,
     {
@@ -259,12 +290,6 @@ main().catch((error) => {
 function resolveDesktopDataDir() {
   if (process.env.AINDEXER_DATA_DIR) {
     return path.resolve(process.env.AINDEXER_DATA_DIR);
-  }
-  if (isWindows && process.env.APPDATA) {
-    return path.join(process.env.APPDATA, "Aindexer", "v4", "data");
-  }
-  if (process.env.HOME) {
-    return path.join(process.env.HOME, ".local", "share", "aindexer-v4", "data");
   }
   return path.join(rootDir, "data");
 }

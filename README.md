@@ -67,7 +67,7 @@
 - 索引 Markdown：`data/indexes/`
 - 导出与备份：`data/exports/`
 - 运行日志：`data/logs/`
-- V4 桌面端可通过 `AINDEXER_DATA_DIR` 将数据目录切到用户 AppData 下
+- 直接运行后端与 `desktop-v4` 开发模式默认都使用仓库根 `data/`；V4 安装包默认使用 `%LOCALAPPDATA%/Aindexer/v4/data`，也可通过 `AINDEXER_DATA_DIR` 显式覆盖
 
 ## 公开仓库结构
 

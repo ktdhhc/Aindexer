@@ -24,6 +24,7 @@ npm run dev
 - `npm run dev` 会依次启动后端 `uvicorn --reload`、前端 Vite dev server 和 Tauri dev shell。
 - `tauri dev` 会直接加载：`http://127.0.0.1:5173/v3/workbench`
 - API 仍通过 `frontend-v3/vite.config.ts` 代理到 `http://127.0.0.1:8000`
+- 开发模式默认将桌面数据写入仓库根 `data/`，与直接运行后端时保持一致；如需隔离目录，可显式设置 `AINDEXER_DATA_DIR`
 - 此模式下前端改动会热更新到桌面窗口
 
 ## 构建 / 生产路径
@@ -72,12 +73,12 @@ npm run build
 
 - 选择一个本地动态端口。
 - 启动 bundle 中的 sidecar 可执行程序，而不是依赖系统 Python。
-- 设置 `AINDEXER_DATA_DIR`，默认写入用户 AppData 下的 `Aindexer/v4/data`。
+- 安装包默认将数据读写到用户本地数据目录 `%LOCALAPPDATA%/Aindexer/v4/data`，与程序安装目录解耦。
 - 等待 sidecar 端口就绪后，加载 `http://127.0.0.1:<port>/v3/workbench`。
 
 默认安装包输出位置：
 
-- `dist/desktop-v4-installer/Aindexer V4_<version>_x64-setup.exe`
+- `dist/desktop-v4-installer/YYMMDD_v<version>/Aindexer_v4-win-x64-setup-(HHMM).exe`
 
 Tauri 原始 bundle 输出仍位于：
 
@@ -93,7 +94,7 @@ Tauri 原始 bundle 输出仍位于：
 - `AINDEXER_PYTHON`：指定 Python 可执行文件。
 - `AINDEXER_BACKEND_ROOT`：指定 sidecar 运行时 backend 资源目录。
 - `AINDEXER_BACKEND_DIR`：`AINDEXER_BACKEND_ROOT` 的兼容别名。
-- `AINDEXER_DATA_DIR`：指定桌面端数据目录。
+- `AINDEXER_DATA_DIR`：显式覆盖桌面端数据目录；未设置时安装包默认使用 `%LOCALAPPDATA%/Aindexer/v4/data`。
 - `AINDEXER_RUNTIME_ROOT`：指定 sidecar 运行时资源根目录。
 - `AINDEXER_SIDECAR_PATH`：调试时手动指定 sidecar 可执行文件路径。
 
@@ -101,5 +102,5 @@ Tauri 原始 bundle 输出仍位于：
 
 - 开发模式复用 `frontend-v3` 的 Vite dev server；构建路径复用 `frontend-v3` 构建产物和 FastAPI 现有 `/api/*`、`/v3/*` 挂载。
 - 首阶段不重写 V3.5 页面，也不默认改动后端核心路由、service 或 repository。
-- 当前正式安装包会显式排除仓库 `data/`、运行日志、测试脚本和项目文档，不把本地开发数据打进安装器。
+- 当前正式安装包会显式排除仓库 `data/`、运行日志、测试脚本和项目文档，不把本地开发数据打进安装器；安装后的桌面数据默认只保存在用户本地数据目录 `%LOCALAPPDATA%/Aindexer/v4/data`。
 - 自动更新仍属于后续阶段。

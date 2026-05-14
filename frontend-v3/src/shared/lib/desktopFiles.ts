@@ -15,12 +15,6 @@ interface SaveWithDesktopDialogOptions {
 interface OpenWithDesktopDialogOptions {
   title: string;
   filters?: NativeDialogFilter[];
-  mimeType?: string;
-}
-
-function fileNameFromPath(path: string): string {
-  const parts = String(path || "").split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] || "download";
 }
 
 function saveWithBrowserDownload(file: DownloadedFile): void {
@@ -38,11 +32,11 @@ export async function pickDesktopSavePath(options: SaveWithDesktopDialogOptions)
   if (!isDesktopShell()) {
     return null;
   }
-  const { save } = await import("@tauri-apps/plugin-dialog");
-  const targetPath = await save({
+  const { invoke } = await import("@tauri-apps/api/core");
+  const targetPath = await invoke<string | null>("pick_save_path", {
     title: options.title,
     defaultPath: options.defaultPath,
-    filters: options.filters,
+    filters: options.filters ?? [],
   });
   return targetPath || null;
 }
@@ -52,8 +46,13 @@ export async function writeDownloadedFileToPath(file: DownloadedFile, targetPath
     saveWithBrowserDownload(file);
     return null;
   }
-  const { writeFile } = await import("@tauri-apps/plugin-fs");
-  await writeFile(targetPath, new Uint8Array(await file.blob.arrayBuffer()));
+  const { stat, writeFile } = await import("@tauri-apps/plugin-fs");
+  const bytes = new Uint8Array(await file.blob.arrayBuffer());
+  await writeFile(targetPath, bytes);
+  const written = await stat(targetPath);
+  if (Number(written.size || 0) !== bytes.byteLength) {
+    throw new Error("Saved file size mismatch");
+  }
   return targetPath;
 }
 
@@ -69,40 +68,26 @@ export async function saveDownloadedFile(file: DownloadedFile, options: SaveWith
   return writeDownloadedFileToPath(file, targetPath);
 }
 
-export async function openFileWithDesktopDialog(options: OpenWithDesktopDialogOptions): Promise<File | null> {
+export async function pickDesktopOpenPath(options: OpenWithDesktopDialogOptions): Promise<string | null> {
   if (!isDesktopShell()) {
     return null;
   }
-  const [{ open }, { readFile }] = await Promise.all([
-    import("@tauri-apps/plugin-dialog"),
-    import("@tauri-apps/plugin-fs"),
-  ]);
-  const selectedPath = await open({
+  const { invoke } = await import("@tauri-apps/api/core");
+  const selectedPath = await invoke<string | null>("pick_open_file", {
     title: options.title,
-    multiple: false,
-    directory: false,
-    filters: options.filters,
+    filters: options.filters ?? [],
   });
-  if (typeof selectedPath !== "string" || !selectedPath) {
-    return null;
-  }
-  const content = await readFile(selectedPath);
-  const bytes = new Uint8Array(content);
-  return new File([bytes.buffer], fileNameFromPath(selectedPath), {
-    type: options.mimeType || "application/octet-stream",
-  });
+  return selectedPath || null;
 }
 
 export async function confirmDesktopAction(message: string, title: string): Promise<boolean> {
   if (!isDesktopShell()) {
     return window.confirm(message);
   }
-  const { confirm } = await import("@tauri-apps/plugin-dialog");
-  return confirm(message, {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<boolean>("confirm_desktop_action", {
+    message,
     title,
-    kind: "warning",
-    okLabel: "继续",
-    cancelLabel: "取消",
   });
 }
 

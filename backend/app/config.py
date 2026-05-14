@@ -81,10 +81,13 @@ def _resolve_data_dir() -> Path:
         return _expand_path(override)
 
     if getattr(sys, "frozen", False):
+        if localappdata := os.getenv("LOCALAPPDATA"):
+            return Path(localappdata).expanduser().resolve() / "Aindexer" / "v4" / "data"
         if appdata := os.getenv("APPDATA"):
             return Path(appdata).expanduser().resolve() / "Aindexer" / "v4" / "data"
         if home := os.getenv("HOME"):
             return Path(home).expanduser().resolve() / ".local" / "share" / "aindexer-v4" / "data"
+        return Path(sys.executable).resolve().parent / "data"
 
     return BASE_DIR / "data"
 
@@ -97,8 +100,6 @@ EXPORT_DIR = DATA_DIR / "exports"
 DB_PATH = DATA_DIR / "app.db"
 APP_LOG_PATH = LOG_DIR / "app.log"
 RUNTIME_DIR = DATA_DIR / "runtime"
-
-print(f"[aindexer] DATA_DIR={DATA_DIR}")
 
 APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
 APP_PORT = int(os.getenv("APP_PORT", "8000"))

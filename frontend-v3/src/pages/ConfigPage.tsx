@@ -37,10 +37,17 @@ import {
   updateIndexSettings,
 } from "../shared/api/index";
 import {
-  downloadDataBackup,
-  downloadLogBundle,
+  cancelMaintenanceTask,
+  createBackupTask,
+  createLogExportTask,
+  createRestoreTask,
+  createRestoreTaskFromPath,
+  discardMaintenanceTaskArtifact,
+  downloadMaintenanceTaskArtifact,
+  getMaintenanceTask,
   getRestoreStatus,
-  restoreDataBackup,
+  saveMaintenanceTaskArtifact,
+  type MaintenanceTaskSnapshot,
   type RestoreStatus,
 } from "../shared/api/backup";
 import {
@@ -60,7 +67,7 @@ import {
 } from "../shared/api/usage";
 import { UI_LAYOUT_SIZE_OPTIONS, useShellStore, type UiLayoutSize } from "../app/shellStore";
 import { applyChatBackupState, collectChatBackupState } from "../shared/lib/backupState";
-import { confirmDesktopAction, launchDesktopInstallerAndExit, openFileWithDesktopDialog, pickDesktopSavePath, revealDesktopPath, saveDownloadedFile, writeDownloadedFileToPath } from "../shared/lib/desktopFiles";
+import { confirmDesktopAction, launchDesktopInstallerAndExit, pickDesktopOpenPath, pickDesktopSavePath, revealDesktopPath, saveDownloadedFile, writeDownloadedFileToPath } from "../shared/lib/desktopFiles";
 import { getModelDefaults, setModelDefaults, type ModelDefaults } from "../shared/lib/modelDefaults";
 import { setProviderModels, useAvailableProviderModelEntries, useProviderModels } from "../shared/lib/providerModels";
 import { isDesktopShell } from "../shared/lib/runtime";
@@ -89,8 +96,17 @@ interface ProviderTestSummary {
 }
 
 type BackupTool = "export" | "restore" | "logs" | "updates";
-
 type UpdateDownloadPhase = "idle" | "download" | "save";
+type ProgressDialogTool = BackupTool;
+
+interface MaintenanceSaveState {
+  tool: Exclude<BackupTool, "updates">;
+  stage: string;
+  headline: string;
+  detail: string;
+  note: string;
+  percent: number | null;
+}
 
 interface UpdateDownloadDialogState {
   open: boolean;
@@ -102,6 +118,7 @@ interface UpdateDownloadDialogState {
 }
 
 const UPDATE_INSTALLER_PATH_STORAGE_KEY = "aindexer_v35_last_installer_path";
+const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 function uniqueTrimmed(values: string[]): string[] {
   return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))];
@@ -250,6 +267,66 @@ function backupToolCode(tool: BackupTool): string {
   return "BACKUP";
 }
 
+function isTerminalTaskStatus(status?: string | null): boolean {
+  return TERMINAL_TASK_STATUSES.has(String(status || ""));
+}
+
+function toolFromTaskKind(kind: MaintenanceTaskSnapshot["kind"]): Exclude<BackupTool, "updates"> {
+  if (kind === "backup_restore") return "restore";
+  if (kind === "logs_export") return "logs";
+  return "export";
+}
+
+function maintenanceTaskStage(task: MaintenanceTaskSnapshot): string {
+  const phase = String(task.phase || "").toLowerCase();
+  if (task.kind === "backup_export") {
+    if (phase === "collect_state") return "STATE";
+    if (phase === "pack_database") return "DB";
+    if (phase === "pack_uploads") return "FILES";
+    if (phase === "pack_indexes") return "INDEX";
+    if (phase === "pack_translation") return "TRANS";
+    if (phase === "pack_frontend_state") return "CHAT";
+    if (phase === "finalize_archive") return "ZIP";
+  }
+  if (task.kind === "backup_restore") {
+    if (phase === "validate_archive") return "CHECK";
+    if (phase === "read_frontend_state") return "STATE";
+    if (phase === "create_snapshot") return "SNAP";
+    if (phase === "clear_target_dirs") return "CLEAR";
+    if (phase === "restore_uploads") return "FILES";
+    if (phase === "restore_indexes") return "INDEX";
+    if (phase === "restore_translation") return "TRANS";
+    if (phase === "replace_database") return "DB";
+    if (phase === "finalize_restore") return "DONE";
+  }
+  if (task.kind === "logs_export") {
+    if (phase === "collect_logs") return "LOGS";
+    if (phase === "build_diagnostics") return "DIAG";
+    if (phase === "pack_logs") return "ZIP";
+    if (phase === "finalize_archive") return "DONE";
+  }
+  return phase ? phase.replace(/_/g, " ").toUpperCase() : "WORK";
+}
+
+function maintenanceTaskHeadline(task: MaintenanceTaskSnapshot): string {
+  return backupToolCode(toolFromTaskKind(task.kind));
+}
+
+function maintenanceTaskNote(task: MaintenanceTaskSnapshot): string {
+  if (task.status === "completed") return "DONE";
+  if (task.status === "failed") return "FAILED";
+  if (task.status === "cancelled") return "CANCELLED";
+  return String(task.message || "").trim() || maintenanceTaskStage(task);
+}
+
+function formatProgressPercent(value?: number | null): string {
+  return value === null || value === undefined ? "..." : `${Math.max(0, Math.min(100, Math.round(value)))}%`;
+}
+
+function formatDownloadProgressText(receivedBytes: number, totalBytes: number): string {
+  return `${formatUpdateBytes(receivedBytes)} / ${formatUpdateBytes(totalBytes)}`;
+}
+
 function formatUpdateBytes(value?: number | null): string {
   const bytes = Number(value || 0);
   if (bytes <= 0) return "-";
@@ -278,6 +355,62 @@ function compactReleaseNotes(value?: string): string {
     return "当前 release 没有填写更新说明。";
   }
   return text;
+}
+
+function TaskProgressOverlay({
+  tool,
+  stage,
+  percent,
+  headline,
+  detail,
+  note,
+  cancellable,
+  terminal,
+  onCancel,
+}: {
+  tool: ProgressDialogTool;
+  stage: string;
+  percent: number | null;
+  headline: string;
+  detail: string;
+  note: string;
+  cancellable: boolean;
+  terminal: boolean;
+  onCancel: () => void;
+}) {
+  const toneClass = terminal ? (note === "FAILED" ? "is-warn" : "is-ok") : "is-warn";
+  return (
+    <div className="v35-update-progress-overlay" role="dialog" aria-modal="true" aria-label={`${backupToolLabel(tool)} progress`}>
+      <section className="v35-update-progress-dialog">
+        <header className="v35-defaults-block-head">
+          <div>
+            <span>{headline}</span>
+            <strong>{stage}</strong>
+          </div>
+          <span className={`v35-status ${toneClass}`}>
+            {formatProgressPercent(percent)}
+          </span>
+        </header>
+        <div className="v35-update-progress-meta">
+          <strong>{detail}</strong>
+          <span>{note}</span>
+        </div>
+        <div className="v35-index-progress v35-update-progress-bar is-running" aria-label={`${backupToolLabel(tool)} progress`}>
+          <i className="v35-index-progress-track" aria-hidden="true">
+            <span
+              className="v35-index-progress-fill"
+              style={{ width: `${Math.max(8, percent ?? 28)}%` }}
+            />
+          </i>
+        </div>
+        <footer className="v35-defaults-inline-actions">
+          {cancellable && !terminal ? (
+            <button className="v35-button" type="button" onClick={onCancel}>CANCEL</button>
+          ) : null}
+        </footer>
+      </section>
+    </div>
+  );
 }
 
 const GLOBAL_PRICING_PROVIDER = "__global__";
@@ -493,6 +626,8 @@ export function ConfigPage() {
   const [lastInstallerPath, setLastInstallerPath] = useState(() => readStoredUpdateInstallerPath());
   const [desktopVersion, setDesktopVersion] = useState("");
   const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
+  const [activeMaintenanceTask, setActiveMaintenanceTask] = useState<MaintenanceTaskSnapshot | null>(null);
+  const [maintenanceSaveState, setMaintenanceSaveState] = useState<MaintenanceSaveState | null>(null);
   const [updateDownloadDialog, setUpdateDownloadDialog] = useState<UpdateDownloadDialogState>({
     open: false,
     phase: "idle",
@@ -508,6 +643,8 @@ export function ConfigPage() {
   const usageChartWindowRef = useRef<HTMLDivElement>(null);
   const backupFileInputRef = useRef<HTMLInputElement>(null);
   const updateDownloadAbortRef = useRef<AbortController | null>(null);
+  const handledMaintenanceTaskRef = useRef("");
+  const savingMaintenanceTaskRef = useRef("");
 
   useEffect(() => {
     if (!desktopShell) {
@@ -1196,62 +1333,56 @@ export function ConfigPage() {
 
   const exportBackupMutation = useMutation({
     mutationFn: async () => {
-      const file = await downloadDataBackup(collectChatBackupState());
-      const savedPath = await saveDownloadedFile(file, {
-        title: "保存数据备份",
-        defaultPath: file.filename,
-        filters: [{ name: "Backup", extensions: ["zip"] }],
-      });
-      return savedPath;
+      return createBackupTask(collectChatBackupState());
     },
-    onSuccess: (savedPath) => {
-      if (savedPath) {
-        setLastBackupPath(savedPath);
-      }
-      setBackupMessage(savedPath ? "已保存" : desktopShell ? "取消" : "已下载");
+    onSuccess: async (task) => {
+      handledMaintenanceTaskRef.current = "";
+      setMaintenanceSaveState(null);
+      setActiveMaintenanceTask(task);
+      setBackupMessage("Building backup");
+      await queryClient.invalidateQueries({ queryKey: ["backup-restore-status"] });
     },
     onError: (error) => {
-      setBackupMessage(error instanceof Error ? error.message : "导出失败");
+      setBackupMessage(error instanceof Error ? error.message : "Backup failed");
     },
   });
 
   const restoreBackupMutation = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async (source: File | { sourcePath: string }) => {
       const status = await getRestoreStatus();
       if (!status.can_restore) {
         throw new Error(restoreBlockedMessage(status));
       }
-      return restoreDataBackup(file);
+      if (source instanceof File) {
+        return createRestoreTask(source);
+      }
+      return createRestoreTaskFromPath(source.sourcePath);
     },
-    onSuccess: (result) => {
-      applyChatBackupState(result.frontend_state);
-      setBackupMessage(`恢复完成，回退快照：${result.pre_restore_backup}，正在刷新`);
-      queryClient.clear();
-      window.setTimeout(() => window.location.reload(), 800);
+    onSuccess: async (task) => {
+      handledMaintenanceTaskRef.current = "";
+      setMaintenanceSaveState(null);
+      setActiveMaintenanceTask(task);
+      setBackupMessage("Restoring data");
+      await queryClient.invalidateQueries({ queryKey: ["backup-restore-status"] });
     },
     onError: (error) => {
-      setBackupMessage(error instanceof Error ? error.message : "恢复失败");
+      setBackupMessage(error instanceof Error ? error.message : "Restore failed");
     },
   });
 
   const exportLogsMutation = useMutation({
     mutationFn: async () => {
-      const file = await downloadLogBundle();
-      const savedPath = await saveDownloadedFile(file, {
-        title: "保存运行日志",
-        defaultPath: file.filename,
-        filters: [{ name: "Diagnostics", extensions: ["zip"] }],
-      });
-      return savedPath;
+      return createLogExportTask();
     },
-    onSuccess: (savedPath) => {
-      if (savedPath) {
-        setLastLogPath(savedPath);
-      }
-      setBackupMessage(savedPath ? "已保存" : desktopShell ? "取消" : "已下载");
+    onSuccess: async (task) => {
+      handledMaintenanceTaskRef.current = "";
+      setMaintenanceSaveState(null);
+      setActiveMaintenanceTask(task);
+      setBackupMessage("Building diagnostics");
+      await queryClient.invalidateQueries({ queryKey: ["backup-restore-status"] });
     },
     onError: (error) => {
-      setBackupMessage(error instanceof Error ? error.message : "日志导出失败");
+      setBackupMessage(error instanceof Error ? error.message : "Log export failed");
     },
   });
 
@@ -1352,6 +1483,151 @@ export function ConfigPage() {
       setUpdateMessage(error instanceof Error ? error.message : "下载安装包失败");
     },
   });
+
+  useEffect(() => {
+    if (!activeMaintenanceTask || isTerminalTaskStatus(activeMaintenanceTask.status)) {
+      return;
+    }
+    let cancelled = false;
+    const taskId = activeMaintenanceTask.task_id;
+    const poll = async () => {
+      try {
+        const snapshot = await getMaintenanceTask(taskId);
+        if (cancelled) {
+          return;
+        }
+        setActiveMaintenanceTask((current) => (current?.task_id === taskId ? snapshot : current));
+      } catch (error) {
+        if (!cancelled) {
+          setBackupMessage(error instanceof Error ? error.message : "Task sync failed");
+        }
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 700);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeMaintenanceTask?.task_id, activeMaintenanceTask?.status]);
+
+  const saveCompletedMaintenanceArtifact = useCallback(async (task: MaintenanceTaskSnapshot) => {
+    if (savingMaintenanceTaskRef.current === task.task_id) {
+      return;
+    }
+    savingMaintenanceTaskRef.current = task.task_id;
+    const tool = toolFromTaskKind(task.kind);
+    try {
+      const defaultFilename = String(task.result?.filename || task.result?.artifact_name || (task.kind === "logs_export" ? "diagnostics.zip" : "backup_all.zip"));
+      setMaintenanceSaveState({
+        tool,
+        stage: "SAVE",
+        headline: maintenanceTaskHeadline(task),
+        detail: defaultFilename,
+        note: "SELECT PATH",
+        percent: 100,
+      });
+      if (desktopShell) {
+        const targetPath = await pickDesktopSavePath({
+          title: task.kind === "logs_export" ? "Save diagnostics" : "Save backup",
+          defaultPath: defaultFilename,
+          filters: [{ name: "Archive", extensions: ["zip"] }],
+        });
+        if (!targetPath) {
+          await discardMaintenanceTaskArtifact(task.task_id);
+          savingMaintenanceTaskRef.current = "";
+          setMaintenanceSaveState(null);
+          setActiveMaintenanceTask(null);
+          setBackupMessage("Cancelled");
+          return;
+        }
+        setMaintenanceSaveState({
+          tool,
+          stage: "SAVE",
+          headline: maintenanceTaskHeadline(task),
+          detail: defaultFilename,
+          note: "WRITING FILE",
+          percent: 100,
+        });
+        const result = await saveMaintenanceTaskArtifact(task.task_id, targetPath);
+        if (task.kind === "logs_export") {
+          setLastLogPath(result.saved_path);
+          setBackupMessage("Diagnostics saved");
+        } else {
+          setLastBackupPath(result.saved_path);
+          setBackupMessage("Backup saved");
+        }
+        savingMaintenanceTaskRef.current = "";
+        setMaintenanceSaveState(null);
+        setActiveMaintenanceTask(null);
+        return;
+      }
+      const file = await downloadMaintenanceTaskArtifact(task.task_id);
+      const savedPath = await saveDownloadedFile(file, {
+        title: task.kind === "logs_export" ? "Save diagnostics" : "Save backup",
+        defaultPath: file.filename,
+        filters: [{ name: "Archive", extensions: ["zip"] }],
+      });
+      if (!savedPath) {
+        savingMaintenanceTaskRef.current = "";
+        setMaintenanceSaveState(null);
+        setActiveMaintenanceTask(null);
+        setBackupMessage("Cancelled");
+        return;
+      }
+      if (task.kind === "logs_export") {
+        setLastLogPath(savedPath);
+        setBackupMessage("Diagnostics saved");
+      } else {
+        setLastBackupPath(savedPath);
+        setBackupMessage("Backup saved");
+      }
+      savingMaintenanceTaskRef.current = "";
+      setMaintenanceSaveState(null);
+      setActiveMaintenanceTask(null);
+    } catch (error) {
+      savingMaintenanceTaskRef.current = "";
+      setMaintenanceSaveState(null);
+      setBackupMessage(error instanceof Error ? error.message : "Artifact save failed");
+    }
+  }, [desktopShell]);
+
+  useEffect(() => {
+    const task = activeMaintenanceTask;
+    if (!task || !isTerminalTaskStatus(task.status)) {
+      return;
+    }
+    if (handledMaintenanceTaskRef.current === task.task_id) {
+      return;
+    }
+    handledMaintenanceTaskRef.current = task.task_id;
+    void queryClient.invalidateQueries({ queryKey: ["backup-restore-status"] });
+    if (task.status === "failed") {
+      setBackupMessage(task.error || task.message || "Task failed");
+      setActiveMaintenanceTask(null);
+      return;
+    }
+    if (task.status === "cancelled") {
+      setBackupMessage(task.message || "Cancelled");
+      setActiveMaintenanceTask(null);
+      return;
+    }
+    if (task.kind === "backup_restore") {
+      const result = (task.result ?? {}) as { frontend_state?: unknown; pre_restore_backup?: string };
+      applyChatBackupState(result.frontend_state);
+      setBackupMessage(result.pre_restore_backup ? `Restore complete: ${result.pre_restore_backup}` : "Restore complete");
+      queryClient.clear();
+      window.setTimeout(() => window.location.reload(), 800);
+      return;
+    }
+    if (task.kind !== "backup_export" && task.kind !== "logs_export") {
+      return;
+    }
+    setBackupMessage(task.kind === "logs_export" ? "Diagnostics ready" : "Backup ready");
+    void saveCompletedMaintenanceArtifact(task);
+  }, [activeMaintenanceTask, queryClient, saveCompletedMaintenanceArtifact]);
 
   useEffect(() => {
     if (latestUpdateQuery.error) {
@@ -1461,32 +1737,43 @@ export function ConfigPage() {
     setFieldDrafts((rows) => rows.filter((_, currentIndex) => currentIndex !== index));
   }
 
-  async function startRestoreFlow(file: File) {
-    const accepted = await confirmDesktopAction("覆盖当前数据并恢复 Chat？", "恢复数据");
-    if (!accepted) {
-      return;
+  async function startRestoreFlow(source: File | { sourcePath: string }) {
+    try {
+      const accepted = await confirmDesktopAction("覆盖当前数据并恢复 Chat？", "恢复数据");
+      if (!accepted) {
+        return;
+      }
+      await restoreBackupMutation.mutateAsync(source);
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : "Restore failed");
     }
-    await restoreBackupMutation.mutateAsync(file);
   }
 
   async function handleImportBackupClick() {
-    if (!desktopShell) {
-      backupFileInputRef.current?.click();
-      return;
+    try {
+      if (!desktopShell) {
+        backupFileInputRef.current?.click();
+        return;
+      }
+      const sourcePath = await pickDesktopOpenPath({
+        title: "选择数据备份",
+        filters: [{ name: "Backup", extensions: ["zip"] }],
+      });
+      if (!sourcePath) {
+        return;
+      }
+      void startRestoreFlow({ sourcePath });
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : "Restore failed");
     }
-    const file = await openFileWithDesktopDialog({
-      title: "选择数据备份",
-      filters: [{ name: "Backup", extensions: ["zip"] }],
-      mimeType: "application/zip",
-    });
-    if (!file) {
-      return;
-    }
-    void startRestoreFlow(file);
   }
 
+  const maintenanceBusy = Boolean(activeMaintenanceTask && !isTerminalTaskStatus(activeMaintenanceTask.status));
+  const maintenanceDialogOpen = Boolean(activeMaintenanceTask || maintenanceSaveState);
+  const restoreReady = !maintenanceBusy && Boolean(restoreStatusQuery.data?.can_restore);
+
   const restoreStateLabel = restoreStatusQuery.data
-    ? restoreStatusQuery.data.can_restore
+    ? restoreReady
       ? "READY"
       : "BUSY"
     : restoreStatusQuery.isLoading
@@ -1531,6 +1818,7 @@ export function ConfigPage() {
                 ? updateMessage
                 : backupMessage;
   const activeField = fieldDrafts[activeFieldIndex] ?? null;
+  const activeProgressTask = maintenanceSaveState ? null : activeMaintenanceTask;
 
   return (
     <section className="v35-config-page">
@@ -2178,7 +2466,7 @@ export function ConfigPage() {
                       </div>
                       <footer className="v35-defaults-inline-actions v35-backup-actions">
                         <div className="v35-backup-action-main">
-                          <button className="v35-button v35-button-primary" type="button" disabled={exportBackupMutation.isPending} onClick={() => void exportBackupMutation.mutateAsync()}>
+                          <button className="v35-button v35-button-primary" type="button" disabled={exportBackupMutation.isPending || maintenanceDialogOpen || updateDownloadDialog.open} onClick={() => void exportBackupMutation.mutateAsync()}>
                             <span className="v35-backup-button-icon" aria-hidden="true"><BackupActionIcon kind="export" /></span>
                             <span>备份</span>
                           </button>
@@ -2202,7 +2490,7 @@ export function ConfigPage() {
                           <span>RESTORE</span>
                           <strong>{restoreStateLabel}</strong>
                         </div>
-                        <span className={`v35-status ${restoreStatusQuery.data?.can_restore ? "is-ok" : "is-warn"}`}>{restoreStatusQuery.data?.can_restore ? "READY" : "BUSY"}</span>
+                        <span className={`v35-status ${restoreReady ? "is-ok" : "is-warn"}`}>{restoreReady ? "READY" : "BUSY"}</span>
                       </header>
                       <div className="v35-backup-pills" aria-label="恢复规则">
                         <span>SNAP</span>
@@ -2221,12 +2509,12 @@ export function ConfigPage() {
                           void startRestoreFlow(file);
                         }}
                       />
-                      {restoreStatusQuery.data && !restoreStatusQuery.data.can_restore ? (
+                      {restoreStatusQuery.data && !restoreReady ? (
                         <p className="v35-backup-detail-note is-warn">{restoreBlockedMessage(restoreStatusQuery.data)}</p>
                       ) : null}
                       <footer className="v35-defaults-inline-actions v35-backup-actions">
                         <div className="v35-backup-action-main">
-                          <button className="v35-button" type="button" disabled={restoreBackupMutation.isPending} onClick={() => void handleImportBackupClick()}>
+                          <button className="v35-button" type="button" disabled={restoreBackupMutation.isPending || maintenanceDialogOpen || updateDownloadDialog.open || !restoreReady} onClick={() => void handleImportBackupClick()}>
                             <span className="v35-backup-button-icon" aria-hidden="true"><BackupActionIcon kind="restore" /></span>
                             <span>恢复</span>
                           </button>
@@ -2255,7 +2543,7 @@ export function ConfigPage() {
                       </div>
                       <footer className="v35-defaults-inline-actions v35-backup-actions">
                         <div className="v35-backup-action-main">
-                          <button className="v35-button" type="button" disabled={exportLogsMutation.isPending} onClick={() => void exportLogsMutation.mutateAsync()}>
+                          <button className="v35-button" type="button" disabled={exportLogsMutation.isPending || maintenanceDialogOpen || updateDownloadDialog.open} onClick={() => void exportLogsMutation.mutateAsync()}>
                             <span className="v35-backup-button-icon" aria-hidden="true"><BackupActionIcon kind="logs" /></span>
                             <span>日志</span>
                           </button>
@@ -2308,7 +2596,7 @@ export function ConfigPage() {
                             <button
                               className="v35-button"
                               type="button"
-                              disabled={refreshUpdateMutation.isPending}
+                              disabled={refreshUpdateMutation.isPending || maintenanceDialogOpen}
                               onClick={() => void refreshUpdateMutation.mutateAsync()}
                             >
                               <span>检查更新</span>
@@ -2316,7 +2604,7 @@ export function ConfigPage() {
                             <button
                               className="v35-button v35-button-primary"
                               type="button"
-                              disabled={!desktopShell || !desktopVersion || !latestUpdateQuery.data?.has_update || !latestUpdateQuery.data?.download_url || downloadUpdateMutation.isPending}
+                              disabled={!desktopShell || !desktopVersion || !latestUpdateQuery.data?.has_update || !latestUpdateQuery.data?.download_url || downloadUpdateMutation.isPending || maintenanceDialogOpen}
                               onClick={() => {
                                 void startUpdateDownloadFlow(latestUpdateQuery.data);
                               }}
@@ -2428,35 +2716,46 @@ export function ConfigPage() {
           ) : null}
         </main>
       </div>
-      {updateDownloadDialog.open ? (
-        <div className="v35-update-progress-overlay" role="dialog" aria-modal="true" aria-label="更新下载进度">
-          <section className="v35-update-progress-dialog">
-            <header className="v35-defaults-block-head">
-              <div>
-                <span>UPDATE</span>
-                <strong>{updateDownloadDialog.phase === "save" ? "SAVE" : "DOWN"}</strong>
-              </div>
-              <span className={`v35-status ${updateDownloadDialog.phase === "save" ? "is-ok" : "is-warn"}`}>
-                {updateDownloadDialog.percent !== null ? `${updateDownloadDialog.percent}%` : "..."}
-              </span>
-            </header>
-            <div className="v35-update-progress-meta">
-              <strong>{updateDownloadDialog.filename || "installer"}</strong>
-              <span>{formatUpdateBytes(updateDownloadDialog.receivedBytes)} / {formatUpdateBytes(updateDownloadDialog.totalBytes)}</span>
-            </div>
-            <div className="v35-index-progress v35-update-progress-bar is-running" aria-label="下载进度">
-              <i className="v35-index-progress-track" aria-hidden="true">
-                <span
-                  className="v35-index-progress-fill"
-                  style={{ width: `${Math.max(8, updateDownloadDialog.percent ?? 28)}%` }}
-                />
-              </i>
-            </div>
-            <footer className="v35-defaults-inline-actions">
-              <button className="v35-button" type="button" onClick={cancelUpdateDownload}>取消</button>
-            </footer>
-          </section>
-        </div>
+      {maintenanceSaveState ? (
+        <TaskProgressOverlay
+          tool={maintenanceSaveState.tool}
+          stage={maintenanceSaveState.stage}
+          percent={maintenanceSaveState.percent}
+          headline={maintenanceSaveState.headline}
+          detail={maintenanceSaveState.detail}
+          note={maintenanceSaveState.note}
+          cancellable={false}
+          terminal={false}
+          onCancel={() => {}}
+        />
+      ) : activeProgressTask ? (
+        <TaskProgressOverlay
+          tool={toolFromTaskKind(activeProgressTask.kind)}
+          stage={maintenanceTaskStage(activeProgressTask)}
+          percent={activeProgressTask.percent}
+          headline={maintenanceTaskHeadline(activeProgressTask)}
+          detail={String(activeProgressTask.message || maintenanceTaskStage(activeProgressTask))}
+          note={maintenanceTaskNote(activeProgressTask)}
+          cancellable={activeProgressTask.cancellable}
+          terminal={isTerminalTaskStatus(activeProgressTask.status)}
+          onCancel={() => {
+            void cancelMaintenanceTask(activeProgressTask.task_id)
+              .then((snapshot) => setActiveMaintenanceTask(snapshot))
+              .catch((error) => setBackupMessage(error instanceof Error ? error.message : "Cancel failed"));
+          }}
+        />
+      ) : updateDownloadDialog.open ? (
+        <TaskProgressOverlay
+          tool="updates"
+          stage={updateDownloadDialog.phase === "save" ? "SAVE" : "DOWN"}
+          percent={updateDownloadDialog.percent}
+          headline="UPDATES"
+          detail={updateDownloadDialog.filename || "installer"}
+          note={formatDownloadProgressText(updateDownloadDialog.receivedBytes, updateDownloadDialog.totalBytes)}
+          cancellable
+          terminal={false}
+          onCancel={cancelUpdateDownload}
+        />
       ) : null}
     </section>
   );

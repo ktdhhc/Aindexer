@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 import traceback
 from pathlib import Path
 
@@ -18,10 +19,14 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _default_data_dir() -> Path:
-    if appdata := os.getenv("APPDATA"):
-        return Path(appdata).expanduser().resolve() / "Aindexer" / "v4" / "data"
-    if home := os.getenv("HOME"):
-        return Path(home).expanduser().resolve() / ".local" / "share" / "aindexer-v4" / "data"
+    if getattr(sys, "frozen", False):
+        if localappdata := os.getenv("LOCALAPPDATA"):
+            return Path(localappdata).expanduser().resolve() / "Aindexer" / "v4" / "data"
+        if appdata := os.getenv("APPDATA"):
+            return Path(appdata).expanduser().resolve() / "Aindexer" / "v4" / "data"
+        if home := os.getenv("HOME"):
+            return Path(home).expanduser().resolve() / ".local" / "share" / "aindexer-v4" / "data"
+        return Path(sys.executable).resolve().parent / "data"
     return Path(__file__).resolve().parents[1] / "data"
 
 
