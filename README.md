@@ -1,244 +1,162 @@
-# Aindexer
+# Aindexer — 你的本地文献智慧工作台 📚✨
 
-本项目是一个本地运行的文献索引、翻译与问答工作台。
+**Aindexer** 是一款运行在你电脑上的文献阅读与写作助手。上传 PDF、DOCX 或 TXT 文件，让它帮你自动提取关键信息、建立全文索引；随后你可以快速搜索、随手修订，甚至向你的文献库直接提问——一切都在本地完成，数据完全由你掌控。
 
-当前正式入口只保留 **V4 Editorial Lab**，后端使用 FastAPI，前端使用 React + TypeScript，数据存储在本地 SQLite 和文件系统中，适合单机、本地、以人工阅读和修订为主的学术资料工作流。
+> 🖥️ 当前正式版本为 **V4 桌面端**，提供沉浸式的 Editorial Lab 体验。也支持通过浏览器访问 Web 版。
 
-## 当前状态
+---
 
-- 当前唯一正式前端入口：`/v3/workbench`
-- 当前唯一正式前端代码入口：`frontend-v3/`
-- 当前唯一正式静态构建输出：`backend/frontend/v3/`
-- V4 桌面端壳层入口：`desktop-v4/`
-- 当前公开仓库只保留运行主应用所需的 `backend/`、`frontend-v3/` 与本 README
-- `backend/frontend/v2/`、`backend/frontend/translator/` 仍位于 `backend/` 内作为历史遗留实现保留，但不是当前正式入口
+## ✨ 它能做什么
 
-## 项目定位
+| 能力 | 说明 |
+|---|---|
+| 📤 **文献上传** | 支持 PDF / DOCX / TXT 格式，拖拽或选择文件即可导入 |
+| 🤖 **智能索引** | 自动提取标题、作者、关键词、APA 引用、核心观点等结构化信息 |
+| 🔍 **全文检索** | 基于 SQLite FTS5，秒级搜索索引内容，快速定位你需要的文献 |
+| ✏️ **人工修订** | 索引结果以 Markdown 呈现，支持在线预览、编辑和导出 |
+| 💬 **多模式问答** | 提供全景浏览、深度精读、Agent 探索三种问答模式，向文献库提问 |
+| 🌐 **PDF 翻译** | 在线预览 PDF 原文，选段翻译，支持流式输出和历史记录 |
+| 🗂️ **工作区隔离** | 按项目/课题创建多个 Workspace，文献、索引、对话彼此独立 |
+| 📊 **用量统计** | 按 Provider、模型、功能维度统计 token 消耗和成本 |
+| 💾 **数据备份** | 一键导出全量备份包，随时恢复你的工作数据 |
 
-- 本地桌面式文献工作台，不是云端多用户系统
-- 以文献上传、结构化索引、检索预览、人工修订、翻译校对和问答探索为主链
-- UI 方向为 **Editorial Lab**：暖色纸张感、阅读优先、编辑优先、低噪声工具界面
+---
 
-## 核心能力
+## 🏗️ 四个核心模块
 
-- 文献上传：支持 `pdf`、`txt`、`docx`
-- 工作区隔离：所有文献、索引、问答、翻译、用量统计都按 `workspace` 归属
-- 字段模板：可维护默认字段与自定义模板，索引任务可按模板运行
-- 异步索引：后端通过进程内线程池执行索引任务，支持单篇运行、批量运行、进度轮询与取消
-- 失败回退：索引失败时不会只留空状态，而会生成 fallback 模板并将文献标记为 `needs_review`
-- 全文检索：基于 SQLite FTS5 检索标题、关键词、APA、核心观点、claims 等索引内容
-- Markdown 工作流：索引结果会同时写入 SQLite 与 `data/indexes/` 下的 Markdown 文件，支持预览、编辑、导出
-- PDF 翻译：支持 PDF 原文预览、选段翻译、流式输出、取消请求、历史记录查看
-- 多模式问答：支持 `wide` 全景、`deep` 精读、`agent` 探索三种问答模式
-- Provider 管理：支持 Provider 配置、模型解析、连接测试、默认模型设置
-- 用量统计：支持按 Provider、模型、功能、API Key 指纹统计 token 与成本
-- 数据备份：支持导出全量备份包并恢复本地工作数据
+### 📖 Workbench — 文库工作台
+你的文献中心。上传、浏览、搜索、索引、修订、导出，围绕文献的一切操作都在这里汇聚。支持自定义字段模板，索引任务可单篇运行也可批量执行，失败会自动回退到可编辑状态，不会丢失数据。
 
-## 现有页面
+### 🌍 Translator — 翻译工作台
+打开 PDF，选中段落，即时翻译。支持原文/译文双栏对照、流式翻译输出、翻译历史回溯。布局可自由缩放和调整，适合细读与校对。
 
-- `Workbench`：文献列表、搜索、上传、索引运行、Markdown 预览与导出
-- `Translator`：PDF 文库、阅读画布、译文侧栏、历史记录、流式翻译与取消
-- `Chat`：多会话问答、文献范围选择、上下文来源展示、Agent 流式轨迹
-- `Config`：Provider、默认模型、字段模板、工作区、用量与计费规则配置
+### 💬 Chat — 智能问答
+选一个 Workspace，挑几篇文献，然后直接提问。
+- **Wide 模式**：全景概览，快速了解文献库全貌
+- **Deep 模式**：深度精读，聚焦特定文献的细节
+- **Agent 模式**：自主探索，让 AI 在文献间自由穿梭寻找答案
 
-## 技术架构
+每次回答都会标注引用来源，思维链过程可见，回答可追溯。
 
-### 后端
+### ⚙️ Config — 系统配置
+管理你的 LLM Provider、API Key、默认模型、字段模板和工作区。用量统计和计费规则也在这里统一查看。
 
-- 框架：FastAPI
-- 应用入口：`backend/app/main.py`
-- 启动封装：`backend/desktop_main.py`
-- V4 sidecar：`backend/desktop_v4_sidecar.py`
-- 路由层：`backend/app/routers/`
-- 翻译域：`backend/app/translation/`
-- 持久化：`backend/app/db.py` + `backend/app/repository.py`
+---
 
-### 前端
+## 🚀 快速开始
 
-- 正式前端源码：`frontend-v3/`
-- 技术栈：React 18、TypeScript、Vite、TanStack Router、TanStack Query、Zustand
-- 路由基路径：`/v3`
-- Vite 构建输出：`backend/frontend/v3/`
+### 方式一：桌面端（推荐）
 
-### 数据与运行时
+V4 桌面端提供最完整的体验，一次启动即可使用所有功能。
 
-- 主数据库：`data/app.db`
-- 上传文件：`data/uploads/`
-- 索引 Markdown：`data/indexes/`
-- 导出与备份：`data/exports/`
-- 运行日志：`data/logs/`
-- 直接运行后端与 `desktop-v4` 开发模式默认都使用仓库根 `data/`；V4 安装包默认使用 `%LOCALAPPDATA%/Aindexer/v4/data`，也可通过 `AINDEXER_DATA_DIR` 显式覆盖
-
-## 公开仓库结构
-
-```text
-literature-indexer/
-|- README.md
-|- frontend-v3/                # 当前唯一正式前端源码入口
-|- desktop-v4/                 # V4 Tauri 桌面壳层
-|- backend/
-|  |- app/                     # FastAPI、路由、服务、仓储、DB
-|  |- frontend/
-|  |  |- v3/                   # V3.5 构建产物，由后端静态服务
-|  |  |- v2/                   # 历史遗留，已弃用
-|  |  `- translator/           # 历史遗留，已弃用
-|  |- prompts/                 # 问答与抽取提示词
-|  |- tests/                   # 后端与翻译测试
-|  |- desktop_main.py          # 历史桌面启动入口
-|  `- desktop_v4_sidecar.py    # V4 桌面 sidecar 入口
-```
-
-运行时目录如 `data/` 由程序在本地自动创建，不作为公开源码目录。
-
-## 运行说明
-
-- 仓库中已包含当前 `backend/frontend/v3/` 构建产物，因此直接启动后端即可访问正式入口
-- 如果你修改了 `frontend-v3/` 源码，需要重新执行 `npm run build`，以刷新 `backend/frontend/v3/` 下的静态产物
-
-## 关键后端接口
-
-- `/api/files/*`：文献上传、列表、删除、原文访问
-- `/api/index/*`：索引运行、批量运行、取消、Markdown 读写、编辑保存
-- `/api/search`：索引检索
-- `/api/export/*`：单篇导出、批量导出、全量备份、备份恢复
-- `/api/providers/*`：Provider 配置、模型解析、连通性测试
-- `/api/fields/*`：字段模板与字段定义
-- `/api/workspaces/*`：工作区 CRUD
-- `/api/chat/*`：问答、流式问答、Agent run 取消
-- `/api/translation/*`：PDF 上传、页面文本、翻译、流式翻译、翻译历史、取消
-- `/api/usage/*`：用量统计、价格规则
-
-## 典型工作流
-
-1. 在配置页填写 Provider、模型与 API Key。
-2. 创建或切换 Workspace。
-3. 上传文献文件到当前 Workspace。
-4. 选择字段模板并运行索引。
-5. 在文库页搜索、预览、修订、导出 Markdown。
-6. 在翻译页选择 PDF，读取原文并执行流式翻译。
-7. 在问答页以 `wide`、`deep` 或 `agent` 模式对已索引文献提问。
-
-## 本地启动
-
-### 1. 安装后端依赖
+**前置要求：** Node.js ≥ 18、Python ≥ 3.10、Rust 工具链
 
 ```bash
+# 1. 安装后端依赖
 cd backend
-pip install -r requirements.txt
-```
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt   # Windows
+# source .venv/bin/python -m pip install -r requirements.txt  # macOS / Linux
 
-### 2. 安装前端依赖
-
-```bash
+# 2. 安装前端依赖
 cd frontend-v3
 npm install
-```
 
-### 3. 启动后端
-
-```bash
-cd backend
-uvicorn app.main:app --reload
-```
-
-### 4. 启动方式
-
-直接启动后访问正式入口：
-
-```bash
-cd backend
-uvicorn app.main:app --reload
-```
-
-访问：`http://127.0.0.1:8000/v3/workbench`
-
-如果你修改了前端源码，再重新构建：
-
-```bash
-cd frontend-v3
-npm run build
-```
-
-前端开发模式：
-
-```bash
-cd frontend-v3
-npm run dev
-```
-
-访问：`http://127.0.0.1:5173/v3/workbench`
-
-说明：前端开发服务器会将 `/api` 代理到 `http://127.0.0.1:8000`，因此开发模式下后端仍需先启动。
-
-### 5. V4 桌面壳开发模式
-
-```bash
+# 3. 安装桌面壳依赖
 cd desktop-v4
 npm install
+
+# 4. 一键启动开发模式 🎉
 npm run dev
 ```
 
-桌面壳会启动 `backend/desktop_v4_sidecar.py`，选择动态端口，并加载 `/v3/workbench`。修改 `frontend-v3/` 后，仍需先重新运行 `npm run build` 以刷新 `backend/frontend/v3/`。
+桌面窗口会自动打开，前端改动能实时热更新。
 
-## 验证命令
+### 方式二：浏览器访问
 
-推荐优先运行有针对性的验证，而不是默认全量重跑。
-
-后端基础接口：
+如果你只需要 Web 版，启动后端后直接访问即可。
 
 ```bash
 cd backend
-pytest tests/test_api_smoke.py tests/test_security.py tests/test_workspace_api.py tests/test_field_templates.py
+uvicorn app.main:app --reload
 ```
 
-问答相关：
+浏览器打开 `http://127.0.0.1:8000/v3/workbench`
+
+> 💡 仓库中已包含预构建的前端产物，不需要额外构建。如果你修改了前端源码，在 `frontend-v3/` 下运行 `npm run build` 即可刷新。
+
+---
+
+## 🛠️ 开发者指南
+
+### 项目结构一览
+
+```
+literature-indexer/
+├── backend/           # FastAPI 后端：路由、服务、数据库、测试
+│   ├── app/           # 应用核心代码
+│   ├── frontend/v3/   # 前端构建产物（由后端静态服务）
+│   ├── prompts/       # LLM 提示词
+│   └── tests/         # 后端测试
+├── frontend-v3/       # 前端源码（React + TypeScript + Vite）
+├── desktop-v4/        # V4 Tauri 桌面壳层
+└── data/              # 运行时数据（SQLite 数据库、上传文件、索引、日志）
+```
+
+### 常用命令
+
+| 场景 | 命令 | 说明 |
+|---|---|---|
+| 🔧 启动后端 | `cd backend && uvicorn app.main:app --reload` | 开发模式，文件改动自动重载 |
+| 🎨 前端开发 | `cd frontend-v3 && npm run dev` | Vite 热更新，需后端已启动 |
+| 🖥️ 桌面开发 | `cd desktop-v4 && npm run dev` | 一键启动后端 + 前端 + 桌面壳 |
+| 📦 前端构建 | `cd frontend-v3 && npm run build` | 生产构建，输出到 `backend/frontend/v3/` |
+| 📦 桌面打包 | `cd desktop-v4 && npm run build` | 构建完整安装包 |
+| ✅ 后端测试 | `cd backend && pytest tests/<test_file>.py` | 推荐按模块针对性测试 |
+
+### 后端测试分组
 
 ```bash
-cd backend
-pytest tests/test_chat_modes.py tests/test_chat_agent.py
+# 基础接口
+cd backend && pytest tests/test_api_smoke.py tests/test_security.py
+
+# 工作区与字段模板
+cd backend && pytest tests/test_workspace_api.py tests/test_field_templates.py
+
+# 问答模块
+cd backend && pytest tests/test_chat_modes.py tests/test_chat_agent.py
+
+# 翻译模块
+cd backend && pytest tests/translation
 ```
 
-翻译相关：
+### 环境变量
 
-```bash
-cd backend
-pytest tests/translation
-```
+| 变量 | 用途 |
+|---|---|
+| `AINDEXER_DATA_DIR` | 自定义数据目录 |
+| `AINDEXER_PYTHON` | 指定 Python 解释器路径 |
 
-前端构建校验：
+---
 
-```bash
-cd frontend-v3
-npm run build
-```
+## 📐 技术栈
 
-## 设计与实现判断
+- **后端：** FastAPI + SQLite + SQLite FTS5
+- **前端：** React 18 + TypeScript + Vite + TanStack Router + TanStack Query + Zustand
+- **桌面壳：** Tauri 2 + Rust
+- **文档解析：** PyMuPDF + pdfplumber + python-docx
 
-从代码结构看，这个项目当前已经形成比较清晰的 V3.5 主体能力：
+---
 
-- 前端已经统一到单一 React Shell，导航、Workspace 选择和主要能力页都在 `frontend-v3` 中汇合
-- 后端 API 已按文献、索引、问答、翻译、配置、工作区、用量拆分为独立路由域
-- 文献索引、PDF 翻译和多模式问答共享同一套 Provider 配置与本地数据边界
-- Workspace 已经成为主数据边界，而不是附加功能
+## ⚠️ 注意事项
 
-同时也能看到迁移痕迹仍然存在：
+- 本项目为**本地单机工具**，不是云端多用户系统
+- API Key 以明文存储在本地数据库，请确保运行环境可信
+- 首次使用前请先在 **Config 页面** 配置 Provider 和 API Key
+- 翻译功能当前仅支持 PDF 格式
 
-- `backend/app/main.py` 仍会挂载历史静态目录
-- `backend/` 中仍保留 `v2`、旧 translator 前端和相关测试，作为历史遗留参考
+---
 
-因此，当前最合适的仓库认知是：
+## 📄 许可证
 
-- **产品入口已经收敛到 V4**
-- **代码仓库仍保留历史遗留实现作为迁移参考**
-
-## 注意事项
-
-- 本项目默认用于本地可信环境，不应按云端多租户系统理解
-- Provider API Key 当前保存在本地数据中，现状不是加密托管方案
-- 翻译上传接口当前只接受 `PDF`
-- 问答与翻译都依赖可用的 Provider 配置；首次使用前应先完成配置页设置
-
-## 公开边界
-
-- 本公开仓库不包含本地运行数据、历史打包产物、辅助脚本、设计推演文档和个人配置痕迹
-- 若你需要打包脚本、设计基线文档或其它内部材料，应在本地私有工作区自行维护
+本项目仅供个人学习与研究使用。
